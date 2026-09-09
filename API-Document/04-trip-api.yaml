@@ -1,0 +1,210 @@
+openapi: 3.0.3
+info:
+  title: CAB System - Trip API
+  description: >
+    API cập nhật và theo dõi trạng thái chuyến xe. Tương ứng FR08, FR09, BR03,
+    BR04, BP03, UC04, UC06, AC04, AC05.
+  version: "1.0.0"
+servers:
+  - url: https://api.cabsystem.example.com/v1
+tags:
+  - name: Trip
+    description: Chuyến xe
+
+paths:
+  /trips/{tripId}:
+    get:
+      tags: [Trip]
+      summary: Xem thông tin chi tiết chuyến xe
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+      responses:
+        '200':
+          description: Chi tiết chuyến xe
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '404':
+          description: Không tìm thấy chuyến
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /trips/{tripId}/tracking:
+    get:
+      tags: [Trip]
+      summary: Theo dõi chuyến xe theo thời gian thực
+      description: >
+        FR09 - Cho phép khách hàng và nhân viên vận hành theo dõi trạng thái
+        hiện tại của chuyến, thông tin tài xế và thời gian dự kiến đến.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+      responses:
+        '200':
+          description: Thông tin theo dõi chuyến
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TripTracking'
+        '404':
+          description: Không tìm thấy chuyến
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /trips/{tripId}/status:
+    patch:
+      tags: [Trip]
+      summary: Tài xế cập nhật trạng thái chuyến
+      description: >
+        FR08, BRu05 - Tài xế cập nhật trạng thái theo trình tự: ARRIVED_PICKUP,
+        PICKED_UP, IN_PROGRESS, COMPLETED.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  $ref: '#/components/schemas/TripStatus'
+                location:
+                  $ref: '#/components/schemas/Coordinates'
+            example:
+              status: "ARRIVED_PICKUP"
+              location:
+                latitude: 10.7757
+                longitude: 106.7004
+      responses:
+        '200':
+          description: Trạng thái chuyến được cập nhật
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Trip'
+        '400':
+          description: Cập nhật không đúng trình tự trạng thái
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Không tìm thấy chuyến
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    TripId:
+      name: tripId
+      in: path
+      required: true
+      schema:
+        type: string
+        example: "TRP0001"
+
+  schemas:
+    Coordinates:
+      type: object
+      properties:
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+
+    TripStatus:
+      type: string
+      enum:
+        - DRIVER_ASSIGNED
+        - ARRIVED_PICKUP
+        - PICKED_UP
+        - IN_PROGRESS
+        - COMPLETED
+        - CANCELLED
+        - ERROR
+
+    Trip:
+      type: object
+      properties:
+        tripId:
+          type: string
+          example: "TRP0001"
+        bookingId:
+          type: string
+        customerId:
+          type: string
+        driverId:
+          type: string
+        pickupLocation:
+          type: string
+        destination:
+          type: string
+        status:
+          $ref: '#/components/schemas/TripStatus'
+        startTime:
+          type: string
+          format: date-time
+          nullable: true
+        endTime:
+          type: string
+          format: date-time
+          nullable: true
+        fare:
+          type: number
+          format: double
+          nullable: true
+
+    TripTracking:
+      type: object
+      properties:
+        tripId:
+          type: string
+        status:
+          $ref: '#/components/schemas/TripStatus'
+        driver:
+          type: object
+          properties:
+            driverId:
+              type: string
+            fullName:
+              type: string
+            phone:
+              type: string
+            currentLocation:
+              $ref: '#/components/schemas/Coordinates'
+        estimatedArrivalMinutes:
+          type: integer
+          example: 5
+        updatedAt:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      properties:
+        errorCode:
+          type: string
+        message:
+          type: string
