@@ -1,0 +1,178 @@
+openapi: 3.0.3
+info:
+  title: CAB System - Rating API
+  description: >
+    API cho phép khách hàng đánh giá tài xế sau khi chuyến hoàn thành.
+    Tương ứng FR16, BR06 (đánh giá), BP06, UC08, AC07.
+  version: "1.0.0"
+servers:
+  - url: https://api.cabsystem.example.com/v1
+tags:
+  - name: Rating
+
+paths:
+  /trips/{tripId}/ratings:
+    post:
+      tags: [Rating]
+      summary: Đánh giá tài xế sau chuyến
+      description: >
+        FR16 - Chỉ khách hàng đã sử dụng chuyến và chuyến đã hoàn thành mới
+        có thể đánh giá.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRatingRequest'
+            example:
+              ratingScore: 5
+              comment: "Tài xế thân thiện, lái xe an toàn."
+      responses:
+        '201':
+          description: Đánh giá được lưu thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rating'
+        '400':
+          description: Thông tin đánh giá không hợp lệ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Chuyến chưa hoàn thành hoặc đã được đánh giá trước đó
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      tags: [Rating]
+      summary: Xem đánh giá của một chuyến
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+      responses:
+        '200':
+          description: Đánh giá của chuyến (nếu có)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rating'
+        '404':
+          description: Chuyến chưa được đánh giá
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /drivers/{driverId}/ratings:
+    get:
+      tags: [Rating]
+      summary: Xem danh sách đánh giá của một tài xế
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: driverId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "DRV0001"
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Danh sách đánh giá và điểm trung bình
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DriverRatingsSummary'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    TripId:
+      name: tripId
+      in: path
+      required: true
+      schema:
+        type: string
+        example: "TRP0001"
+
+  schemas:
+    CreateRatingRequest:
+      type: object
+      required: [ratingScore]
+      properties:
+        ratingScore:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: string
+
+    Rating:
+      type: object
+      properties:
+        ratingId:
+          type: string
+          example: "RTG0001"
+        tripId:
+          type: string
+        customerId:
+          type: string
+        driverId:
+          type: string
+        ratingScore:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    DriverRatingsSummary:
+      type: object
+      properties:
+        driverId:
+          type: string
+        averageScore:
+          type: number
+          format: double
+          example: 4.7
+        totalRatings:
+          type: integer
+        ratings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Rating'
+
+    ErrorResponse:
+      type: object
+      properties:
+        errorCode:
+          type: string
+        message:
+          type: string
