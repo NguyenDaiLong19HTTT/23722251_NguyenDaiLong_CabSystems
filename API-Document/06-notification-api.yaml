@@ -1,0 +1,166 @@
+openapi: 3.0.3
+info:
+  title: CAB System - Notification API
+  description: >
+    API gửi và truy vấn thông báo cho khách hàng/tài xế khi xảy ra các sự kiện
+    quan trọng. Tương ứng FR13, NFR08.
+  version: "1.0.0"
+servers:
+  - url: https://api.cabsystem.example.com/v1
+tags:
+  - name: Notification
+
+paths:
+  /notifications:
+    get:
+      tags: [Notification]
+      summary: Lấy danh sách thông báo của người dùng
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: query
+          required: true
+          schema:
+            type: string
+          example: "CUS0001"
+        - name: userType
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [CUSTOMER, DRIVER]
+        - name: isRead
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Danh sách thông báo
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Notification'
+
+    post:
+      tags: [Notification]
+      summary: Gửi thông báo (dùng nội bộ hệ thống)
+      description: >
+        FR13 - Gửi thông báo khi xảy ra sự kiện quan trọng: tiếp nhận yêu cầu,
+        tài xế nhận chuyến, tài xế đến điểm đón, chuyến hoàn thành, kết quả thanh toán.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNotificationRequest'
+            example:
+              userId: "CUS0001"
+              userType: "CUSTOMER"
+              eventType: "DRIVER_ASSIGNED"
+              message: "Tài xế Nguyen Van B đã nhận chuyến của bạn."
+              referenceId: "TRP0001"
+      responses:
+        '201':
+          description: Thông báo đã được tạo và gửi
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+
+  /notifications/{notificationId}/read:
+    patch:
+      tags: [Notification]
+      summary: Đánh dấu thông báo đã đọc
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "NTF0001"
+      responses:
+        '200':
+          description: Thông báo được đánh dấu đã đọc
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '404':
+          description: Không tìm thấy thông báo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    EventType:
+      type: string
+      enum:
+        - BOOKING_RECEIVED
+        - DRIVER_ASSIGNED
+        - NO_DRIVER_FOUND
+        - DRIVER_ARRIVED
+        - TRIP_COMPLETED
+        - PAYMENT_SUCCESS
+        - PAYMENT_FAILED
+
+    CreateNotificationRequest:
+      type: object
+      required: [userId, userType, eventType, message]
+      properties:
+        userId:
+          type: string
+        userType:
+          type: string
+          enum: [CUSTOMER, DRIVER]
+        eventType:
+          $ref: '#/components/schemas/EventType'
+        message:
+          type: string
+        referenceId:
+          type: string
+          description: ID tham chiếu (bookingId/tripId/paymentId...)
+
+    Notification:
+      type: object
+      properties:
+        notificationId:
+          type: string
+          example: "NTF0001"
+        userId:
+          type: string
+        userType:
+          type: string
+          enum: [CUSTOMER, DRIVER]
+        eventType:
+          $ref: '#/components/schemas/EventType'
+        message:
+          type: string
+        referenceId:
+          type: string
+        isRead:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      properties:
+        errorCode:
+          type: string
+        message:
+          type: string
