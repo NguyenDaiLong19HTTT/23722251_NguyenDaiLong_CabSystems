@@ -1,0 +1,254 @@
+openapi: 3.0.3
+info:
+  title: CAB System - Fare & Payment API
+  description: >
+    API tính cước và xử lý thanh toán. Tương ứng FR10, FR11, FR12, BR05, BRu06,
+    BRu07, BRu08, BP04, UC07, AC06.
+  version: "1.0.0"
+servers:
+  - url: https://api.cabsystem.example.com/v1
+tags:
+  - name: Fare
+    description: Tính cước chuyến xe
+  - name: Payment
+    description: Thanh toán
+
+paths:
+  /trips/{tripId}/fare:
+    get:
+      tags: [Fare]
+      summary: Lấy thông tin cước chuyến
+      description: >
+        FR10, BRu06 - Hệ thống xác định số tiền khách hàng phải trả dựa trên
+        loại dịch vụ và thông tin chuyến đi, chỉ sau khi chuyến hoàn thành.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+      responses:
+        '200':
+          description: Thông tin cước
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Fare'
+        '409':
+          description: Chuyến chưa hoàn thành, chưa thể tính cước
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /trips/{tripId}/payments:
+    post:
+      tags: [Payment]
+      summary: Khởi tạo thanh toán cho chuyến xe
+      description: >
+        FR11 - Hỗ trợ thanh toán tiền mặt hoặc điện tử qua nhà cung cấp bên ngoài.
+        BRu07 - Không lưu trực tiếp thông tin thẻ/tài khoản thanh toán nhạy cảm.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePaymentRequest'
+            example:
+              paymentMethod: "E_WALLET"
+              returnUrl: "https://app.cabsystem.example.com/payment/callback"
+      responses:
+        '201':
+          description: "Thanh toán được khởi tạo (tiền mặt: ghi nhận ngay; điện tử: chuyển hướng nhà cung cấp)"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '400':
+          description: Phương thức thanh toán không hợp lệ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /payments/{paymentId}:
+    get:
+      tags: [Payment]
+      summary: Xem trạng thái thanh toán
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PaymentId'
+      responses:
+        '200':
+          description: Chi tiết thanh toán
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '404':
+          description: Không tìm thấy giao dịch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /payments/{paymentId}/webhook:
+    post:
+      tags: [Payment]
+      summary: Nhận kết quả giao dịch từ nhà cung cấp thanh toán bên ngoài
+      description: >
+        FR12 - Ghi nhận kết quả thanh toán thành công/thất bại từ nhà cung cấp
+        thanh toán bên ngoài (server-to-server callback).
+      parameters:
+        - $ref: '#/components/parameters/PaymentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentWebhookPayload'
+      responses:
+        '200':
+          description: Đã xử lý callback
+        '400':
+          description: Payload không hợp lệ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /payments/{paymentId}/retry:
+    post:
+      tags: [Payment]
+      summary: Thử lại thanh toán điện tử thất bại
+      description: FR12 - Khi thanh toán điện tử thất bại, cho phép xử lý lại theo chính sách doanh nghiệp.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PaymentId'
+      responses:
+        '200':
+          description: Yêu cầu thanh toán mới được khởi tạo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '409':
+          description: Giao dịch không ở trạng thái cho phép thử lại
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    TripId:
+      name: tripId
+      in: path
+      required: true
+      schema:
+        type: string
+        example: "TRP0001"
+    PaymentId:
+      name: paymentId
+      in: path
+      required: true
+      schema:
+        type: string
+        example: "PAY0001"
+
+  schemas:
+    Fare:
+      type: object
+      properties:
+        tripId:
+          type: string
+        vehicleType:
+          type: string
+        distanceKm:
+          type: number
+          format: double
+        durationMinutes:
+          type: number
+          format: double
+        amount:
+          type: number
+          format: double
+        currency:
+          type: string
+          example: "VND"
+
+    PaymentMethod:
+      type: string
+      enum: [CASH, E_WALLET, CREDIT_CARD]
+
+    PaymentStatus:
+      type: string
+      enum: [PENDING, SUCCESS, FAILED]
+
+    CreatePaymentRequest:
+      type: object
+      required: [paymentMethod]
+      properties:
+        paymentMethod:
+          $ref: '#/components/schemas/PaymentMethod'
+        returnUrl:
+          type: string
+          description: Bắt buộc khi paymentMethod là thanh toán điện tử
+
+    Payment:
+      type: object
+      properties:
+        paymentId:
+          type: string
+          example: "PAY0001"
+        tripId:
+          type: string
+        amount:
+          type: number
+          format: double
+        paymentMethod:
+          $ref: '#/components/schemas/PaymentMethod'
+        paymentStatus:
+          $ref: '#/components/schemas/PaymentStatus'
+        transactionId:
+          type: string
+          nullable: true
+          description: Mã giao dịch của nhà cung cấp thanh toán bên ngoài
+        redirectUrl:
+          type: string
+          nullable: true
+          description: URL chuyển hướng đến nhà cung cấp thanh toán (nếu là thanh toán điện tử)
+        createdAt:
+          type: string
+          format: date-time
+
+    PaymentWebhookPayload:
+      type: object
+      required: [transactionId, status]
+      properties:
+        transactionId:
+          type: string
+        status:
+          type: string
+          enum: [SUCCESS, FAILED]
+        failureReason:
+          type: string
+          nullable: true
+
+    ErrorResponse:
+      type: object
+      properties:
+        errorCode:
+          type: string
+        message:
+          type: string
