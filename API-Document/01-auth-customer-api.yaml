@@ -1,0 +1,244 @@
+openapi: 3.0.3
+info:
+  title: CAB System - Auth & Customer API
+  description: >
+    API quản lý tài khoản khách hàng: đăng ký, đăng nhập, cập nhật thông tin cá nhân.
+    Tương ứng FR01, BR01 (một phần), UC01, AC01.
+  version: "1.0.0"
+servers:
+  - url: https://api.cabsystem.example.com/v1
+    description: Mock server for Swagger testing
+tags:
+  - name: Auth
+    description: Đăng ký / Đăng nhập
+  - name: Customer
+    description: Quản lý thông tin khách hàng
+
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Đăng ký tài khoản khách hàng
+      description: FR01 - Khách hàng đăng ký tài khoản mới.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+            example:
+              fullName: "Nguyen Van A"
+              phone: "0901234567"
+              email: "nguyenvana@example.com"
+              password: "P@ssw0rd123"
+      responses:
+        '201':
+          description: Đăng ký thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '400':
+          description: Thông tin đăng ký không hợp lệ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Email hoặc số điện thoại đã tồn tại
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Đăng nhập
+      description: FR01 - Khách hàng đăng nhập bằng email/số điện thoại và mật khẩu.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              emailOrPhone: "nguyenvana@example.com"
+              password: "P@ssw0rd123"
+      responses:
+        '200':
+          description: Đăng nhập thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Thông tin đăng nhập không chính xác
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Đăng xuất
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Đăng xuất thành công
+
+  /customers/{customerId}:
+    get:
+      tags: [Customer]
+      summary: Lấy thông tin khách hàng
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CustomerId'
+      responses:
+        '200':
+          description: Thông tin khách hàng
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '404':
+          description: Không tìm thấy khách hàng
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags: [Customer]
+      summary: Cập nhật thông tin cá nhân
+      description: FR01 - Khách hàng cập nhật thông tin cá nhân.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CustomerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCustomerRequest'
+            example:
+              fullName: "Nguyen Van A"
+              phone: "0909999999"
+      responses:
+        '200':
+          description: Cập nhật thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '400':
+          description: Dữ liệu không hợp lệ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Không tìm thấy khách hàng
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    CustomerId:
+      name: customerId
+      in: path
+      required: true
+      schema:
+        type: string
+        example: "CUS0001"
+
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [fullName, phone, email, password]
+      properties:
+        fullName:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+          minLength: 8
+
+    LoginRequest:
+      type: object
+      required: [emailOrPhone, password]
+      properties:
+        emailOrPhone:
+          type: string
+        password:
+          type: string
+          format: password
+
+    LoginResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        tokenType:
+          type: string
+          example: Bearer
+        expiresIn:
+          type: integer
+          example: 3600
+        customer:
+          $ref: '#/components/schemas/Customer'
+
+    UpdateCustomerRequest:
+      type: object
+      properties:
+        fullName:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+          format: email
+
+    Customer:
+      type: object
+      properties:
+        customerId:
+          type: string
+          example: "CUS0001"
+        fullName:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+        accountStatus:
+          type: string
+          enum: [ACTIVE, INACTIVE, SUSPENDED]
+        createdAt:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      properties:
+        errorCode:
+          type: string
+        message:
+          type: string
