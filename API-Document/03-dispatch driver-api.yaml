@@ -1,0 +1,223 @@
+openapi: 3.0.3
+info:
+  title: CAB System - Dispatch & Driver Response API
+  description: >
+    API tìm tài xế phù hợp, gửi yêu cầu chuyến, tài xế chấp nhận/từ chối và
+    tìm tài xế thay thế. Tương ứng FR04, FR05, FR06, FR07, BR02, BP02, UC03, UC05, AC03.
+  version: "1.0.0"
+servers:
+  - url: https://api.cabsystem.example.com/v1
+tags:
+  - name: Dispatch
+    description: Tìm và phân công tài xế (hệ thống)
+  - name: DriverTripRequest
+    description: Yêu cầu chuyến gửi tới tài xế
+
+paths:
+  /bookings/{bookingId}/dispatch:
+    post:
+      tags: [Dispatch]
+      summary: Khởi tạo tiến trình tìm tài xế cho một yêu cầu đặt xe
+      description: >
+        FR04 - Hệ thống xác định các tài xế phù hợp dựa trên vị trí, trạng thái
+        sẵn sàng và loại xe/dịch vụ. Thường được hệ thống gọi tự động sau khi
+        booking được tạo; endpoint này cho phép trigger/test thủ công.
+      parameters:
+        - $ref: '#/components/parameters/BookingId'
+      responses:
+        '202':
+          description: Tiến trình tìm tài xế đã được khởi tạo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DispatchStatus'
+        '404':
+          description: Không tìm thấy yêu cầu đặt xe
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /bookings/{bookingId}/dispatch/status:
+    get:
+      tags: [Dispatch]
+      summary: Xem trạng thái tìm tài xế
+      description: FR07 - Thông báo kết quả tìm tài xế cho khách hàng.
+      parameters:
+        - $ref: '#/components/parameters/BookingId'
+      responses:
+        '200':
+          description: Trạng thái tiến trình tìm tài xế
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DispatchStatus'
+        '404':
+          description: Không tìm thấy tiến trình
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /drivers/{driverId}/trip-requests:
+    get:
+      tags: [DriverTripRequest]
+      summary: Lấy danh sách yêu cầu chuyến đang chờ phản hồi của tài xế
+      description: FR05 - Gửi thông tin yêu cầu chuyến đến tài xế phù hợp.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DriverId'
+      responses:
+        '200':
+          description: Danh sách yêu cầu chuyến đang chờ
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TripRequest'
+
+  /trip-requests/{tripRequestId}/accept:
+    post:
+      tags: [DriverTripRequest]
+      summary: Tài xế chấp nhận chuyến
+      description: FR05, BRu04 - Tài xế chấp nhận yêu cầu chuyến, hệ thống ghi nhận phân công.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TripRequestId'
+      responses:
+        '200':
+          description: Tài xế được phân công cho chuyến, chuyến (Trip) được khởi tạo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TripRequest'
+        '409':
+          description: Yêu cầu đã hết hạn hoặc đã được xử lý
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /trip-requests/{tripRequestId}/reject:
+    post:
+      tags: [DriverTripRequest]
+      summary: Tài xế từ chối chuyến
+      description: >
+        FR06, BRu03 - Khi tài xế từ chối, hệ thống tiếp tục tìm tài xế khác
+        mà không yêu cầu khách hàng tạo lại yêu cầu.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TripRequestId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  example: "Quá xa vị trí hiện tại"
+      responses:
+        '200':
+          description: Từ chối được ghi nhận, hệ thống tiếp tục tìm tài xế khác
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TripRequest'
+        '409':
+          description: Yêu cầu đã hết hạn hoặc đã được xử lý
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    BookingId:
+      name: bookingId
+      in: path
+      required: true
+      schema:
+        type: string
+        example: "BK0001"
+    DriverId:
+      name: driverId
+      in: path
+      required: true
+      schema:
+        type: string
+        example: "DRV0001"
+    TripRequestId:
+      name: tripRequestId
+      in: path
+      required: true
+      schema:
+        type: string
+        example: "TRQ0001"
+
+  schemas:
+    DispatchStatus:
+      type: object
+      properties:
+        bookingId:
+          type: string
+        status:
+          type: string
+          enum: [SEARCHING, DRIVER_FOUND, NO_DRIVER_AVAILABLE]
+        assignedDriverId:
+          type: string
+          nullable: true
+        attemptedDriverIds:
+          type: array
+          items:
+            type: string
+          description: Danh sách tài xế đã được đề xuất trước đó (bị từ chối/không phản hồi)
+        updatedAt:
+          type: string
+          format: date-time
+
+    TripRequestStatus:
+      type: string
+      enum: [PENDING, ACCEPTED, REJECTED, EXPIRED]
+
+    TripRequest:
+      type: object
+      properties:
+        tripRequestId:
+          type: string
+          example: "TRQ0001"
+        bookingId:
+          type: string
+        driverId:
+          type: string
+        status:
+          $ref: '#/components/schemas/TripRequestStatus'
+        sentAt:
+          type: string
+          format: date-time
+        respondedAt:
+          type: string
+          format: date-time
+          nullable: true
+        tripId:
+          type: string
+          nullable: true
+          description: Được điền khi tài xế accept, tương ứng chuyến (Trip) mới tạo
+
+    ErrorResponse:
+      type: object
+      properties:
+        errorCode:
+          type: string
+        message:
+          type: string
