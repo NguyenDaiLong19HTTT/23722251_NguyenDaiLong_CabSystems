@@ -1,0 +1,213 @@
+openapi: 3.0.3
+info:
+  title: CAB System - Booking API
+  description: >
+    API tạo và theo dõi yêu cầu đặt xe. Tương ứng FR02, FR03, BR01, BP01, UC02, AC02.
+  version: "1.0.0"
+servers:
+  - url: https://api.cabsystem.example.com/v1
+tags:
+  - name: Booking
+    description: Yêu cầu đặt xe
+
+paths:
+  /bookings:
+    post:
+      tags: [Booking]
+      summary: Tạo yêu cầu đặt xe
+      description: >
+        FR02 - Khách hàng nhập điểm đón, điểm đến, chọn loại xe/dịch vụ và gửi yêu cầu đặt xe.
+        FR03 - Hệ thống tiếp nhận và ghi nhận yêu cầu.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBookingRequest'
+            example:
+              customerId: "CUS0001"
+              pickupLocation:
+                address: "123 Nguyen Hue, Q1, TP.HCM"
+                latitude: 10.7757
+                longitude: 106.7004
+              destination:
+                address: "Sân bay Tân Sơn Nhất"
+                latitude: 10.8188
+                longitude: 106.6520
+              vehicleType: "STANDARD"
+      responses:
+        '201':
+          description: Yêu cầu đặt xe được ghi nhận
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingRequest'
+        '400':
+          description: Thiếu hoặc sai thông tin điểm đón/điểm đến
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /bookings/{bookingId}:
+    get:
+      tags: [Booking]
+      summary: Xem chi tiết yêu cầu đặt xe
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BookingId'
+      responses:
+        '200':
+          description: Chi tiết yêu cầu đặt xe
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingRequest'
+        '404':
+          description: Không tìm thấy yêu cầu
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /bookings/{bookingId}/status:
+    get:
+      tags: [Booking]
+      summary: Xem trạng thái yêu cầu đặt xe
+      description: FR03 - Cập nhật trạng thái yêu cầu để khách hàng theo dõi.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BookingId'
+      responses:
+        '200':
+          description: Trạng thái hiện tại
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bookingId:
+                    type: string
+                  status:
+                    $ref: '#/components/schemas/BookingStatus'
+                  updatedAt:
+                    type: string
+                    format: date-time
+        '404':
+          description: Không tìm thấy yêu cầu
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /bookings/{bookingId}/cancel:
+    post:
+      tags: [Booking]
+      summary: Hủy yêu cầu đặt xe
+      description: Khách hàng hủy yêu cầu khi chưa có tài xế nhận chuyến.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BookingId'
+      responses:
+        '200':
+          description: Yêu cầu đã được hủy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingRequest'
+        '409':
+          description: Không thể hủy (đã có tài xế nhận chuyến)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    BookingId:
+      name: bookingId
+      in: path
+      required: true
+      schema:
+        type: string
+        example: "BK0001"
+
+  schemas:
+    Location:
+      type: object
+      required: [address, latitude, longitude]
+      properties:
+        address:
+          type: string
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+
+    VehicleType:
+      type: string
+      enum: [STANDARD, PREMIUM, MOTORBIKE, VAN]
+
+    BookingStatus:
+      type: string
+      enum:
+        - PENDING
+        - FINDING_DRIVER
+        - DRIVER_ASSIGNED
+        - NO_DRIVER_FOUND
+        - CANCELLED
+        - COMPLETED
+
+    CreateBookingRequest:
+      type: object
+      required: [customerId, pickupLocation, destination, vehicleType]
+      properties:
+        customerId:
+          type: string
+        pickupLocation:
+          $ref: '#/components/schemas/Location'
+        destination:
+          $ref: '#/components/schemas/Location'
+        vehicleType:
+          $ref: '#/components/schemas/VehicleType'
+
+    BookingRequest:
+      type: object
+      properties:
+        bookingId:
+          type: string
+          example: "BK0001"
+        customerId:
+          type: string
+        pickupLocation:
+          $ref: '#/components/schemas/Location'
+        destination:
+          $ref: '#/components/schemas/Location'
+        vehicleType:
+          $ref: '#/components/schemas/VehicleType'
+        status:
+          $ref: '#/components/schemas/BookingStatus'
+        createdAt:
+          type: string
+          format: date-time
+
+    ErrorResponse:
+      type: object
+      properties:
+        errorCode:
+          type: string
+        message:
+          type: string
