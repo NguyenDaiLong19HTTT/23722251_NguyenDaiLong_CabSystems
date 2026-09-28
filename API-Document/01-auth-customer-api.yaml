@@ -1,152 +1,448 @@
 openapi: 3.0.3
+
 info:
-  title: CAB System - Auth & Customer API
-  description: >
-    API quản lý tài khoản khách hàng: đăng ký, đăng nhập, cập nhật thông tin cá nhân.
-    Tương ứng FR01, BR01 (một phần), UC01, AC01.
-  version: "1.0.0"
+  title: CAB System - Authentication & Account API
+  version: "1.1.0"
+  description: |
+    Đặc tả tài khoản và xác thực theo SRS CAB System phiên bản 1.1.
+
+    Truy xuất yêu cầu:
+    - BR08.
+    - FR01.1 đến FR01.7.
+    - BRu09, BRu11 đến BRu15.
+    - UC01.1 đến UC01.6.
+    - AC01, NFR04, NFR05.
+
+    Phạm vi:
+    - Đăng ký công khai chỉ tạo CUSTOMER.
+    - CUSTOMER, DRIVER và OPERATOR dùng chung chức năng đăng nhập.
+    - Tài khoản DRIVER được cấp qua chức năng vận hành.
+    - Tài khoản OPERATOR được cấp bằng quy trình quản trị riêng.
+    - Không có đăng ký công khai DRIVER hoặc OPERATOR.
+
+    Quy tắc chung:
+    - accountId, role và trạng thái phiên phải được xác minh phía máy chủ.
+    - Không cấp quyền chỉ dựa vào thông tin do client gửi.
+    - Access token phải gắn với một Session.
+    - Phiên bị thu hồi không được tiếp tục truy cập dù JWT chưa hết hạn.
+    - Chỉ Account ACTIVE được dùng chức năng yêu cầu xác thực.
+    - Không ghi mật khẩu, access token hoặc refresh token vào log.
+    - Phản hồi chứa token hoặc hồ sơ cá nhân sử dụng Cache-Control: no-store.
+    - Sử dụng HTTPS ngoài môi trường phát triển cục bộ.
+
+    Thời hạn theo cấu hình MVP trong SRS:
+    - Access token: tối đa 15 phút.
+    - Session: tối đa 7 ngày tính từ lần đăng nhập.
+    - Refresh không kéo dài thời điểm hết hạn tuyệt đối của Session.
+    - Access token mới không được có hạn vượt quá thời điểm hết hạn Session.
+
+    Đây là tài liệu thiết kế, không xác nhận rằng dịch vụ đã được triển khai.
+
 servers:
-  - url: https://api.cabsystem.example.com/v1
-    description: Mock server for Swagger testing
+  - url: /v1
+    description: |
+      Đường dẫn cơ sở dự kiến.
+      Host được xác định khi triển khai hoặc cấu hình công cụ thử API.
+
 tags:
   - name: Auth
-    description: Đăng ký / Đăng nhập
-  - name: Customer
-    description: Quản lý thông tin khách hàng
+    description: Đăng ký, đăng nhập và quản lý phiên.
+  - name: Account
+    description: Hồ sơ của tài khoản đang đăng nhập.
+
+security:
+  - bearerAuth: []
 
 paths:
   /auth/register:
     post:
       tags: [Auth]
+      operationId: registerCustomer
       summary: Đăng ký tài khoản khách hàng
-      description: FR01 - Khách hàng đăng ký tài khoản mới.
+      security: []
+      description: |
+        FR01.1, UC01.1, BRu11, BRu12.
+
+        Tạo Account có role CUSTOMER và accountStatus ACTIVE,
+        đồng thời tạo hồ sơ Customer liên kết.
+
+        Email được cắt khoảng trắng hai đầu và chuyển về chữ thường.
+        Điện thoại được gửi theo định dạng quốc tế E.164.
+        Email và điện thoại phải duy nhất trên toàn bộ Account.
+
+        Từ chối thuộc tính ngoài schema, bao gồm role và accountStatus.
+        Không tự tạo phiên đăng nhập; người dùng đăng nhập sau đăng ký.
+
+        Account và Customer phải được tạo nhất quán.
+        Không trả thành công khi chỉ tạo được một trong hai đối tượng.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RegisterRequest'
+              $ref: "#/components/schemas/RegisterRequest"
             example:
-              fullName: "Nguyen Van A"
-              phone: "0901234567"
-              email: "nguyenvana@example.com"
-              password: "P@ssw0rd123"
+              fullName: "Nguyễn Văn An"
+              email: "an@example.com"
+              phone: "+84901234567"
+              password: "ExamplePassword123!"
       responses:
-        '201':
-          description: Đăng ký thành công
+        "201":
+          description: Đã tạo tài khoản khách hàng; chưa đăng nhập.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Customer'
-        '400':
-          description: Thông tin đăng ký không hợp lệ
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '409':
-          description: Email hoặc số điện thoại đã tồn tại
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/RegisteredCustomerAccount"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/ContactConflict"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
 
   /auth/login:
     post:
       tags: [Auth]
-      summary: Đăng nhập
-      description: FR01 - Khách hàng đăng nhập bằng email/số điện thoại và mật khẩu.
+      operationId: login
+      summary: Đăng nhập cho CUSTOMER, DRIVER hoặc OPERATOR
+      security: []
+      description: |
+        FR01.2, UC01.2, BRu12, BRu13.
+
+        Đăng nhập bằng emailOrPhone và password.
+        Vai trò được lấy từ Account, không nhận từ request.
+
+        Email được chuẩn hóa giống đăng ký.
+        Số điện thoại sử dụng E.164.
+        Mật khẩu được so sánh nguyên trạng, không trim và không đổi hoa/thường.
+
+        Sau khi xác thực đúng:
+        - Kiểm tra Account ACTIVE.
+        - Tạo Session mới.
+        - Cấp access token và refresh token.
+        - Trả hồ sơ tương ứng với vai trò.
+
+        Tài khoản không tồn tại hoặc mật khẩu sai đều trả 401
+        với errorCode INVALID_CREDENTIALS và thông báo chung.
+
+        Chỉ trả ACCOUNT_NOT_ACTIVE sau khi đã xác minh
+        thông tin đăng nhập đúng.
+
+        Nếu hồ sơ theo vai trò bị thiếu hoặc dữ liệu tài khoản không nhất quán,
+        không cấp phiên; ghi nhận lỗi để xử lý.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/LoginRequest'
-            example:
-              emailOrPhone: "nguyenvana@example.com"
-              password: "P@ssw0rd123"
+              $ref: "#/components/schemas/LoginRequest"
+            examples:
+              byEmail:
+                summary: Đăng nhập bằng email
+                value:
+                  emailOrPhone: "an@example.com"
+                  password: "ExamplePassword123!"
+              byPhone:
+                summary: Đăng nhập bằng số điện thoại
+                value:
+                  emailOrPhone: "+84901234567"
+                  password: "ExamplePassword123!"
       responses:
-        '200':
-          description: Đăng nhập thành công
+        "200":
+          description: Đăng nhập thành công và tạo phiên mới.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LoginResponse'
-        '401':
-          description: Thông tin đăng nhập không chính xác
+                $ref: "#/components/schemas/AuthSessionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: |
+            INVALID_CREDENTIALS.
+            Không phân biệt tài khoản không tồn tại với mật khẩu sai.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                errorCode: INVALID_CREDENTIALS
+                message: "Thông tin đăng nhập không hợp lệ."
+        "403":
+          $ref: "#/components/responses/AccountNotActive"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshSession
+      summary: Làm mới token của phiên hiện tại
+      security: []
+      description: |
+        FR01.5, UC01.5, BRu15.
+
+        Endpoint không yêu cầu access token.
+        Refresh token trong body là thông tin xác thực cho thao tác này.
+
+        Kiểm tra:
+        - Refresh token tồn tại, còn hạn và là token hiện hành của Session.
+        - Session chưa bị thu hồi và chưa hết hạn tuyệt đối.
+        - Account đang ACTIVE.
+
+        Khi thành công:
+        - Thay refresh token cũ bằng token mới.
+        - Cấp access token mới.
+        - Giữ nguyên thời điểm hết hạn tuyệt đối của Session.
+
+        Token cũ không được dùng lại.
+        Nếu hai request đồng thời dùng cùng một refresh token,
+        tối đa một request được thành công.
+
+        Không tạo Session mới để kéo dài thời hạn 7 ngày.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: Đã thay refresh token và cấp access token mới.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthSessionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: |
+            INVALID_REFRESH_TOKEN.
+            Token không hợp lệ, đã thay thế, hết hạn,
+            hoặc Session đã hết hạn/bị thu hồi.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                errorCode: INVALID_REFRESH_TOKEN
+                message: "Phiên không thể làm mới. Vui lòng đăng nhập lại."
+        "403":
+          $ref: "#/components/responses/AccountNotActive"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
 
   /auth/logout:
     post:
       tags: [Auth]
-      summary: Đăng xuất
-      security:
-        - bearerAuth: []
-      responses:
-        '204':
-          description: Đăng xuất thành công
+      operationId: logout
+      summary: Đăng xuất phiên hiện tại
+      description: |
+        FR01.6, UC01.6, BRu15.
 
-  /customers/{customerId}:
-    get:
-      tags: [Customer]
-      summary: Lấy thông tin khách hàng
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/CustomerId'
-      responses:
-        '200':
-          description: Thông tin khách hàng
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Customer'
-        '404':
-          description: Không tìm thấy khách hàng
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+        Xác định Session từ access token đã được xác minh,
+        không nhận accountId hoặc sessionId từ body.
 
-    put:
-      tags: [Customer]
-      summary: Cập nhật thông tin cá nhân
-      description: FR01 - Khách hàng cập nhật thông tin cá nhân.
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/CustomerId'
+        Thu hồi Session hiện tại và refresh token của Session đó.
+        Các Session khác của cùng Account không bị ảnh hưởng.
+
+        Access token thuộc Session đã thu hồi không được tiếp tục
+        truy cập chức năng được bảo vệ.
+
+        Gửi lại sau khi Session đã thu hồi có thể nhận 401.
+        Trạng thái cuối vẫn là đã đăng xuất;
+        không được thu hồi nhầm Session khác.
+
+        Không trả 204 nếu chưa xác nhận thu hồi thành công.
+      responses:
+        "204":
+          description: Đã thu hồi phiên hiện tại; không có response body.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/AccountNotActive"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
+  /auth/change-password:
+    post:
+      tags: [Auth]
+      operationId: changePassword
+      summary: Đổi mật khẩu và thu hồi mọi phiên
+      description: |
+        FR01.4, UC01.4, BRu15.
+
+        Yêu cầu phiên đăng nhập hợp lệ và currentPassword đúng.
+        Không nhận accountId của người khác trong request.
+
+        Kiểm tra mật khẩu mới, lưu bản băm và thu hồi
+        mọi Session của Account, bao gồm Session đang thực hiện.
+
+        Không trả thành công trước khi việc đổi mật khẩu
+        và thu hồi các phiên đã được xác nhận.
+
+        Người dùng phải đăng nhập lại bằng mật khẩu mới.
+        Không trả token mới trong response.
+
+        currentPassword sai trả 400 với CURRENT_PASSWORD_INVALID.
+        Không trim hoặc thay đổi nội dung mật khẩu.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateCustomerRequest'
-            example:
-              fullName: "Nguyen Van A"
-              phone: "0909999999"
+              $ref: "#/components/schemas/ChangePasswordRequest"
       responses:
-        '200':
-          description: Cập nhật thành công
+        "204":
+          description: Đã đổi mật khẩu và thu hồi mọi phiên.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "400":
+          description: |
+            VALIDATION_ERROR hoặc CURRENT_PASSWORD_INVALID.
+            Không đổi mật khẩu khi kiểm tra thất bại.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Customer'
-        '400':
-          description: Dữ liệu không hợp lệ
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/AccountNotActive"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
+  /accounts/me:
+    get:
+      tags: [Account]
+      operationId: getMyAccount
+      summary: Xem hồ sơ của tài khoản đang đăng nhập
+      description: |
+        FR01.3, UC01.3, BRu09.
+
+        Account được xác định từ thông tin xác thực.
+        Không nhận accountId hoặc customerId để chọn người khác.
+
+        Trả thông tin chung và đúng một mã hồ sơ theo vai trò:
+        - CUSTOMER: customerId.
+        - DRIVER: driverId.
+        - OPERATOR: operatorId.
+
+        Không trả passwordHash, refreshTokenHash hoặc danh sách token.
+      responses:
+        "200":
+          description: Hồ sơ của tài khoản đang đăng nhập.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Không tìm thấy khách hàng
+                $ref: "#/components/schemas/Account"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/AccountNotActive"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
+    patch:
+      tags: [Account]
+      operationId: updateMyAccount
+      summary: Cập nhật một phần hồ sơ của chính mình
+      description: |
+        FR01.3, UC01.3, BRu12, BRu14.
+
+        Cho phép sửa fullName, email hoặc phone.
+        Phải có ít nhất một trường hồ sơ trong request.
+
+        Trường không gửi giữ nguyên.
+        Không chấp nhận null để xóa thông tin bắt buộc.
+
+        Khi request có email hoặc phone, phải gửi currentPassword
+        và xác minh đúng trước khi cập nhật.
+
+        Email được chuẩn hóa giống đăng ký.
+        Điện thoại sử dụng E.164.
+        Email và điện thoại phải duy nhất trên toàn bộ Account.
+
+        Từ chối thuộc tính ngoài schema, bao gồm role,
+        accountStatus, accountId, customerId, driverId và operatorId.
+
+        currentPassword chỉ dùng để xác minh, không phải mật khẩu mới.
+        Đổi mật khẩu sử dụng /auth/change-password.
+
+        Mọi trường trong cùng request được cập nhật nhất quán.
+        Nếu một trường không hợp lệ hoặc trùng, không cập nhật một phần.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAccountRequest"
+            examples:
+              changeName:
+                summary: Đổi họ tên
+                value:
+                  fullName: "Nguyễn Văn An"
+              changePhone:
+                summary: Đổi số điện thoại
+                value:
+                  phone: "+84909876543"
+                  currentPassword: "ExamplePassword123!"
+      responses:
+        "200":
+          description: Hồ sơ sau khi cập nhật thành công.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/Account"
+        "400":
+          description: |
+            VALIDATION_ERROR hoặc CURRENT_PASSWORD_INVALID.
+            Có thể do body rỗng, trường không cho phép,
+            thiếu mật khẩu xác minh hoặc mật khẩu xác minh sai.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/AccountNotActive"
+        "409":
+          $ref: "#/components/responses/ContactConflict"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
 
 components:
   securitySchemes:
@@ -154,91 +450,404 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: |
+        Access token gắn với Account và Session.
+        Máy chủ xác minh chữ ký, thời hạn, Session,
+        trạng thái tài khoản và quyền cho thao tác.
+        JWT chưa hết hạn không bảo đảm Session còn hợp lệ.
 
-  parameters:
-    CustomerId:
-      name: customerId
-      in: path
-      required: true
+  headers:
+    NoStore:
+      description: Không lưu phản hồi vào bộ nhớ đệm.
       schema:
         type: string
-        example: "CUS0001"
+        enum: [no-store]
 
   schemas:
+    Identifier:
+      type: string
+      minLength: 1
+      description: |
+        Mã định danh do hệ thống cấp.
+        Client phải coi là chuỗi không có cấu trúc nghiệp vụ để suy diễn.
+
+    FullName:
+      type: string
+      minLength: 1
+      pattern: '\S'
+      description: |
+        Họ tên có ít nhất một ký tự không phải khoảng trắng.
+        Cắt khoảng trắng hai đầu trước khi kiểm tra và lưu.
+      example: "Nguyễn Văn An"
+
+    Email:
+      type: string
+      format: email
+      description: |
+        Email hợp lệ.
+        Cắt khoảng trắng hai đầu và chuyển về chữ thường
+        trước khi kiểm tra trùng và lưu.
+      example: "an@example.com"
+
+    Phone:
+      type: string
+      pattern: '^\+[1-9][0-9]{7,14}$'
+      description: |
+        Điện thoại ở dạng quốc tế E.164, không có dấu cách.
+        Ví dụ số Việt Nam 0901234567 được gửi thành +84901234567.
+        Kiểm tra định dạng không đồng nghĩa đã xác minh sở hữu số.
+      example: "+84901234567"
+
+    PasswordInput:
+      type: string
+      format: password
+      writeOnly: true
+      minLength: 1
+      description: |
+        Mật khẩu hiện tại được gửi nguyên trạng.
+        Không trim, không thay đổi chữ hoa/chữ thường.
+
+    NewPassword:
+      type: string
+      format: password
+      writeOnly: true
+      minLength: 8
+      pattern: '\S'
+      description: |
+        Mật khẩu mới có ít nhất 8 ký tự,
+        không được chỉ gồm khoảng trắng.
+        Không trim hoặc thay đổi nội dung người dùng nhập.
+
     RegisterRequest:
       type: object
-      required: [fullName, phone, email, password]
+      additionalProperties: false
+      required:
+        - fullName
+        - email
+        - phone
+        - password
       properties:
         fullName:
-          type: string
-        phone:
-          type: string
+          $ref: "#/components/schemas/FullName"
         email:
-          type: string
-          format: email
+          $ref: "#/components/schemas/Email"
+        phone:
+          $ref: "#/components/schemas/Phone"
         password:
-          type: string
-          format: password
-          minLength: 8
+          $ref: "#/components/schemas/NewPassword"
 
     LoginRequest:
       type: object
-      required: [emailOrPhone, password]
+      additionalProperties: false
+      required:
+        - emailOrPhone
+        - password
       properties:
         emailOrPhone:
           type: string
+          minLength: 1
+          description: |
+            Email hoặc số điện thoại E.164.
+            Không phải username riêng.
+          example: "an@example.com"
         password:
-          type: string
-          format: password
+          $ref: "#/components/schemas/PasswordInput"
 
-    LoginResponse:
+    RefreshRequest:
       type: object
+      additionalProperties: false
+      required:
+        - refreshToken
       properties:
-        accessToken:
+        refreshToken:
           type: string
-        tokenType:
-          type: string
-          example: Bearer
-        expiresIn:
-          type: integer
-          example: 3600
-        customer:
-          $ref: '#/components/schemas/Customer'
+          minLength: 1
+          writeOnly: true
+          description: Refresh token hiện hành của Session.
 
-    UpdateCustomerRequest:
+    ChangePasswordRequest:
       type: object
+      additionalProperties: false
+      required:
+        - currentPassword
+        - newPassword
+      properties:
+        currentPassword:
+          $ref: "#/components/schemas/PasswordInput"
+        newPassword:
+          $ref: "#/components/schemas/NewPassword"
+
+    UpdateAccountRequest:
+      type: object
+      additionalProperties: false
       properties:
         fullName:
-          type: string
-        phone:
-          type: string
+          $ref: "#/components/schemas/FullName"
         email:
-          type: string
-          format: email
+          $ref: "#/components/schemas/Email"
+        phone:
+          $ref: "#/components/schemas/Phone"
+        currentPassword:
+          $ref: "#/components/schemas/PasswordInput"
+      anyOf:
+        - required: [fullName]
+        - required: [email]
+        - required: [phone]
+      allOf:
+        - anyOf:
+            - not:
+                required: [email]
+            - required: [currentPassword]
+        - anyOf:
+            - not:
+                required: [phone]
+            - required: [currentPassword]
 
-    Customer:
+    Account:
       type: object
+      additionalProperties: false
+      required:
+        - accountId
+        - fullName
+        - email
+        - phone
+        - role
+        - accountStatus
+        - createdAt
+        - updatedAt
       properties:
-        customerId:
-          type: string
-          example: "CUS0001"
+        accountId:
+          $ref: "#/components/schemas/Identifier"
         fullName:
-          type: string
-        phone:
-          type: string
+          $ref: "#/components/schemas/FullName"
         email:
+          $ref: "#/components/schemas/Email"
+        phone:
+          $ref: "#/components/schemas/Phone"
+        role:
           type: string
+          enum: [CUSTOMER, DRIVER, OPERATOR]
         accountStatus:
           type: string
           enum: [ACTIVE, INACTIVE, SUSPENDED]
+        customerId:
+          $ref: "#/components/schemas/Identifier"
+        driverId:
+          $ref: "#/components/schemas/Identifier"
+        operatorId:
+          $ref: "#/components/schemas/Identifier"
         createdAt:
           type: string
           format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      oneOf:
+        - required: [customerId]
+          properties:
+            role:
+              type: string
+              enum: [CUSTOMER]
+          not:
+            anyOf:
+              - required: [driverId]
+              - required: [operatorId]
+        - required: [driverId]
+          properties:
+            role:
+              type: string
+              enum: [DRIVER]
+          not:
+            anyOf:
+              - required: [customerId]
+              - required: [operatorId]
+        - required: [operatorId]
+          properties:
+            role:
+              type: string
+              enum: [OPERATOR]
+          not:
+            anyOf:
+              - required: [customerId]
+              - required: [driverId]
+      example:
+        accountId: "ACC0001"
+        fullName: "Nguyễn Văn An"
+        email: "an@example.com"
+        phone: "+84901234567"
+        role: CUSTOMER
+        accountStatus: ACTIVE
+        customerId: "CUS0001"
+        createdAt: "2026-09-28T08:00:00Z"
+        updatedAt: "2026-09-28T08:00:00Z"
+
+    RegisteredCustomerAccount:
+      allOf:
+        - $ref: "#/components/schemas/Account"
+        - type: object
+          required: [customerId]
+          properties:
+            role:
+              type: string
+              enum: [CUSTOMER]
+            accountStatus:
+              type: string
+              enum: [ACTIVE]
+
+    AuthSessionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - accessToken
+        - refreshToken
+        - tokenType
+        - expiresIn
+        - sessionExpiresAt
+        - account
+      properties:
+        accessToken:
+          type: string
+          minLength: 1
+          description: JWT truy cập gắn với Account và Session.
+        refreshToken:
+          type: string
+          minLength: 1
+          description: |
+            Refresh token mới cấp.
+            Chỉ lưu bản băm phía máy chủ.
+            Không đưa token vào URL hoặc log.
+        tokenType:
+          type: string
+          enum: [Bearer]
+        expiresIn:
+          type: integer
+          minimum: 1
+          maximum: 900
+          description: |
+            Số giây còn hiệu lực của access token mới.
+            Có thể nhỏ hơn 900 nếu Session sắp hết hạn.
+          example: 900
+        sessionExpiresAt:
+          type: string
+          format: date-time
+          description: |
+            Thời điểm hết hạn tuyệt đối của Session.
+            Giữ nguyên khi refresh.
+        account:
+          $ref: "#/components/schemas/Account"
+
+    FieldError:
+      type: object
+      additionalProperties: false
+      required:
+        - field
+        - message
+      properties:
+        field:
+          type: string
+          example: "phone"
+        message:
+          type: string
+          example: "Số điện thoại phải ở định dạng E.164."
 
     ErrorResponse:
       type: object
+      additionalProperties: false
+      required:
+        - errorCode
+        - message
       properties:
         errorCode:
           type: string
+          description: Mã lỗi ổn định để client xử lý.
+          example: VALIDATION_ERROR
         message:
           type: string
+          description: |
+            Thông báo an toàn cho người dùng.
+            Không chứa mật khẩu, token, stack trace hoặc chi tiết database.
+        details:
+          type: array
+          description: |
+            Danh sách lỗi theo trường khi phù hợp.
+            Không đưa giá trị mật khẩu hoặc token vào thông báo.
+          items:
+            $ref: "#/components/schemas/FieldError"
+        correlationId:
+          type: string
+          description: Mã tham chiếu để tra cứu lỗi phía máy chủ.
+
+  responses:
+    BadRequest:
+      description: |
+        VALIDATION_ERROR.
+        Body hoặc dữ liệu không hợp lệ, thiếu trường,
+        hoặc chứa thuộc tính không được phép.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    Unauthenticated:
+      description: |
+        UNAUTHENTICATED.
+        Thiếu access token, token không hợp lệ/hết hạn,
+        hoặc Session không tồn tại, hết hạn hay đã bị thu hồi.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            errorCode: UNAUTHENTICATED
+            message: "Phiên đăng nhập không hợp lệ. Vui lòng đăng nhập lại."
+
+    AccountNotActive:
+      description: |
+        ACCOUNT_NOT_ACTIVE.
+        Account đang INACTIVE hoặc SUSPENDED.
+        Không trả thông tin trạng thái tài khoản cho người
+        chưa chứng minh được thông tin xác thực phù hợp.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            errorCode: ACCOUNT_NOT_ACTIVE
+            message: "Tài khoản hiện không được phép sử dụng chức năng này."
+
+    ContactConflict:
+      description: |
+        CONTACT_CONFLICT.
+        Email hoặc điện thoại sau chuẩn hóa đã thuộc Account khác.
+        Không trả thông tin của tài khoản đang sở hữu.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            errorCode: CONTACT_CONFLICT
+            message: "Email hoặc số điện thoại đã được sử dụng."
+
+    ServiceUnavailable:
+      description: |
+        SERVICE_UNAVAILABLE.
+        Không thể xác minh hoặc xử lý an toàn do phụ thuộc cần thiết
+        không sẵn sàng. Không bỏ qua kiểm tra phiên để cấp quyền.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            errorCode: SERVICE_UNAVAILABLE
+            message: "Dịch vụ tạm thời không khả dụng. Vui lòng thử lại sau."
+
+    UnexpectedError:
+      description: |
+        Lỗi ngoài dự kiến; sử dụng HTTP 5xx phù hợp.
+        Không trả chi tiết nội bộ cho client.
+        Nếu phản hồi bị mất sau một thay đổi, client phải xác minh trạng thái;
+        không được mặc định rằng thao tác chắc chắn chưa thực hiện.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
