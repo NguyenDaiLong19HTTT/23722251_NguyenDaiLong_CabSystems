@@ -1,27 +1,118 @@
 openapi: 3.0.3
+
 info:
   title: CAB System - Rating API
-  description: >
-    API cho phép khách hàng đánh giá tài xế sau khi chuyến hoàn thành.
-    Tương ứng FR16, BR06 (đánh giá), BP06, UC08, AC07.
-  version: "1.0.0"
+  version: 1.1.0
+  description: |
+    API đánh giá chuyến đi của CAB System.
+
+    Quy tắc nghiệp vụ:
+    - Chỉ CUSTOMER sở hữu Trip được tạo đánh giá.
+    - Trip phải có tripStatus = COMPLETED.
+    - Không yêu cầu Payment SUCCESS.
+    - Trip CANCELLED hoặc ERROR không đủ điều kiện đánh giá,
+      kể cả ERROR đã có closedAt.
+    - Mỗi Trip chỉ có một Rating.
+    - Điểm đánh giá là số nguyên từ 1 đến 5.
+    - Nhận xét là tùy chọn.
+    - MVP không cung cấp API sửa hoặc xóa đánh giá.
+
+    Xác định chủ thể:
+    - customerId được xác định từ tài khoản đăng nhập và Trip.
+    - driverId được lấy từ tài xế đã thực hiện Trip.
+    - Không lấy tài xế từ phân công xe hiện tại.
+    - Không nhận customerId, driverId hoặc accountId trong body tạo đánh giá.
+
+    Phân quyền:
+    - Tài khoản phải ACTIVE và Session còn hiệu lực.
+    - Token chưa hết hạn không đủ nếu Session đã bị thu hồi.
+    - CUSTOMER chỉ xem hoặc tạo đánh giá cho Trip của mình.
+    - DRIVER chỉ xem đánh giá của Trip được gán cho mình.
+    - OPERATOR được tra cứu nhưng không tạo đánh giá thay khách hàng.
+
+    Tính nhất quán:
+    - Ràng buộc duy nhất theo tripId phải được bảo đảm ở tầng lưu trữ.
+    - Kiểm tra trước khi ghi không thay thế ràng buộc duy nhất.
+    - Hai yêu cầu đồng thời không được tạo hai Rating cho cùng Trip.
+    - Lỗi hoặc gửi lại yêu cầu không được tạo thêm đánh giá.
+
+    Phạm vi:
+    - Rating không thay đổi Trip, Fare hoặc Payment.
+    - Không tự khóa tài xế chỉ dựa vào một đánh giá thấp.
+    - File này không định nghĩa thuật toán xếp hạng hoặc tính điểm thưởng.
+
+    Mọi phản hồi chứa dữ liệu đánh giá phải sử dụng Cache-Control: no-store.
+
 servers:
-  - url: https://api.cabsystem.example.com/v1
+  - url: /v1
+    description: API phiên bản 1
+
+security:
+  - bearerAuth: []
+
 tags:
-  - name: Rating
+  - name: Trip Ratings
+    description: Tạo và xem đánh giá của một chuyến
+  - name: Driver Ratings
+    description: Tài xế xem đánh giá dành cho mình
+  - name: Operational Ratings
+    description: Điều hành viên tra cứu đánh giá
 
 paths:
-  /trips/{tripId}/ratings:
+  /trips/{tripId}/rating:
     post:
-      tags: [Rating]
-      summary: Đánh giá tài xế sau chuyến
-      description: >
-        FR16 - Chỉ khách hàng đã sử dụng chuyến và chuyến đã hoàn thành mới
-        có thể đánh giá.
-      security:
-        - bearerAuth: []
+      tags:
+        - Trip Ratings
+      summary: Khách hàng đánh giá chuyến đã hoàn tất
+      operationId: createTripRating
+      description: |
+        Chỉ CUSTOMER sở hữu Trip.
+
+        Điều kiện:
+        - Tài khoản ACTIVE và Session hợp lệ.
+        - Trip thuộc Customer đang đăng nhập.
+        - Trip có tripStatus = COMPLETED.
+        - Trip chưa có Rating.
+
+        Không kiểm tra Payment SUCCESS như điều kiện đánh giá.
+        Khách hàng vẫn được đánh giá khi Payment đang PENDING,
+        PROCESSING, FAILED hoặc UNKNOWN, hoặc Payment chưa được tạo.
+
+        Request body chỉ gồm score và comment tùy chọn.
+        Các trường như customerId, driverId, tripStatus, createdAt
+        hoặc ratingId do client gửi thêm phải bị từ chối.
+
+        Chuẩn hóa comment:
+        - Nếu có, trim khoảng trắng đầu và cuối.
+        - Nếu sau trim là chuỗi rỗng, coi như không có comment.
+        - Lưu nội dung dưới dạng văn bản thuần.
+        - Giới hạn độ dài request là 1000 ký tự.
+
+        Idempotency:
+        - Bắt buộc Idempotency-Key.
+        - Khóa được giới hạn theo accountId, phương thức và đường dẫn.
+        - Cùng khóa và cùng nội dung chuẩn hóa: trả lại phản hồi 201 đã lưu.
+        - Cùng khóa nhưng khác nội dung: trả 409 IDEMPOTENCY_KEY_REUSED.
+        - Cùng khóa đang xử lý: trả 409 REQUEST_IN_PROGRESS.
+        - Kiểm tra danh tính và quyền hiện tại trước khi trả kết quả đã lưu.
+        - Với phát lại hợp lệ, tra kết quả đã lưu trước kiểm tra Rating tồn tại.
+        - Khóa mới nhưng Trip đã có Rating: trả 409 RATING_ALREADY_EXISTS.
+
+        Ghi Rating và kết quả idempotency phải có cơ chế phục hồi nhất quán.
+        Nếu đã ghi Rating nhưng mất phản hồi, gửi lại cùng khóa phải lấy
+        được kết quả ban đầu thay vì tạo thêm hoặc báo nhầm là thao tác mới.
+
+        Hai khóa khác nhau cùng tạo Rating cho một Trip:
+        - Chỉ một yêu cầu được tạo thành công.
+        - Yêu cầu còn lại nhận 409 RATING_ALREADY_EXISTS.
+
+        Ghi audit cho lần tạo thực tế.
+        Không ghi thêm một lần tạo nghiệp vụ khi phát lại yêu cầu.
+
+        Không thay đổi trạng thái Trip, Driver, Fare hoặc Payment.
       parameters:
         - $ref: '#/components/parameters/TripId'
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -29,79 +120,215 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateRatingRequest'
             example:
-              ratingScore: 5
-              comment: "Tài xế thân thiện, lái xe an toàn."
+              score: 5
+              comment: Tài xế đến đúng điểm đón và lái xe cẩn thận.
       responses:
         '201':
-          description: Đánh giá được lưu thành công
+          description: |
+            Đã tạo đánh giá hoặc trả lại kết quả của cùng yêu cầu trước đó.
+          headers:
+            Location:
+              description: Đường dẫn xem đánh giá vừa tạo
+              schema:
+                type: string
+              example: /v1/trips/trip_001/rating
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Rating'
         '400':
-          description: Thông tin đánh giá không hợp lệ
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/TripNotFound'
         '409':
-          description: Chuyến chưa hoàn thành hoặc đã được đánh giá trước đó
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        default:
+          $ref: '#/components/responses/UnexpectedError'
 
     get:
-      tags: [Rating]
+      tags:
+        - Trip Ratings
       summary: Xem đánh giá của một chuyến
-      security:
-        - bearerAuth: []
+      operationId: getTripRating
+      description: |
+        Cho phép:
+        - CUSTOMER sở hữu Trip.
+        - DRIVER được gán cho Trip.
+        - OPERATOR.
+
+        Kiểm tra quyền truy cập Trip trước khi tra cứu hoặc trả Rating.
+
+        Với CUSTOMER và DRIVER:
+        - Trip không tồn tại hoặc không thuộc phạm vi truy cập: trả 404.
+        - Không tiết lộ Trip có Rating hay chưa cho người không có quyền.
+
+        Với người có quyền truy cập Trip:
+        - Nếu Trip chưa có Rating, trả 404 RATING_NOT_FOUND.
+        - Không tạo Rating mặc định.
+        - Không trả score = 0 thay cho chưa có đánh giá.
+
+        Đây là API chỉ đọc.
+        Thay đổi phân công xe hoặc trạng thái tài xế sau chuyến
+        không làm thay đổi driverId đã được đánh giá.
       parameters:
         - $ref: '#/components/parameters/TripId'
       responses:
         '200':
-          description: Đánh giá của chuyến (nếu có)
+          description: Đánh giá của chuyến
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Rating'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
-          description: Chuyến chưa được đánh giá
+          description: |
+            TRIP_NOT_FOUND nếu Trip không tồn tại hoặc ngoài quyền truy cập.
+            RATING_NOT_FOUND nếu được xem Trip nhưng Trip chưa có đánh giá.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        default:
+          $ref: '#/components/responses/UnexpectedError'
 
-  /drivers/{driverId}/ratings:
+  /drivers/me/ratings:
     get:
-      tags: [Rating]
-      summary: Xem danh sách đánh giá của một tài xế
-      security:
-        - bearerAuth: []
+      tags:
+        - Driver Ratings
+      summary: Tài xế xem danh sách đánh giá dành cho mình
+      operationId: listMyDriverRatings
+      description: |
+        Chỉ DRIVER.
+
+        driverId được lấy từ Account đang đăng nhập.
+        Không nhận driverId, customerId hoặc accountId từ query.
+
+        Chỉ trả Rating có driverId tương ứng với tài xế hiện tại.
+        Không trả email, số điện thoại hoặc thông tin đăng nhập của khách hàng.
+
+        Có thể lọc theo score.
+        Sắp xếp createdAt giảm dần, sau đó ratingId giảm dần.
+
+        Cursor gắn với tài khoản, endpoint và bộ lọc.
+        Cursor không hợp lệ hoặc không khớp truy vấn trả 400.
+
+        Chưa có đánh giá thì trả items rỗng và nextCursor = null.
+        Không dùng một đánh giá giả hoặc score = 0 để biểu thị chưa có dữ liệu.
       parameters:
-        - name: driverId
-          in: path
-          required: true
-          schema:
-            type: string
-            example: "DRV0001"
-        - name: page
-          in: query
-          schema:
-            type: integer
-            default: 1
-        - name: pageSize
-          in: query
-          schema:
-            type: integer
-            default: 20
+        - $ref: '#/components/parameters/ScoreFilter'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
-          description: Danh sách đánh giá và điểm trung bình
+          description: Danh sách đánh giá dành cho tài xế
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DriverRatingsSummary'
+                $ref: '#/components/schemas/RatingPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        default:
+          $ref: '#/components/responses/UnexpectedError'
+
+  /operations/ratings:
+    get:
+      tags:
+        - Operational Ratings
+      summary: Điều hành viên tra cứu đánh giá
+      operationId: listOperationalRatings
+      description: |
+        Chỉ OPERATOR.
+
+        Cho phép lọc theo driverId, tripId hoặc score.
+        Các bộ lọc được kết hợp theo điều kiện AND.
+
+        from và to lọc theo thời điểm tạo Rating:
+        - from được tính vào khoảng.
+        - to không được tính vào khoảng.
+        - Nếu có cả hai thì from phải nhỏ hơn to.
+        - Thời gian phải có thông tin múi giờ.
+
+        Sắp xếp createdAt giảm dần, sau đó ratingId giảm dần.
+        Cursor gắn với endpoint và bộ lọc.
+
+        Không có kết quả phù hợp thì trả items rỗng.
+        Endpoint chỉ phục vụ tra cứu, không cấp quyền sửa hoặc xóa Rating.
+
+        Đường dẫn thuộc nhóm vận hành nhưng hợp đồng Rating được quản lý
+        trong tài liệu này, không định nghĩa lặp lại trong Operations API.
+      parameters:
+        - name: driverId
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Identifier'
+        - name: tripId
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Identifier'
+        - $ref: '#/components/parameters/ScoreFilter'
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Danh sách đánh giá phù hợp
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RatingPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        default:
+          $ref: '#/components/responses/UnexpectedError'
 
 components:
   securitySchemes:
@@ -109,70 +336,269 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: |
+        Access token của người dùng.
+        Kiểm tra Account ACTIVE, Session hợp lệ và quyền theo endpoint.
+        Kiểm tra quyền sở hữu Trip tại máy chủ.
+        Không tin customerId, driverId hoặc role do client tự khai báo.
+
+  headers:
+    NoStore:
+      description: Không lưu phản hồi vào bộ nhớ đệm
+      schema:
+        type: string
+        enum:
+          - no-store
 
   parameters:
     TripId:
       name: tripId
       in: path
       required: true
+      description: Định danh chuyến được đánh giá
+      schema:
+        $ref: '#/components/schemas/Identifier'
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Khóa ổn định của yêu cầu tạo đánh giá.
+        Gửi lại cùng thao tác phải giữ nguyên khóa và nội dung.
       schema:
         type: string
-        example: "TRP0001"
+        minLength: 1
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._:-]+$'
+
+    ScoreFilter:
+      name: score
+      in: query
+      required: false
+      description: Chỉ lấy đánh giá có đúng số điểm này
+      schema:
+        $ref: '#/components/schemas/RatingScore'
+
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Số đánh giá tối đa trong một trang
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: |
+        Cursor opaque nhận từ nextCursor của trang trước.
+        Client không tự tạo hoặc chỉnh sửa.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 2048
 
   schemas:
+    Identifier:
+      type: string
+      minLength: 1
+      maxLength: 128
+      description: Định danh không rỗng do hệ thống quản lý
+
+    RatingScore:
+      type: integer
+      minimum: 1
+      maximum: 5
+      description: Điểm đánh giá nguyên từ 1 đến 5
+
     CreateRatingRequest:
       type: object
-      required: [ratingScore]
+      additionalProperties: false
+      required:
+        - score
       properties:
-        ratingScore:
-          type: integer
-          minimum: 1
-          maximum: 5
+        score:
+          $ref: '#/components/schemas/RatingScore'
         comment:
           type: string
+          maxLength: 1000
+          description: |
+            Nhận xét tùy chọn, dạng văn bản thuần.
+            Trim khoảng trắng đầu và cuối trước khi lưu.
+            Chuỗi rỗng sau trim được coi như không có nhận xét.
+            Không nhận null; bỏ qua trường nếu không muốn nhận xét.
 
     Rating:
       type: object
+      additionalProperties: false
+      required:
+        - ratingId
+        - tripId
+        - customerId
+        - driverId
+        - score
+        - createdAt
       properties:
         ratingId:
-          type: string
-          example: "RTG0001"
+          $ref: '#/components/schemas/Identifier'
         tripId:
-          type: string
+          $ref: '#/components/schemas/Identifier'
         customerId:
-          type: string
+          $ref: '#/components/schemas/Identifier'
         driverId:
-          type: string
-        ratingScore:
-          type: integer
-          minimum: 1
-          maximum: 5
+          $ref: '#/components/schemas/Identifier'
+        score:
+          $ref: '#/components/schemas/RatingScore'
         comment:
           type: string
+          minLength: 1
+          maxLength: 1000
+          pattern: '\S'
+          description: |
+            Nhận xét đã chuẩn hóa.
+            Không xuất hiện nếu khách hàng không nhập nội dung.
+            Client hiển thị như văn bản thuần, không thực thi như HTML.
         createdAt:
           type: string
           format: date-time
+          description: |
+            Thời điểm tạo Rating do máy chủ ghi nhận.
+            Không đổi khi phát lại yêu cầu.
+      description: |
+        Một Rating duy nhất cho một Trip.
+        customerId và driverId phản ánh các bên của Trip được đánh giá.
+        Không chứa email, số điện thoại, dữ liệu thẻ hoặc thông tin đăng nhập.
 
-    DriverRatingsSummary:
+    RatingPage:
       type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
       properties:
-        driverId:
-          type: string
-        averageScore:
-          type: number
-          format: double
-          example: 4.7
-        totalRatings:
-          type: integer
-        ratings:
+        items:
           type: array
+          maxItems: 100
           items:
             $ref: '#/components/schemas/Rating'
+        nextCursor:
+          type: string
+          nullable: true
+          description: Cursor trang tiếp theo; null nếu không còn kết quả
 
-    ErrorResponse:
+    ErrorDetail:
       type: object
+      additionalProperties: false
+      required:
+        - field
+        - message
       properties:
-        errorCode:
+        field:
           type: string
         message:
           type: string
+
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - errorCode
+        - message
+      properties:
+        errorCode:
+          type: string
+          description: Mã lỗi ổn định để client xử lý
+        message:
+          type: string
+          description: Mô tả lỗi có thể hiển thị an toàn
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDetail'
+        correlationId:
+          type: string
+          description: Định danh phục vụ tra cứu log nội bộ
+
+  responses:
+    BadRequest:
+      description: |
+        Dữ liệu hoặc tham số không hợp lệ.
+        Ví dụ: VALIDATION_ERROR, INVALID_CURSOR hoặc INVALID_TIME_RANGE.
+
+        Các trường hợp gồm:
+        - score không phải số nguyên trong khoảng 1..5.
+        - comment vượt giới hạn.
+        - Có trường không được phép trong request body.
+        - Thiếu hoặc sai định dạng Idempotency-Key.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    Unauthorized:
+      description: |
+        Thiếu token, token không hợp lệ, Session hết hạn hoặc đã bị thu hồi.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    Forbidden:
+      description: |
+        Tài khoản không ACTIVE hoặc role không được phép gọi endpoint.
+        Ví dụ: DRIVER hoặc OPERATOR gọi API tạo đánh giá.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    TripNotFound:
+      description: |
+        TRIP_NOT_FOUND.
+        Trip không tồn tại hoặc không thuộc phạm vi truy cập của người gọi.
+        Không tiết lộ thông tin Trip cho tài khoản không có quyền.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    Conflict:
+      description: |
+        Xung đột nghiệp vụ hoặc yêu cầu trùng.
+
+        Mã lỗi:
+        - TRIP_NOT_COMPLETED: Trip chưa COMPLETED.
+        - RATING_ALREADY_EXISTS: Trip đã có đánh giá.
+        - IDEMPOTENCY_KEY_REUSED: khóa đã dùng cho nội dung khác.
+        - REQUEST_IN_PROGRESS: yêu cầu cùng khóa đang được xử lý.
+
+        Khi Trip đã có đánh giá, client có thể lấy dữ liệu hiện tại
+        qua GET /trips/{tripId}/rating.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    ServiceUnavailable:
+      description: |
+        Dịch vụ hoặc thành phần phụ thuộc tạm thời không sẵn sàng.
+        Không suy ra thao tác tạo chắc chắn thất bại chỉ vì mất phản hồi.
+        Client gửi lại cùng Idempotency-Key và nội dung để xác định kết quả.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    UnexpectedError:
+      description: |
+        Lỗi máy chủ ngoài dự kiến.
+        Không trả stack trace, thông tin kết nối hoặc thông tin xác thực.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
