@@ -1,348 +1,1044 @@
-# Các Bounded Context & Ngôn ngữ chung
+# CAB System — Thiết kế module nghiệp vụ và định hướng microservices
 
-## 1. Identity & Account Context (Định danh & Tài khoản)
+**Phiên bản tài liệu:** 1.1  
+**Trạng thái:** Bản đề xuất chờ duyệt  
+**Giai đoạn dự án:** Thiết kế, chưa triển khai backend
 
-*Nguồn: FR01, UC01, entity Customer*
-
-| **Thuật ngữ** | **Định nghĩa trong context này** |
-| --- | --- |
-| **Customer / Account** (Khách hàng) | Aggregate Root: định danh người dùng gồm customerId, fullName, phone, email, accountStatus |
-| **Account Status** (Trạng thái tài khoản) | ACTIVE / INACTIVE / SUSPENDED |
-| **Credential** (Thông tin xác thực) | Cặp email-hoặc-phone + password dùng để đăng nhập |
-| **Registration** (Đăng ký) | Hành vi tạo Account mới, kiểm tra trùng lặp email/phone |
-| **Authentication** (Xác thực) | Quá trình xác minh Credential, cấp Access Token |
-| **Session / Access Token** | Phiên làm việc sau khi xác thực thành công |
-| **Profile Update** (Cập nhật hồ sơ) | Thay đổi fullName/phone/email của Account |
+## 1. Mục tiêu và phạm vi
 
-## 2. Booking Context (Đặt xe)
-
-*Nguồn: FR02, FR03, BR01, UC02*
-
-| **Thuật ngữ** | **Định nghĩa trong context này** |
-| --- | --- |
-| **Booking Request** (Yêu cầu đặt xe) | Aggregate Root: ý định đặt xe của khách hàng — chưa có tài xế, chưa phải Trip |
-| **Pickup Location / Destination** (Điểm đón/đến) | Value Object: address + latitude/longitude |
-| **Service Type / Vehicle Type** (Loại dịch vụ) | Value Object phân loại: STANDARD, PREMIUM, MOTORBIKE, VAN |
-| **Booking Status** | PENDING → FINDING\_DRIVER → DRIVER\_ASSIGNED / NO\_DRIVER\_FOUND / CANCELLED |
-| **Cancel Booking** (Hủy yêu cầu) | Chỉ hợp lệ khi chưa có tài xế nhận (trước DRIVER\_ASSIGNED) |
+Tài liệu xác định:
 
-Lưu ý: **Booking Status** ≠ **Trip Status** (context 4) — đây là trạng thái của *yêu cầu*, không phải *chuyến đi thực tế*.
+- Trách nhiệm của từng module nghiệp vụ.
+- Nơi sở hữu dữ liệu và quy tắc cập nhật dữ liệu.
+- Quan hệ giữa SRS, API và mô hình lưu trữ.
+- Cách bảo đảm tính nhất quán khi nhiều yêu cầu xảy ra đồng thời.
+- Cách phục hồi khi mất phản hồi, xử lý lại sự kiện hoặc gặp lỗi bên ngoài.
+- Phương án triển khai ban đầu và điều kiện tách thành microservices độc lập.
 
-## 3. Dispatch Context (Tìm & Phân công tài xế)
+Tài liệu được đối chiếu với:
+
+- `srs.md`.
+- Tám tài liệu trong `API-Document`.
+- `CAB_Test_Cases_ver_1.xlsx` sau chỉnh lý: 280 test case, chưa thực thi.
+
+Các công nghệ và cách triển khai trong tài liệu là đề xuất thiết kế. Chưa có kết quả kiểm thử backend hoặc đo hiệu năng thực tế.
+
+### 1.1. Phạm vi nghiệp vụ MVP
+
+Hệ thống hỗ trợ:
+
+1. Tài khoản và phiên đăng nhập.
+2. Đặt xe.
+3. Tìm và phân công tài xế.
+4. Thực hiện, theo dõi và xử lý sự cố chuyến đi.
+5. Cấu hình giá, tính cước và thanh toán.
+6. Đánh giá.
+7. Thông báo trong ứng dụng.
+8. Quản lý tài xế, phương tiện và giám sát vận hành.
 
-*Nguồn: FR04–FR07, BRu01–BRu03, UC03, UC05*
+Báo cáo cơ bản thuộc phạm vi tùy chọn đã nêu trong SRS.
 
-| **Thuật ngữ** | **Định nghĩa trong context này** |
-| --- | --- |
-| **Trip Request** (Yêu cầu chuyến) | Aggregate Root: đề xuất gửi đến **một** tài xế cụ thể — vòng đời riêng: PENDING → ACCEPTED / REJECTED / EXPIRED |
-| **Driver (Candidate)** | Ở context này, Driver chỉ có 2 thuộc tính quan trọng: trạng thái sẵn sàng (AVAILABLE/BUSY/OFFLINE) và CurrentLocation — **không** quan tâm hồ sơ đầy đủ |
-| **Dispatch Attempt / Matching Round** (Vòng tìm tài xế) | Một lần hệ thống thử gán một Driver cho Booking Request |
-| **Accept / Reject** | Phản hồi của tài xế với Trip Request |
-| **No Driver Available** | Kết quả khi hết ứng viên phù hợp trong danh sách tìm kiếm |
+### 1.2. Các chức năng chưa thuộc MVP
 
-Đây là ví dụ rõ nhất về Bounded Context: **"Driver"** ở đây ≠ "Driver" ở Operations Context (context 8).
+- Đặt xe theo lịch, đi chung hoặc nhiều điểm dừng.
+- Tài xế tự đăng ký công khai.
+- Nhiều vai trò trên cùng một Account.
+- Khuyến mãi, giá tăng theo nhu cầu và phí hủy.
+- Hoàn tiền tự động.
+- Tự động tính tiền cho chuyến bị gián đoạn.
+- Tự động thay tài xế trong cùng một Trip.
+- Gửi SMS, email hoặc push qua nhà cung cấp bên ngoài.
+- Tự khôi phục mật khẩu.
+- Hệ thống xếp hạng, thưởng hoặc phạt tài xế theo điểm đánh giá.
 
-## 4. Trip Execution Context (Thực hiện & Theo dõi chuyến)
+Các yêu cầu còn cần quyết định được liệt kê ở cuối tài liệu.
 
-*Nguồn: FR08, FR09, BRu04, BRu05, UC04, UC06*
+## 2. Quyết định kiến trúc
 
-| **Thuật ngữ** | **Định nghĩa trong context này** |
-| --- | --- |
-| **Trip** (Chuyến xe) | Aggregate Root — được tạo ra khi Trip Request ở context 3 được ACCEPTED |
-| **Trip Status** | DRIVER\_ASSIGNED → ARRIVED\_PICKUP → PICKED\_UP → IN\_PROGRESS → COMPLETED / CANCELLED / ERROR (bắt buộc đúng trình tự) |
-| **Driver (Trip Performer)** | Ở đây Driver chỉ là driverId thực hiện hành vi cập nhật trạng thái — không quan tâm hồ sơ, xe |
-| **Tracking Snapshot** (Ảnh chụp theo dõi) | Read model: trạng thái + vị trí + ETA tại một thời điểm, phục vụ Customer/Operations xem |
-| **ETA** (Thời gian dự kiến đến) | Ước tính thời gian tài xế đến điểm đón |
-| **Incident** (Sự cố) | Trạng thái ERROR phát sinh trong chuyến, được chuyển cho Operations Context xử lý |
+### 2.1. Phân biệt module nghiệp vụ và microservice
 
-## 5. Fare & Payment Context (Tính cước & Thanh toán)
+Một module nghiệp vụ là phần hệ thống có trách nhiệm, dữ liệu và quy tắc riêng.
 
-*Nguồn: FR10–FR12, BRu06–BRu08, UC07*
+Một microservice độc lập còn cần có:
 
-| **Thuật ngữ** | **Định nghĩa trong context này** |
-| --- | --- |
-| **Fare** (Cước phí) | Value Object tính từ một Trip đã COMPLETED (dựa trên loại dịch vụ + quãng đường/thời gian) |
-| **Payment** (Thanh toán) | Aggregate Root: một giao dịch gắn với một Trip |
-| **Payment Method** | CASH / E\_WALLET / CREDIT\_CARD |
-| **Payment Status** | PENDING → SUCCESS / FAILED |
-| **External Payment Provider** (Nhà cung cấp bên ngoài) | Actor bên ngoài xử lý giao dịch điện tử — CAB **không lưu** thông tin thẻ/tài khoản nhạy cảm (BRu07) |
-| **Transaction ID** | Mã do nhà cung cấp trả về, dùng đối soát (qua Webhook) |
-| **Retry Payment** (Thử lại) | Chỉ áp dụng khi Payment đang FAILED |
+- Tiến trình và chu kỳ triển khai riêng.
+- Quyền sở hữu kho dữ liệu riêng.
+- Hợp đồng giao tiếp qua mạng.
+- Cơ chế xử lý lỗi, timeout và phiên bản hợp đồng.
+- Cơ chế phối hợp khi một nghiệp vụ liên quan nhiều dịch vụ.
 
-## 6. Rating Context (Đánh giá)
+Có tám file API không đồng nghĩa bắt buộc có tám tiến trình hoặc tám loại cơ sở dữ liệu.
 
-*Nguồn: FR16, BR06, UC08*
+### 2.2. Phương án triển khai ban đầu được đề xuất
 
-| **Thuật ngữ** | **Định nghĩa trong context này** |
-| --- | --- |
-| **Rating** (Đánh giá) | Aggregate Root: gắn với một Trip đã COMPLETED, gồm RatingScore (1–5) và Comment |
-| **Driver (Rated Subject)** | Ở đây Driver chỉ còn ý nghĩa là đối tượng được đánh giá + Average Score tổng hợp |
-| **Average Score** (Điểm trung bình) | Read model tổng hợp từ toàn bộ Rating của một Driver |
+Triển khai một backend có tám module:
 
-## 7. Notification Context (Thông báo)
+1. Identity.
+2. Booking.
+3. Dispatch.
+4. Trip.
+5. Fare & Payment.
+6. Rating.
+7. Notification.
+8. Operations & Fleet.
 
-*Nguồn: FR13*
+Sử dụng:
 
-| **Thuật ngữ** | **Định nghĩa trong context này** |
-| --- | --- |
-| **Notification** (Thông báo) | Aggregate Root: thông điệp gửi tới Customer/Driver khi có sự kiện xảy ra ở context khác |
-| **Event Type** | BOOKING\_RECEIVED, DRIVER\_ASSIGNED, DRIVER\_ARRIVED, TRIP\_COMPLETED, PAYMENT\_SUCCESS, PAYMENT\_FAILED, NO\_DRIVER\_FOUND |
-| **Reference ID** | Liên kết Notification tới đối tượng gốc (bookingId/tripId/paymentId) — cơ chế tích hợp giữa các context |
-| **Read/Unread** | Trạng thái tương tác của người nhận |
+| Thành phần | Vai trò |
+|---|---|
+| CAB API | Tiếp nhận HTTP, xác thực, phân quyền và gọi các ca sử dụng nghiệp vụ |
+| CAB Worker | Xử lý công việc nền: điều phối, hết hạn đề nghị, tính cước, thanh toán và thông báo |
+| PostgreSQL | Lưu dữ liệu nghiệp vụ, công việc nền, idempotency, outbox và audit |
+| Redis — tùy chọn | Tăng tốc tra cứu vị trí và dữ liệu đọc có thể tái tạo |
+| Nhà cung cấp bản đồ/ETA | Cung cấp dữ liệu bản đồ hoặc ETA khi đã chọn và tích hợp |
+| Nhà cung cấp thanh toán sandbox | Xử lý phương thức điện tử được cấu hình |
 
-## 8. Operations Context (Vận hành & Quản trị)
+API và Worker có thể chạy thành hai tiến trình từ cùng mã nguồn. Chúng chưa phải tám microservice triển khai độc lập.
 
-*Nguồn: FR14, FR15, BRu09, BRu10, UC09*
+Giai đoạn này không bắt buộc dùng MongoDB hoặc một message broker riêng.
 
-| **Thuật ngữ** | **Định nghĩa trong context này** |
-| --- | --- |
-| **Driver (Managed Resource)** | Ở đây Driver là hồ sơ **đầy đủ**: driverId, fullName, phone, Vehicle liên kết, trạng thái hoạt động |
-| **Vehicle** (Phương tiện) | Aggregate Root gắn với một Driver: LicensePlate, VehicleType, Status |
-| **Customer (Managed Account)** | Góc nhìn quản trị của Customer — chỉ quan tâm accountStatus để khóa/mở tài khoản |
-| **Incident Record** (Bản ghi sự cố) | IssueType, Description, Resolution, HandledBy — tiếp nhận Incident từ Trip Execution Context |
-| **Active Trip Monitoring** (Giám sát chuyến đang diễn ra) | Read model tổng hợp nhiều Trip cho nhân viên vận hành |
-| **Access Control** (Kiểm soát truy cập) | Phân quyền thao tác quản trị theo vai trò (BRu09) |
-| **Audit Trail** (Lưu vết thao tác) | Ghi log các thao tác nhạy cảm (BRu10) |
+```mermaid
+flowchart TB
+    C[Ứng dụng khách hàng]
+    D[Ứng dụng tài xế]
+    O[Giao diện điều hành]
+    API[CAB API]
+    MOD[8 module nghiệp vụ]
+    DB[(PostgreSQL)]
+    W[CAB Worker]
+    R[(Redis tùy chọn)]
+    PAY[Nhà cung cấp thanh toán]
+    MAP[Nguồn bản đồ và ETA]
 
-# Các API tương ứng từng Microservice
+    C --> API
+    D --> API
+    O --> API
+    API --> MOD
+    MOD --> DB
+    W --> MOD
+    W --> DB
+    MOD --> R
+    W --> PAY
+    PAY --> API
+    MOD --> MAP
+```
+
+### 2.3. Ranh giới module trong phương án ban đầu
+
+Mỗi module có lớp xử lý nghiệp vụ và lớp truy cập dữ liệu riêng.
 
-## Bảng tổng hợp 8 Microservice
+Module khác không được tự viết SQL cập nhật bảng do module đó sở hữu.
+
+Các ca sử dụng liên quan nhiều module gọi các giao diện nghiệp vụ của module liên quan. Khi cần cập nhật nguyên tử, các lời gọi dùng chung transaction và kết nối cơ sở dữ liệu.
+
+Ví dụ, ca sử dụng nhận chuyến phối hợp:
+
+- Booking để kiểm tra yêu cầu còn có thể phân công.
+- Dispatch để xử lý đề nghị.
+- Trip để tạo chuyến.
+- Fleet để chuyển tài xế sang BUSY.
 
-| **#** | **Microservice** | **Bounded Context** | **File nguồn** | **Endpoint** |
-| --- | --- | --- | --- | --- |
-| 1 | **Identity Service** | Identity & Account | 01-auth-customer-api.yaml | POST /auth/register<br>POST /auth/login<br>POST /auth/logout<br>GET /customers/{customerId}<br>PUT /customers/{customerId} |
-| 2 | **Booking Service** | Booking | 02-booking-api.yaml | POST /bookings<br>GET /bookings/{bookingId}<br>GET /bookings/{bookingId}/status<br>POST /bookings/{bookingId}/cancel |
-| 3 | **Dispatch Service** | Dispatch | 03-dispatch driver-api.yaml | POST /bookings/{bookingId}/dispatch<br>GET /bookings/{bookingId}/dispatch/status<br>GET /drivers/{driverId}/trip-requests<br>POST /trip-requests/{tripRequestId}/accept<br>POST /trip-requests/{tripRequestId}/reject |
-| 4 | **Trip Execution Service** | Trip Execution | 04-trip-api.yaml | GET /trips/{tripId}<br>GET /trips/{tripId}/tracking<br>PATCH /trips/{tripId}/status |
-| 5 | **Fare & Payment Service** | Fare & Payment | 05-payment-api.yaml | GET /trips/{tripId}/fare<br>POST /trips/{tripId}/payments<br>GET /payments/{paymentId}<br>POST /payments/{paymentId}/webhook<br>POST /payments/{paymentId}/retry |
-| 6 | **Rating Service** | Rating | 08-rating-api.yaml | POST /trips/{tripId}/ratings<br>GET /trips/{tripId}/ratings<br>GET /drivers/{driverId}/ratings |
-| 7 | **Notification Service** | Notification | 06-notification-api.yaml | GET /notifications<br>POST /notifications<br>PATCH /notifications/{notificationId}/read |
-| 8 | **Operations Service** | Operations | 07-operations-api.yaml | GET /admin/customers<br>PATCH /admin/customers/{customerId}/status<br>GET /admin/drivers<br>GET /admin/drivers/{driverId}/status<br>GET /admin/vehicles<br>GET /admin/trips<br>GET /admin/trips/active<br>POST /admin/trips/{tripId}/incidents |
+Đây là lựa chọn có chủ ý cho giai đoạn đầu. Khi tách cơ sở dữ liệu, transaction dùng chung này không còn áp dụng.
+
+### 2.4. Giới hạn của phương án ban đầu
+
+Có thể mở rộng số tiến trình API và Worker, nhưng chưa thể triển khai từng module hoàn toàn độc lập.
+
+Do đó, phương án này chưa chứng minh đáp ứng mục tiêu mở rộng độc lập từng microservice. Nếu yêu cầu đó bắt buộc ngay trong bài nộp, phải duyệt phương án phân tán trước khi xây dựng.
 
-# Thiết kế ERD cho từng MicroService
+## 3. Ngôn ngữ và quy tắc chung
 
-## 1. Identity Service — Aggregate: Customer
+### 3.1. Danh tính và vai trò
 
-| **Entity** | **Thuộc tính** | **Ghi chú** |
-| --- | --- | --- |
-| 🔑 **Customer** | customerId (PK), fullName, phone, email, passwordHash, accountStatus, createdAt, updatedAt | Duy nhất 1 Aggregate — không có entity con |
+| Thuật ngữ | Ý nghĩa |
+|---|---|
+| Account | Danh tính đăng nhập dùng chung |
+| Customer | Hồ sơ khách hàng liên kết Account |
+| Driver | Hồ sơ tài xế liên kết Account |
+| Operator | Hồ sơ điều hành viên liên kết Account |
+| Session | Một phiên đăng nhập, có hạn sử dụng và khả năng thu hồi |
+| Role | CUSTOMER, DRIVER hoặc OPERATOR |
 
-**Invariant trong Aggregate:** email/phone unique toàn hệ thống; accountStatus chỉ chuyển ACTIVE↔INACTIVE↔SUSPENDED bởi chính Aggregate này.
+MVP áp dụng một vai trò cho mỗi Account.
 
-## 2. Booking Service — Aggregate: BookingRequest
+Đăng ký công khai chỉ tạo CUSTOMER.
 
-| **Entity** | **Thuộc tính** | **Ghi chú** |
-| --- | --- | --- |
-| 🔑 **BookingRequest** | bookingId (PK), customerId (ref), pickupAddress/pickupLat/pickupLng \[VO Location\], destinationAddress/destinationLat/destinationLng \[VO Location\], vehicleType, status, createdAt, updatedAt |  |
+Account DRIVER được tạo qua nghiệp vụ của OPERATOR. Account OPERATOR được cấp qua quy trình quản trị riêng.
 
-**Invariant:** chỉ được cancel khi status ∈ {PENDING, FINDING\_DRIVER}; Location là Value Object nhúng, không có bảng riêng vì không có định danh/vòng đời độc lập.
+### 3.2. Trạng thái độc lập
 
-## 3. Dispatch Service — Aggregate: TripRequest + DispatchProcess
+| Đối tượng | Trạng thái |
+|---|---|
+| Account | ACTIVE, INACTIVE, SUSPENDED |
+| Xét duyệt Driver | PENDING_APPROVAL, APPROVED, REJECTED |
+| Hoạt động Driver | AVAILABLE, BUSY, OFFLINE |
+| Vehicle | ACTIVE, INACTIVE |
+| Booking | PENDING, FINDING_DRIVER, DRIVER_ASSIGNED, NO_DRIVER_FOUND, CANCELLED |
+| DispatchProcess | SEARCHING, DRIVER_FOUND, NO_DRIVER_AVAILABLE, CANCELLED |
+| TripRequest | PENDING, ACCEPTED, REJECTED, EXPIRED, CANCELLED |
+| Trip | DRIVER_ASSIGNED, ARRIVED_PICKUP, PICKED_UP, IN_PROGRESS, COMPLETED, CANCELLED, ERROR |
+| Payment/PaymentAttempt | PENDING, PROCESSING, SUCCESS, FAILED, UNKNOWN |
+| IncidentRecord | OPEN, RESOLVED |
+| Notification deliveryStatus | PENDING, SENT, FAILED |
 
-| **Entity** | **Thuộc tính** | **Ghi chú** |
-| --- | --- | --- |
-| 🔑 **TripRequest** | tripRequestId (PK), bookingId (ref), driverId (ref), status, sentAt, respondedAt, rejectReason, tripId (ref, nullable) | Vòng đời riêng: PENDING→ACCEPTED/REJECTED/EXPIRED |
-| 🔑 **DispatchProcess** | bookingId (PK, ref), pickupLat/pickupLng/vehicleType \[snapshot lúc khởi tạo\], status (SEARCHING/DRIVER\_FOUND/NO\_DRIVER\_AVAILABLE), attemptedDriverIds (JSON array), updatedAt | Điều phối nhiều vòng TripRequest cho 1 booking |
-| **DriverAvailability** (read-model) | driverId (PK), status, currentLat, currentLng, vehicleType, updatedAt | **Không phải Aggregate** — bản sao chỉ-đọc đồng bộ từ Operations Service (nguồn gốc thật của Driver), dùng để matching nhanh mà không gọi đồng bộ sang Operations mỗi lần |
+Không dùng MATCHING, ASSIGNED hoặc ARRIVING làm trạng thái thay thế trong mô hình này.
 
-**Invariant:** một bookingId chỉ có tối đa 1 TripRequest ở trạng thái PENDING tại một thời điểm (đảm bảo không gửi trùng cho 2 tài xế cùng lúc).
+### 3.3. Điều kiện được phân công chuyến
 
-## 4. Trip Execution Service — Aggregate: Trip
+Tài xế chỉ được chọn khi:
 
-| **Entity** | **Thuộc tính** | **Ghi chú** |
-| --- | --- | --- |
-| 🔑 **Trip** | tripId (PK), bookingId (ref), customerId (ref), driverId (ref), pickupLocation/destination \[VO\], status, startTime, endTime, createdAt |  |
-| **TripStatusHistory** (child) | id (PK), tripId (FK nội bộ), status, lat, lng, changedAt | Entity con — không tồn tại độc lập ngoài Trip, đảm bảo AC05 (lưu lịch sử đúng trình tự) |
+- Account ACTIVE.
+- Hồ sơ APPROVED.
+- Driver AVAILABLE.
+- Có xe được phân công hợp lệ và xe ACTIVE.
+- Loại xe phù hợp.
+- GPS còn mới.
+- Trong phạm vi tìm kiếm.
+- Không có Trip đang hoạt động.
 
-**Invariant:** transition status chỉ theo đúng thứ tự DRIVER\_ASSIGNED→ARRIVED\_PICKUP→PICKED\_UP→IN\_PROGRESS→COMPLETED (BRu05); endTime chỉ set khi COMPLETED. **Incident không thuộc Aggregate này** — Trip chỉ set status=ERROR, bản ghi xử lý sự cố thuộc Operations Service.
+Read model hoặc Redis chỉ hỗ trợ tìm ứng viên. Trước khi chấp nhận phân công, hệ thống kiểm tra lại điều kiện trên dữ liệu có thẩm quyền.
 
-## 5. Fare & Payment Service — 2 Aggregate độc lập: FareCalculation, Payment
+### 3.4. Định nghĩa công việc đang hoạt động
 
-| **Entity** | **Thuộc tính** | **Ghi chú** |
-| --- | --- | --- |
-| 🔑 **FareCalculation** | tripId (PK, ref), vehicleType, distanceKm, durationMinutes, amount, currency, calculatedAt | Chỉ tính được khi Trip.status = COMPLETED |
-| 🔑 **Payment** | paymentId (PK), tripId (ref), amount \[snapshot từ Fare tại thời điểm tạo — không tham chiếu sống\], paymentMethod, paymentStatus, transactionId, redirectUrl, createdAt, updatedAt |  |
+Đối với khách hàng:
 
-**Invariant:** Payment.amount là **bản sao (snapshot)**, không phải live-reference đến FareCalculation — tránh 2 Aggregate phụ thuộc transactional lẫn nhau. retry chỉ hợp lệ khi paymentStatus = FAILED. Không lưu số thẻ/tài khoản nhạy cảm (BRu07).
+- Booking PENDING hoặc FINDING_DRIVER đang chiếm quyền đặt xe.
+- Booking đã phân công chuyển quyền đó sang Trip tương ứng.
+- Trip chưa đóng vẫn là công việc đang hoạt động.
+- Trip ERROR chưa có closedAt vẫn đang hoạt động.
+- Trip đã đóng nhưng Payment chưa SUCCESS không ngăn khách đặt chuyến mới.
 
-## 6. Rating Service — Aggregate: Rating + DriverRatingSummary
+Booking giữ DRIVER_ASSIGNED sau khi Trip hoàn tất hoặc bị hủy. Không dùng riêng trạng thái Booking để kết luận khách còn đang đi xe.
 
-| **Entity** | **Thuộc tính** | **Ghi chú** |
-| --- | --- | --- |
-| 🔑 **Rating** | ratingId (PK), tripId (ref, **UNIQUE**), customerId (ref), driverId (ref), ratingScore, comment, createdAt | 1 Trip chỉ có tối đa 1 Rating |
-| 🔑 **DriverRatingSummary** | driverId (PK, ref), averageScore, totalRatings, updatedAt | Aggregate riêng, cập nhật (tăng dần) mỗi khi có Rating mới — tránh phải SUM/AVG toàn bảng Rating mỗi lần truy vấn |
+## 4. Ranh giới và quyền sở hữu dữ liệu
 
-## 7. Notification Service — Aggregate: Notification
+| Module | Trách nhiệm chính | Dữ liệu sở hữu |
+|---|---|---|
+| Identity | Account, xác thực, phiên, hồ sơ dùng chung | Account, Customer, Operator, Session |
+| Booking | Tiếp nhận và hủy yêu cầu trước phân công | BookingRequest, CustomerActivityGuard |
+| Dispatch | Chọn ứng viên, gửi đề nghị, nhận/từ chối | DispatchProcess, TripRequest |
+| Trip | Vòng đời chuyến, GPS, lịch sử và sự cố | Trip, TripStatusHistory, DriverLocation, TripRoutePoint, JourneyMetrics, IncidentRecord |
+| Fare & Payment | Giá, cước, các lần thanh toán, đối soát | PricingConfig, Fare, Payment, PaymentAttempt, ProviderEvent |
+| Rating | Đánh giá của khách cho chuyến | Rating |
+| Notification | Hộp thư, công bố và trạng thái đọc | Notification, công việc giao thông báo |
+| Operations & Fleet | Hồ sơ tài xế, xe, phân công xe, góc nhìn vận hành | Driver, Vehicle, VehicleAssignment, các read model vận hành |
 
-| **Entity** | **Thuộc tính** | **Ghi chú** |
-| --- | --- | --- |
-| 🔑 **Notification** | notificationId (PK), userId (ref), userType, eventType, message, referenceId (ref), isRead, createdAt | Subscriber thuần túy — không sở hữu nghiệp vụ nào, chỉ lắng nghe event từ 5 context core |
+Các cấu trúc kỹ thuật gồm:
 
-## 8. Operations Service — Aggregate thật: Driver, Vehicle, IncidentRecord + Read Model
+- IdempotencyRecord.
+- OutboxEvent.
+- InboxReceipt.
+- BackgroundJob.
+- AuditLog.
 
-| **Entity** | **Thuộc tính** | **Ghi chú** |
-| --- | --- | --- |
-| 🔑 **Driver** | driverId (PK), fullName, phone, status, currentLat, currentLng, createdAt, updatedAt | **Đây là nguồn dữ liệu gốc thật sự của Driver** — mọi service khác chỉ giữ driverId hoặc read-model |
-| 🔑 **Vehicle** | vehicleId (PK), licensePlate, vehicleType, status, driverId (FK nội bộ) | Aggregate riêng (không nhúng vào Driver) vì vòng đời độc lập — 1 tài xế có thể đổi xe |
-| 🔑 **IncidentRecord** | incidentId (PK), tripId (ref), issueType, description, resolution, handledBy (ref nhân viên), createdAt |  |
-| **CustomerView** (read-model) | customerId, fullName, phone, email, accountStatus | Bản sao chỉ-đọc, đồng bộ qua event từ Identity Service — phục vụ GET /admin/customers |
-| **TripView / ActiveTripView** (read-model) | tripId, customerName, driverName, status, currentLat, currentLng | Bản sao chỉ-đọc tổng hợp từ Trip Execution + Booking + Payment Service — phục vụ GET /admin/trips\* |
+Chúng hỗ trợ các nghiệp vụ đã có, không tự tạo ra chức năng công khai mới.
 
-# CÁC datatype cho từng MicroService
+### 4.1. Dữ liệu không được sở hữu trùng
 
-## Bảng tổng hợp
+- fullName, email, phone và thông tin xác thực thuộc Account.
+- Driver không có bộ email/phone có thể sửa độc lập với Account.
+- Trạng thái Trip thuộc Trip.
+- Trạng thái Payment thuộc Fare & Payment.
+- IncidentRecord thuộc Trip vì việc mở/giải quyết sự cố liên quan trực tiếp tới trạng thái chuyến.
+- Operations được quyền thực hiện một số thao tác, nhưng không trở thành nơi sở hữu mọi dữ liệu.
 
-| **#** | **Microservice** | **Database** | **Lý do (bám theo ERD/Aggregate)** |
-| --- | --- | --- | --- |
-| 1 | **Identity Service** | **PostgreSQL** | Aggregate Customer cần ràng buộc **UNIQUE** cứng trên email/phone (chống đăng ký trùng — AC01), giao dịch xác thực/đổi trạng thái tài khoản cần **ACID** tuyệt đối, dữ liệu có cấu trúc cố định, không cần mở rộng schema thường xuyên → SQL là lựa chọn an toàn nhất cho domain "định danh". |
-| 2 | **Booking Service** | **MongoDB** | Aggregate BookingRequest **tự chứa hoàn toàn** — Location (pickup/destination) là Value Object nhúng, không có bảng con, không cần JOIN với entity nào khác trong cùng service. Đọc/ghi luôn theo bookingId (document lookup), không cần query quan hệ phức tạp. Cần schema linh hoạt (dễ bổ sung field sau này như promo, ghi chú) → phù hợp document model hơn là chuẩn hóa quan hệ. |
-| 3 | **Dispatch Service** | **Redis** | Đây là service có tính chất "hot-path" rõ nhất: DriverAvailability cần tra cứu tài xế gần vị trí đón theo **thời gian thực** (Redis hỗ trợ GEO command), TripRequest/DispatchProcess chỉ tồn tại trong **cửa sổ thời gian ngắn** (từ lúc gửi đến accept/reject/expire — đúng theo BRu03 "không phản hồi trong thời gian quy định"), rất hợp với cơ chế **TTL/expire tự động** của Redis thay vì phải tự viết job dọn dữ liệu. Không cần lưu trữ lâu dài, ưu tiên tốc độ đọc/ghi (matching phải diễn ra trong mili-giây). *(Kết quả cuối — ACCEPTED/REJECTED — có thể publish event để nơi khác lưu audit lâu dài, nhưng kho vận hành chính vẫn là Redis).* |
-| 4 | **Trip Execution Service** | **MongoDB** (+ Redis cho vị trí live) | Aggregate Trip có entity con TripStatusHistory — bản chất là **mảng lịch sử trạng thái gắn liền vòng đời 1 chuyến**, biểu diễn tự nhiên bằng mảng nhúng trong 1 document thay vì bảng quan hệ riêng. Ghi nhận trạng thái/tọa độ liên tục với tần suất cao → document update theo Aggregate là đủ (không cần join). Vị trí tài xế "sống" (live location cho tracking) có thể cache thêm ở **Redis** vì dữ liệu này lỗi thời rất nhanh, không cần bền vững — chỉ cần đọc nhanh cho FR09. |
-| 5 | **Fare & Payment Service** | **PostgreSQL** | Đây là domain **tài chính** — bắt buộc ACID, cần kiểu dữ liệu tiền tệ chính xác (DECIMAL, tránh sai số float), cần transaction khi xử lý retry (đảm bảo không tạo 2 giao dịch song song cho cùng 1 payment — race condition), cần khả năng audit/đối soát chặt chẽ với transactionId từ nhà cung cấp bên ngoài. Đây là service **không được phép** đánh đổi consistency lấy tốc độ. |
-| 6 | **Rating Service** | **MongoDB** | Aggregate Rating là document phẳng, độc lập (1 tripId – 1 rating), không cần join. DriverRatingSummary (averageScore, totalRatings) có thể cập nhật bằng **atomic update operator** ($inc) của MongoDB mà không cần khóa dòng như SQL — tránh race condition khi nhiều rating cùng lúc cập nhật 1 driver. Truy vấn chủ yếu là phân trang theo driverId (key-based), không cần quan hệ phức tạp. |
-| 7 | **Notification Service** | **MongoDB** | Khối lượng ghi **rất lớn** (mọi sự kiện từ 5 context core đều sinh ra 1 notification), cấu trúc đơn giản, phẳng, không có quan hệ giữa các notification với nhau. eventType/referenceId có thể thay đổi/mở rộng theo thời gian (thêm loại sự kiện mới) → schema-less phù hợp hơn phải migrate bảng SQL liên tục. Đọc chủ yếu theo userId + filter isRead — key-value/document truy vấn nhanh, không cần transaction phức tạp. |
-| 8 | **Operations Service** | **PostgreSQL** | Đây là service **quan hệ rõ ràng nhất**: Vehicle có FK thật sự tới Driver (1 Driver – nhiều Vehicle theo thời gian), cần JOIN khi liệt kê tài xế kèm phương tiện. Các truy vấn nghiệp vụ đòi hỏi **filter/aggregate phức tạp** (tìm kiếm khách hàng theo keyword, lọc tài xế theo status, và đặc biệt BG07 yêu cầu **báo cáo** số chuyến/doanh thu/tỷ lệ hoàn thành — đây là truy vấn OLAP-style mà SQL xử lý tốt hơn hẳn NoSQL). IncidentRecord cần liên kết chặt với handledBy để phục vụ audit (BRu10) — cần tính toàn vẹn tham chiế |
+### 4.2. Phân công xe
 
-# Thiết kế Cơ sở dữ liệu cho từng Micro service
+VehicleAssignment lưu quan hệ phân công hiện hành và lịch sử:
 
-## 1. Identity Service — PostgreSQL
+- Một Driver có tối đa một phân công chưa kết thúc.
+- Một Vehicle có tối đa một phân công chưa kết thúc.
+- Driver.vehicleId và Vehicle.assignedDriverId trong API có thể được dựng từ phân công hiện hành.
+- Không duy trì hai liên kết có thể cập nhật độc lập rồi hy vọng chúng luôn khớp.
 
-Quản lý thông tin khách hàng và tài khoản đăng nhập.
+Thay xe phải đi qua một nghiệp vụ thống nhất, cập nhật phân công và version của các đối tượng liên quan.
 
-| **Bảng** | **Thuộc tính chính** | **Ràng buộc** |
-| --- | --- | --- |
-| Customer | customerId, fullName, email, phone, passwordHash, status, createdAt, updatedAt | PK: customerId; UK: email, phone |
-| RefreshToken | tokenId, customerId, tokenHash, expiresAt, revokedAt | PK: tokenId; FK: customerId → Customer; UK: tokenHash |
+## 5. Mô hình dữ liệu
 
-Quan hệ: **Customer 1 — N RefreshToken**. Một khách hàng có thể đăng nhập trên nhiều thiết bị.
+### 5.1. Identity
+
+| Entity | Thuộc tính chính |
+|---|---|
+| Account | accountId, fullName, normalizedEmail, normalizedPhone, passwordHash, role, accountStatus, version, createdAt, updatedAt |
+| Customer | customerId, accountId |
+| Operator | operatorId, accountId |
+| Session | sessionId, accountId, refreshTokenHash, expiresAt, revokedAt, createdAt, rotatedAt |
+
+Ràng buộc:
+
+- Email và phone duy nhất trên toàn bộ Account.
+- Phone dùng E.164.
+- Password không được tự trim.
+- Customer.accountId và Operator.accountId duy nhất.
+- Mỗi hồ sơ phù hợp với role của Account.
+- Không lưu refresh token dạng rõ.
+- Refresh luân chuyển token nhưng không kéo dài thời hạn tuyệt đối của Session.
+- Logout thu hồi phiên hiện tại.
+- Đổi mật khẩu hoặc khóa Account thu hồi toàn bộ phiên liên quan.
 
-Email và số điện thoại phải được chuẩn hóa trước khi lưu. Mật khẩu chỉ lưu dạng băm. Khi khóa tài khoản, hệ thống có thể thu hồi các phiên đăng nhập liên quan.
+Driver.accountId do Fleet quản lý, nhưng việc tạo Account và Driver phải hoàn tất nhất quán.
 
-## 2. Booking Service — MongoDB
+### 5.2. Booking
 
-Lưu yêu cầu đặt xe trong collection BookingRequest.
+| Entity | Thuộc tính chính |
+|---|---|
+| BookingRequest | bookingId, customerId, pickup, destination, vehicleType, note, bookingStatus, pricingVersionId, pricingSnapshot, driverId, tripId, cancellation, createdAt, updatedAt |
+| CustomerActivityGuard | customerId, bookingId, tripId, updatedAt |
 
-| **Thuộc tính** | **Kiểu dữ liệu** | **Ý nghĩa** |
-| --- | --- | --- |
-| \_id | UUID dạng chuỗi | Mã yêu cầu đặt xe |
-| customerId | UUID dạng chuỗi | Khách hàng đặt xe |
-| pickup | Object | Điểm đón: địa chỉ, kinh độ, vĩ độ |
-| destination | Object | Điểm đến: địa chỉ, kinh độ, vĩ độ |
-| status | String | Trạng thái yêu cầu |
-| driverId | UUID dạng chuỗi, tùy chọn | Tài xế sau khi ghép thành công |
-| tripId | UUID dạng chuỗi, tùy chọn | Chuyến xe được tạo |
-| note | String | Ghi chú |
-| createdAt, updatedAt | Date | Thời gian tạo và cập nhật |
+CustomerActivityGuard có một bản ghi cho mỗi khách đang có công việc hoạt động.
 
-pickup và destination được **nhúng trong document**, vì chúng thuộc yêu cầu đặt xe đó và thường được đọc cùng nhau.
+Quy tắc:
 
-Trạng thái đề xuất: PENDING → MATCHING → ASSIGNED, có thể chuyển sang CANCELLED hoặc EXPIRED theo nghiệp vụ.
+- Tạo Booking phải giành được quyền hoạt động của Customer.
+- Tạo Trip không tạo một quyền hoạt động thứ hai; nó tiếp tục quyền của Booking.
+- Hủy Booking hoặc kết thúc tìm tài xế không thành công giải phóng quyền.
+- Trip đóng hợp lệ giải phóng quyền.
+- Mọi lần giải phóng phải kiểm tra đúng bookingId/tripId đang giữ quyền.
+- Sự kiện cũ không được giải phóng quyền của chuyến mới.
 
-Chỉ mục cần có: customerId + createdAt để xem lịch sử đặt xe; status + createdAt để tìm yêu cầu đang chờ xử lý.
+PricingSnapshot là bản sao bất biến của giá tại thời điểm chấp nhận Booking.
 
-## 3. Dispatch Service — Redis
+### 5.3. Dispatch
 
-Quản lý tài xế đang sẵn sàng và quá trình tìm tài xế. Redis được thiết kế theo **key và cấu trúc dữ liệu**, không theo bảng.
+| Entity | Thuộc tính chính |
+|---|---|
+| DispatchProcess | dispatchProcessId, bookingId, dispatchStatus, attemptCount, attemptedDriverIds, startedAt, deadlineAt, configSnapshot, driverId, tripId, endedAt, failureReason, updatedAt |
+| TripRequest | tripRequestId, bookingId, dispatchProcessId, driverId, status, sentAt, expiresAt, resolvedAt, rejectReason, closureReason, tripId |
 
-| **Key** | **Cấu trúc** | **Dữ liệu lưu** |
-| --- | --- | --- |
-| dispatch:driver:{driverId} | Hash | Trạng thái, tọa độ, thời điểm cập nhật, booking đang nhận |
-| dispatch:drivers:geo | GEO | Vị trí tài xế để tìm theo khoảng cách |
-| dispatch:offer:{offerId} | Hash | bookingId, driverId, trạng thái lời mời |
-| dispatch:process:{bookingId} | Hash | Trạng thái ghép xe, tài xế đã nhận |
+Ràng buộc:
 
-Một yêu cầu đặt xe có thể sinh nhiều lời mời tới các tài xế, nhưng chỉ được có **một kết quả nhận chuyến thành công**.
+- Một DispatchProcess cho mỗi Booking.
+- Một TripRequest chỉ gửi cho một Driver.
+- Tối đa một đề nghị PENDING trong một tiến trình tại một thời điểm.
+- Một Driver không được lặp lại trong danh sách đã thử của cùng tiến trình.
+- expiresAt không vượt deadlineAt.
+- Khởi động lại Worker không đặt lại deadline hoặc số lượt.
+- ACCEPTED, REJECTED, EXPIRED và CANCELLED được lưu bền vững.
 
-Cơ chế: nhận điểm đón → tìm tài xế gần bằng GEO → kiểm tra tài xế còn sẵn sàng → tạo lời mời → chờ nhận hoặc hết hạn. Lời mời sử dụng TTL theo thời gian chờ được quy định trong nghiệp vụ.
+Không dùng việc Redis xóa key hết hạn làm bằng chứng duy nhất rằng đề nghị đã EXPIRED. TTL là cơ chế hết hạn dữ liệu cache; trạng thái nghiệp vụ phải được ghi nhận bởi xử lý có kiểm tra điều kiện.
 
-Khi tài xế nhận, phải kiểm tra và cập nhật đồng thời trạng thái tài xế, lời mời và booking để tránh nhận trùng. Kết quả cần lưu lâu dài được chuyển sang service sở hữu dữ liệu chuyến.
+### 5.4. Trip và sự cố
 
-## 4. Trip Execution Service — MongoDB, Redis cho vị trí trực tiếp
+| Entity | Thuộc tính chính |
+|---|---|
+| Trip | tripId, bookingId, customerId, driverId, vehicleId, pickup, destination, vehicleType, tripStatus, version, arrivedAt, pickedUpAt, startedAt, completedAt, closedAt, closeReason, statusBeforeError, cancellation, createdAt, updatedAt |
+| TripStatusHistory | historyId, tripId, version, previousStatus, newStatus, actorType, actorId, changedAt, reason |
+| IncidentRecord | incidentId, tripId, issueType, description, status, reportedByAccountId, createdAt, resolutionAction, resolutionNote, resolvedByAccountId, resolvedAt |
+| DriverLocation | driverId, latitude, longitude, recordedAt, receivedAt |
+| TripRoutePoint | pointId, tripId, driverId, latitude, longitude, recordedAt, receivedAt |
+| JourneyMetrics | tripId, metricsVersion, distanceKm, durationMinutes, qualityStatus, calculationMethodVersion, confirmedAt, reviewReason |
+
+Ràng buộc:
 
-Collection chính: Trip.
+- Trip.bookingId duy nhất.
+- Một Driver có tối đa một Trip chưa đóng.
+- Một Vehicle có tối đa một Trip chưa đóng.
+- Trip ERROR chưa đóng vẫn giữ tài xế.
+- Không đưa mọi điểm GPS vào TripStatusHistory.
+- Cập nhật GPS không làm tăng version của trạng thái Trip.
+- Incident mới trong Trip đang ERROR không ghi lịch sử ERROR → ERROR.
+- Giải quyết ERROR phải xét toàn bộ Incident OPEN hiện tại.
+- Đóng bất thường giữ ERROR và có closedAt; không giả thành COMPLETED.
 
-| **Thuộc tính** | **Kiểu dữ liệu** | **Ý nghĩa** |
-| --- | --- | --- |
-| \_id | UUID dạng chuỗi | Mã chuyến |
-| bookingId | UUID dạng chuỗi, unique | Yêu cầu đặt xe tạo ra chuyến |
-| customerId, driverId | UUID dạng chuỗi | Khách hàng và tài xế |
-| pickup, destination | Object | Điểm đón và điểm đến |
-| status | String | Trạng thái hiện tại |
-| statusHistory | Array of Object | Lịch sử gồm trạng thái và thời gian |
-| startedAt, completedAt | Date | Thời gian bắt đầu và kết thúc |
-| createdAt, updatedAt | Date | Thời gian tạo và cập nhật |
+### 5.5. Fare & Payment
 
-Quan hệ trong document: **Trip 1 — N TripStatusHistory**, thể hiện bằng mảng nhúng statusHistory.
+| Entity | Thuộc tính chính |
+|---|---|
+| PricingConfig | pricingVersionId, vehicleType, currency, baseFare, pricePerKm, pricePerMinute, effectiveFrom, reason, createdByAccountId, createdAt |
+| Fare | fareId, tripId, pricingVersionId, pricingSnapshot, metricsVersion, distanceKm, durationMinutes, baseAmount, distanceAmount, timeAmount, totalAmount, currency, calculatedAt |
+| Payment | paymentId, tripId, fareId, customerId, amount, currency, paymentMethod, paymentStatus, currentAttemptId, requiresReview, version, paidAt, confirmedBy, createdAt, updatedAt |
+| PaymentAttempt | attemptId, paymentId, attemptNumber, paymentMethod, amount, currency, status, provider, merchantReference, providerTransactionId, failureCode, failureMessage, confirmedBy, createdAt, updatedAt, resolvedAt |
+| ProviderEvent | provider, providerEventId, attemptId, receivedAt, verifiedResult, processingStatus, evidenceReference |
 
-Luồng đề xuất: ASSIGNED → ARRIVING → ARRIVED → IN\_PROGRESS → COMPLETED. Khi chuyển trạng thái, cập nhật status và thêm bản ghi lịch sử trong cùng thao tác.
+Ràng buộc:
+
+- Một Fare cho mỗi Trip.
+- Một Payment cho mỗi Fare và Trip.
+- attemptNumber duy nhất trong một Payment.
+- Không có hai lần thanh toán đang hoạt động đồng thời.
+- UNKNOWN vẫn chặn lần thanh toán mới.
+- Merchant reference ổn định cho cùng một Attempt.
+- Provider transaction ID được kiểm tra duy nhất trong phạm vi nhà cung cấp phù hợp.
+- Payment SUCCESS không bị hạ xuống FAILED hoặc UNKNOWN.
+- requiresReview không được tự xóa khi nhận một sự kiện lặp.
+- Giá và cước đã chốt không được cập nhật đè.
+
+Số tiền trung gian và đơn giá dùng kiểu số thập phân chính xác. Tổng thanh toán VND là số nguyên sau khi làm tròn. PostgreSQL cung cấp kiểu `NUMERIC` cho các giá trị cần độ chính xác thập phân; không dùng float để tính tiền.
+
+Công thức MVP:
+
+`totalAmount = baseFare + distanceKm × pricePerKm + durationMinutes × pricePerMinute`
+
+Chỉ làm tròn tổng cuối cùng đến đồng, nửa lên đối với số không âm.
 
-Vị trí hiện tại lưu riêng ở Redis với key trip:location:{tripId}, gồm tọa độ và thời điểm ghi nhận. Không đưa mọi lần cập nhật GPS vào statusHistory, vì đây là hai loại dữ liệu khác nhau.
+Không có discountAmount hoặc phí hủy trong công thức MVP.
 
-## 5. Fare & Payment Service — PostgreSQL
+### 5.6. Rating
 
-| **Bảng** | **Thuộc tính chính** | **Ràng buộc** |
-| --- | --- | --- |
-| Fare | fareId, tripId, baseAmount, distanceAmount, timeAmount, discountAmount, totalAmount, currency | PK: fareId; UK: tripId |
-| Payment | paymentId, fareId, customerId, method, status, createdAt, updatedAt | PK: paymentId; FK và UK: fareId |
-| PaymentAttempt | attemptId, paymentId, idempotencyKey, provider, providerTransactionId, status, createdAt | PK: attemptId; FK: paymentId; UK: idempotencyKey |
+| Entity | Thuộc tính chính |
+|---|---|
+| Rating | ratingId, tripId, customerId, driverId, score, comment, createdAt |
+
+Ràng buộc:
+
+- tripId duy nhất.
+- score là số nguyên từ 1 đến 5.
+- Chỉ Customer sở hữu Trip được tạo.
+- Trip phải COMPLETED.
+- Không phụ thuộc Payment SUCCESS.
+- Driver được đánh giá là Driver của Trip lịch sử.
+- MVP chưa sửa/xóa Rating.
 
-Quan hệ:
+DriverRatingSummary chưa được đưa vào dữ liệu bắt buộc. API cho điểm trung bình đang cần quyết định; nếu bổ sung, đây là dữ liệu tổng hợp có thể dựng lại từ Rating, không phải nguồn gốc của điểm đánh giá.
 
-- **Fare 1 — 0..1 Payment**: một bản tính cước có thể chưa phát sinh thanh toán.
+### 5.7. Notification
+
+| Entity | Thuộc tính chính |
+|---|---|
+| Notification | notificationId, eventId, recipientAccountId, eventType, referenceType, referenceId, channel, title, message, deliveryStatus, isRead, readAt, createdAt, publishedAt, updatedAt |
 
-- **Payment 1 — N PaymentAttempt**: một thanh toán có thể thử nhiều lần.
+Ràng buộc:
 
-Các khoản tiền dùng DECIMAL/NUMERIC. Công thức đề xuất:
+- Unique trên eventId, recipientAccountId, channel.
+- MVP chỉ có IN_APP.
+- Người dùng không tự cung cấp message hoặc trạng thái gửi.
+- SENT nghĩa là đã công bố bền vững trong hộp thư.
+- isRead độc lập với deliveryStatus.
+- readAt chỉ ghi lần đánh dấu đọc đầu tiên.
+- Hộp thư người dùng chỉ trả SENT thuộc tài khoản đăng nhập.
+- Công bố lại hoặc gửi lại sự kiện không đặt isRead về false.
+- Sắp xếp theo publishedAt, sau đó notificationId giảm dần.
 
-totalAmount = baseAmount + distanceAmount + timeAmount − discountAmount
+### 5.8. Operations & Fleet
 
-Tách PaymentAttempt giúp theo dõi từng lần thử mà không tạo nhiều bản thanh toán cho cùng chuyến. Cần ràng buộc chống hai lần thử đang xử lý đồng thời; kết quả chưa rõ do timeout phải được đối soát trước khi thử thu tiền lại.
+| Entity | Thuộc tính chính |
+|---|---|
+| Driver | driverId, accountId, licenseNumber, approvalStatus, rejectionReason, driverStatus, version, createdAt, updatedAt |
+| Vehicle | vehicleId, plateNumber, normalizedPlateKey, vehicleType, vehicleStatus, version, createdAt, updatedAt |
+| VehicleAssignment | assignmentId, driverId, vehicleId, startedAt, endedAt, assignedByAccountId |
+| Operational read models | Các góc nhìn danh sách tài khoản, chuyến, thanh toán và báo cáo |
+
+Ràng buộc:
+
+- Driver.accountId duy nhất.
+- licenseNumber duy nhất sau chuẩn hóa.
+- normalizedPlateKey duy nhất.
+- Thay phân công xe chỉ khi tài xế OFFLINE và không có chuyến hoạt động.
+- Xe đang phục vụ chuyến không được đổi thông tin hoặc phân công.
+- Duyệt hồ sơ không tự bật AVAILABLE.
+- Chuyển Account về ACTIVE không khôi phục Session cũ hoặc tự bật AVAILABLE.
 
-## 6. Rating Service — MongoDB
+Trong bản đầu dùng chung PostgreSQL, các danh sách có thể đọc qua giao diện truy vấn của module sở hữu. Không bắt buộc sao chép dữ liệu sang projection nếu chưa có nhu cầu thực tế.
 
-| **Collection** | **Thuộc tính chính** | **Ràng buộc** |
-| --- | --- | --- |
-| Rating | \_id, tripId, customerId, driverId, score, comment, createdAt | Unique: tripId; score là số nguyên từ 1 đến 5 |
-| DriverRatingSummary | \_id là driverId, totalScore, totalRatings, updatedAt | Một document tổng hợp cho mỗi tài xế |
+## 6. Ánh xạ API vào module
+
+Tất cả đường dẫn dưới đây nằm dưới `/v1`.
 
-Thiết kế này giả định **mỗi chuyến có một đánh giá của khách hàng dành cho tài xế**.
+| Nhóm API | Module xử lý |
+|---|---|
+| `/auth/*`, `/accounts/me` | Identity |
+| `/bookings` và thao tác xem/hủy Booking | Booking |
+| `/bookings/{id}/dispatch*`, `/trip-requests/*`, `/drivers/me/trip-requests` | Dispatch |
+| `/trips`, trạng thái, tracking, hủy và Incident của Trip | Trip |
+| `/drivers/me/location` | Trip — phần vị trí |
+| Fare, Payment, PaymentAttempt, webhook, retry, confirm-cash, reconcile | Fare & Payment |
+| `/trips/{id}/rating`, `/drivers/me/ratings`, `/operations/ratings` | Rating |
+| `/notifications*` | Notification |
+| `/drivers/me`, `/drivers/me/availability`, quản lý Driver/Vehicle | Operations & Fleet |
 
-Điểm trung bình được tính:
+Các endpoint vận hành được phân công tiếp như sau:
 
-averageScore = totalScore / totalRatings
+| Endpoint vận hành | Nơi sở hữu nghiệp vụ |
+|---|---|
+| GET `/operations/accounts` | Identity |
+| PATCH `/operations/accounts/{id}/status` | Identity, phối hợp Dispatch/Fleet trong thao tác khóa |
+| POST `/operations/drivers` | Ca sử dụng phối hợp Identity và Fleet |
+| Quản lý Driver, Vehicle, phân công xe | Fleet |
+| GET `/operations/trips` | Trip |
+| GET/POST `/operations/incidents` | Trip |
+| POST `/operations/trips/{id}/resolve-error` | Trip, phối hợp Fleet và Booking |
+| GET/POST `/operations/pricing` | Fare & Payment |
+| GET `/operations/payments` | Fare & Payment |
+| GET `/operations/reports/summary` | Operations — truy vấn báo cáo |
 
-Khi có đánh giá mới, tăng tổng điểm và tổng số đánh giá. Việc lưu đánh giá và cập nhật tổng hợp cần transaction hoặc cơ chế xử lý sự kiện có chống trùng để số liệu không lệch.
+Tiền tố `/operations` thể hiện nhóm người được sử dụng, không có nghĩa mọi dữ liệu nằm trong Operations.
 
-## 7. Notification Service — MongoDB
+Hợp đồng request/response chi tiết nằm trong các file YAML. Tài liệu kiến trúc không tự thêm endpoint công khai chưa được duyệt.
 
-Collection: Notification.
+## 7. Transaction và các bất biến quan trọng
 
-| **Thuộc tính** | **Ý nghĩa** |
-| --- | --- |
-| \_id | Mã thông báo |
-| eventId | Mã sự kiện tạo thông báo |
-| userId | Người nhận |
-| eventType | Loại sự kiện |
-| referenceId | Đối tượng liên quan, ví dụ chuyến xe |
-| channel | Kênh gửi: ứng dụng, push, email hoặc SMS |
-| content | Nội dung |
-| deliveryStatus | Chờ gửi, đã gửi hoặc gửi thất bại |
-| isRead, readAt | Trạng thái và thời gian đọc |
-| createdAt | Thời gian tạo |
+Transaction không thay thế việc thiết kế khóa và ràng buộc duy nhất.
 
-Chỉ mục: userId + isRead + createdAt để lấy thông báo của người dùng.
+Các ca sử dụng phải:
 
-Khóa unique đề xuất: (eventId, userId, channel), với giả định mỗi sự kiện chỉ tạo một thông báo cho một người trên một kênh. Điều này ngăn lưu trùng khi hệ thống nhận lại cùng sự kiện.
+1. Xác thực danh tính và quyền.
+2. Kiểm tra idempotency nếu endpoint yêu cầu.
+3. Mở transaction.
+4. Khóa các bản ghi điều phối liên quan theo thứ tự thống nhất.
+5. Đọc lại điều kiện nghiệp vụ.
+6. Cập nhật dữ liệu, lịch sử, audit và outbox.
+7. Ghi kết quả idempotency.
+8. Commit rồi mới trả thành công.
 
-## 8. Operations Service — PostgreSQL
+Không giữ transaction mở trong khi chờ người dùng, bản đồ hoặc nhà cung cấp thanh toán.
 
-| **Bảng** | **Thuộc tính chính** | **Ràng buộc** |
-| --- | --- | --- |
-| Driver | driverId, fullName, phone, licenseNumber, status | PK: driverId; UK: phone, licenseNumber |
-| Vehicle | vehicleId, driverId, plateNumber, vehicleType, brand, model, active | PK: vehicleId; FK: driverId; UK: plateNumber |
-| Operator | operatorId, identitySubjectId, fullName, active | PK: operatorId; UK: identitySubjectId |
-| IncidentRecord | incidentId, tripId, reportedBy, handledBy, description, status, resolution, createdAt, resolvedAt | PK: incidentId; FK: handledBy → Operator |
-| CustomerProjection | customerId, fullName, email, phone, status | PK: customerId |
-| TripProjection | tripId, customerId, driverId, status, revenue, currency, bookedAt, completedAt | PK: tripId |
+### 7.1. Tạo Booking
 
-Quan hệ nội bộ: **Driver 1 — N Vehicle** và **Operator 1 — N IncidentRecord**. Nếu cần theo dõi một xe chuyển giữa nhiều tài xế theo thời gian, bổ sung bảng VehicleAssignment chứa tài xế, xe, ngày bắt đầu và ngày kết thúc.
+Trong một transaction:
+
+- Kiểm tra Account/Session hợp lệ.
+- Giành CustomerActivityGuard.
+- Chọn phiên bản giá đang có hiệu lực.
+- Tạo Booking PENDING với pricingSnapshot.
+- Tạo công việc điều phối bền vững.
+- Ghi sự kiện BOOKING_RECEIVED.
+- Ghi kết quả idempotency.
+
+Chỉ trả 201 sau commit.
+
+Hai khóa khác nhau từ cùng Customer vẫn phải đi qua ràng buộc CustomerActivityGuard.
+
+### 7.2. Nhận chuyến
+
+Trong một transaction:
+
+- Khóa Booking, tiến trình, đề nghị và các tài nguyên liên quan.
+- Kiểm tra đề nghị thuộc Driver đang gọi.
+- Kiểm tra thời hạn bằng thời gian máy chủ.
+- Kiểm tra Booking chưa hủy hoặc phân công.
+- Kiểm tra lại Account, hồ sơ, xe, trạng thái và GPS.
+- Chuyển TripRequest thành ACCEPTED.
+- Tạo đúng một Trip.
+- Chuyển Booking thành DRIVER_ASSIGNED.
+- Chuyển Dispatch thành DRIVER_FOUND.
+- Chuyển Driver thành BUSY.
+- Gắn Trip vào CustomerActivityGuard.
+- Vô hiệu hóa đề nghị cạnh tranh.
+- Ghi lịch sử, audit và outbox.
+
+Chỉ trả 200 khi transaction đã commit.
+
+Hủy Booking và nhận chuyến phải tranh chấp trên cùng bản ghi điều phối. Không được có hai kết quả thành công mâu thuẫn.
+
+### 7.3. Hoàn tất hoặc hủy Trip
+
+Trong một transaction:
+
+- Kiểm tra người gọi, expectedVersion và trạng thái hiện tại.
+- Áp dụng chuyển trạng thái hợp lệ.
+- Ghi timestamp, lịch sử và version.
+- Đóng Trip khi phù hợp.
+- Giải phóng CustomerActivityGuard nếu nó vẫn trỏ đúng Trip.
+- Giải phóng tài xế khỏi Trip.
+- Đặt AVAILABLE chỉ khi vẫn đủ điều kiện; nếu không thì OFFLINE.
+- Ghi sự kiện/công việc tiếp theo.
+
+COMPLETED tạo công việc tính cước, nhưng không đợi nhà cung cấp bên ngoài và không tự xác nhận thanh toán.
+
+### 7.4. Ghi nhận và giải quyết sự cố
+
+Tạo Incident và đưa Trip vào ERROR nằm trong cùng transaction.
+
+Nếu Trip đã ERROR:
+
+- Giữ nguyên statusBeforeError.
+- Thêm Incident.
+- Tăng version.
+- Không ghi chuyển trạng thái ERROR → ERROR.
+
+Giải quyết sự cố:
+
+- Kiểm tra expectedTripVersion.
+- Khóa Trip và tập Incident đang mở.
+- Khôi phục đúng trạng thái trước ERROR hoặc đóng bất thường.
+- Cập nhật toàn bộ Incident OPEN liên quan.
+- Cập nhật Driver và CustomerActivityGuard khi đóng.
+- Ghi audit và sự kiện.
+
+Incident mới phát sinh đồng thời phải làm yêu cầu dùng version cũ bị từ chối.
+
+### 7.5. Khóa Account
+
+Thao tác khóa:
+
+- Đổi accountStatus.
+- Thu hồi các Session.
+- Chặn phân công mới.
+- Vô hiệu hóa đề nghị nhận chuyến chưa chấp nhận của Driver.
+- Giữ BUSY nếu Driver còn Trip hoạt động; nếu không thì OFFLINE.
+- Không tự hủy hoặc hoàn tất Trip.
+- Trả các công việc đang hoạt động để điều hành viên xử lý.
+
+Thao tác khóa Account và nhận chuyến phải kiểm tra lại cùng trạng thái Account trong transaction. Không chỉ dựa vào bản sao trong cache.
+
+### 7.6. Tạo Account DRIVER và phân công xe
+
+Tạo Account DRIVER và Driver profile phải cùng thành công hoặc cùng thất bại.
+
+Phân công xe phải cập nhật VehicleAssignment, Driver.version và Vehicle.version trong cùng transaction.
+
+Không cho phép tình huống API báo thành công nhưng chỉ một phía Driver hoặc Vehicle đã được cập nhật.
+
+## 8. Idempotency, công việc nền và sự kiện
+
+### 8.1. IdempotencyRecord
+
+Thông tin chính:
+
+- accountId hoặc danh tính dịch vụ.
+- operation và đường dẫn đã chuẩn hóa.
+- idempotencyKey.
+- requestDigest.
+- trạng thái xử lý.
+- HTTP status và kết quả đã ghi nhận.
+- resourceId.
+- createdAt, completedAt.
+
+Ràng buộc duy nhất theo danh tính, operation và khóa.
+
+Quy tắc:
+
+- Cùng khóa/cùng nội dung: trả kết quả trước đó.
+- Cùng khóa/khác nội dung: 409.
+- Đang xử lý: phản hồi đúng hợp đồng, không tạo thao tác thứ hai.
+- Phát lại hợp lệ được kiểm tra trước expectedVersion.
+- Không lưu mật khẩu, token hoặc toàn bộ request nhạy cảm dạng rõ.
+- Bản ghi chống trùng phải có khả năng phục hồi sau khi tiến trình khởi động lại.
+
+Một số endpoint có khóa nghiệp vụ tự nhiên, như accept theo tripRequestId hoặc đánh dấu đọc theo notificationId; áp dụng đúng quy tắc của API tương ứng.
+
+### 8.2. Transactional outbox
+
+Khi nghiệp vụ thành công, hệ thống ghi OutboxEvent trong cùng transaction với dữ liệu nghiệp vụ.
+
+Worker đọc outbox và xử lý sau commit.
+
+Một sự kiện gồm:
+
+- eventId ổn định.
+- eventType.
+- aggregateType và aggregateId.
+- aggregateVersion hoặc revision của nguồn.
+- occurredAt.
+- correlationId.
+- Payload tối thiểu cần thiết.
+
+Nếu Worker lỗi sau khi gửi nhưng trước khi đánh dấu hoàn tất, sự kiện có thể được gửi lại. Thiết kế phải chấp nhận điều đó.
+
+### 8.3. Inbox và chống xử lý trùng
+
+Consumer lưu InboxReceipt theo consumerName và eventId.
+
+Ghi nhận đã xử lý phải nhất quán với thay đổi nghiệp vụ của consumer.
+
+Không chỉ đánh dấu “đã nhận” trước rồi bỏ mất công việc khi tiến trình lỗi.
+
+Các ràng buộc nghiệp vụ như unique tripId của Rating hoặc khóa sự kiện/người nhận của Notification vẫn cần tồn tại.
+
+### 8.4. BackgroundJob
+
+Công việc nền có:
+
+- jobId và loại công việc.
+- Khóa nghiệp vụ.
+- Thời điểm cần chạy.
+- Số lần thử.
+- Trạng thái.
+- Thời điểm hết quyền xử lý của Worker.
+- Lỗi gần nhất đã được loại bỏ dữ liệu nhạy cảm.
+
+Worker khác có thể tiếp tục công việc khi Worker trước mất kết nối. Bản thân thao tác xử lý vẫn phải idempotent.
+
+Thời hạn của TripRequest được xác định từ expiresAt/deadlineAt đã lưu, không phụ thuộc Worker có chạy đúng giây hay không.
+
+### 8.5. Thông báo
+
+Một sự kiện nghiệp vụ có thể tạo nhiều thông báo cho các người nhận hợp lệ khác nhau.
+
+Khóa chống trùng:
+
+`eventId + recipientAccountId + channel`
+
+Công bố thông báo phải ghi nội dung, publishedAt và SENT nhất quán.
+
+Lỗi cập nhật realtime không biến thông báo đã có trong hộp thư thành FAILED.
+
+Lỗi thông báo không đảo ngược Booking, Trip hoặc Payment.
+
+## 9. GPS, tracking và dữ liệu tính cước
+
+### 9.1. Tách ba loại dữ liệu
+
+| Loại dữ liệu | Mục đích |
+|---|---|
+| DriverLocation | Vị trí mới nhất của tài xế |
+| TripRoutePoint | Các mẫu hành trình gắn với một chuyến |
+| TripStatusHistory | Lịch sử thay đổi trạng thái nghiệp vụ |
+
+Không thể dùng một bản ghi vị trí mới nhất để tính quãng đường thực tế của cả chuyến.
+
+### 9.2. Tiếp nhận vị trí
+
+- Driver được xác định từ Account đăng nhập.
+- Kiểm tra phạm vi tọa độ và recordedAt.
+- receivedAt do máy chủ ghi.
+- Bản ghi cũ hơn không ghi đè vị trí mới.
+- Cùng recordedAt nhưng khác tọa độ là xung đột.
+- Gửi GPS không tự đặt Driver AVAILABLE.
+- Không tăng version của trạng thái Trip chỉ vì vị trí thay đổi.
+
+Khi gắn điểm vào hành trình:
+
+- Máy chủ xác định Trip của Driver.
+- Kiểm tra thời gian của mẫu có thuộc giai đoạn di chuyển của Trip.
+- Không gắn mẫu cũ của chuyến trước vào chuyến mới.
+- Ghi nhận nguồn và thời điểm để phục vụ đánh giá chất lượng dữ liệu.
+
+### 9.3. Theo dõi
+
+Tracking trả trạng thái:
+
+- LIVE.
+- STALE.
+- UNAVAILABLE.
+- STOPPED.
+
+Khi Trip đã đóng:
+
+- Không trả vị trí trực tiếp của Driver.
+- Không tiếp tục theo dõi Driver trên chuyến khác.
+- Không cung cấp ETA đang hoạt động.
+
+ETA chỉ áp dụng khi Driver đang đến điểm đón và có nguồn dữ liệu phù hợp. Không có dữ liệu phải thể hiện không khả dụng, không giả thành 0 giây.
+
+### 9.4. JourneyMetrics và chốt Fare
+
+JourneyMetrics là dữ liệu nội bộ hỗ trợ xác nhận quãng đường và thời gian.
+
+Trạng thái chất lượng nội bộ được đề xuất:
+
+- PENDING.
+- CONFIRMED.
+- REVIEW_REQUIRED.
+
+Thời gian chuyến dùng startedAt đến completedAt theo hợp đồng đã thống nhất. Khôi phục sau ERROR không đặt lại startedAt.
+
+Quãng đường không lấy từ khoảng cách đường thẳng giữa điểm đón và điểm đến. Cũng không tự coi tổng mọi mẫu GPS chưa kiểm tra là dữ liệu đủ tin cậy để thu tiền.
+
+Trước khi triển khai tính cước cần chốt:
+
+- Phương pháp dựng quãng đường từ hành trình.
+- Cách xử lý mất mẫu, mẫu nhảy hoặc mẫu bất thường.
+- Tiêu chí cho phép CONFIRMED.
+- Quy trình rà soát dữ liệu thiếu.
+
+Chỉ chốt Fare khi JourneyMetrics đủ điều kiện. Fare lưu metricsVersion được sử dụng.
+
+Nếu chưa đủ dữ liệu:
+
+- Trip vẫn COMPLETED.
+- Fare chưa sẵn sàng hoặc cần rà soát.
+- Không tạo Fare bằng 0 để bỏ qua lỗi.
+- Không tạo Payment khi chưa có Fare hợp lệ.
+
+## 10. Tích hợp thanh toán
+
+### 10.1. Không giữ transaction trong lúc gọi nhà cung cấp
+
+Luồng thanh toán điện tử:
+
+1. Trong transaction, tạo Payment/Attempt và merchantReference.
+2. Ghi công việc gửi sang nhà cung cấp.
+3. Commit.
+4. Worker gọi nhà cung cấp bên ngoài transaction.
+5. Ghi nhận kết quả đã xác minh.
+
+Việc database đã commit không chứng minh nhà cung cấp đã thu tiền, và ngược lại.
+
+### 10.2. Timeout và kết quả chưa rõ
+
+Nếu không xác định được nhà cung cấp đã xử lý hay chưa:
+
+- Giữ thông tin Attempt và merchantReference.
+- Đánh dấu UNKNOWN theo hợp đồng.
+- Không tạo Attempt khác.
+- Đối soát bằng truy vấn có thẩm quyền.
+- Không suy luận FAILED chỉ vì hết thời gian chờ.
+
+Nếu không có API truy vấn phù hợp, giữ trạng thái chưa rõ và chuyển sang quy trình rà soát; không tự thu lại.
+
+### 10.3. Webhook
+
+Webhook phải:
+
+- Xác thực nguồn và chữ ký theo raw payload.
+- Kiểm tra merchantReference/transaction reference.
+- Kiểm tra amount và currency.
+- Chống trùng theo sự kiện nhà cung cấp.
+- Kiểm tra trạng thái và version hiện tại.
+- Lưu bền vững trước khi xác nhận đã tiếp nhận theo giao thức provider.
+
+Redirect từ trình duyệt không phải bằng chứng thanh toán.
+
+SUCCESS muộn hoặc dữ liệu mâu thuẫn phải được giữ bằng chứng và đánh dấu requiresReview. Không tự ghi đè lịch sử hoặc thực hiện hoàn tiền chưa có trong MVP.
+
+Hợp đồng cụ thể của webhook còn phụ thuộc việc lựa chọn nhà cung cấp.
+
+### 10.4. Tiền mặt
+
+Tạo Payment CASH chỉ tạo trạng thái PENDING.
+
+Chỉ Driver được gán cho Trip được xác nhận đã thu tiền qua API confirm-cash.
+
+Xác nhận hợp lệ cập nhật Payment, PaymentAttempt, paidAt, confirmedBy, version và sự kiện trong cùng transaction.
+
+OPERATOR không có API cưỡng chế đổi Payment thành SUCCESS.
+
+## 11. Lựa chọn cơ sở dữ liệu và chỉ mục
+
+### 11.1. PostgreSQL là nơi lưu chính
+
+Đề xuất các schema logic:
+
+- identity.
+- booking.
+- dispatch.
+- trip.
+- billing.
+- rating.
+- notification.
+- fleet.
+- infrastructure.
+
+Đây là cách tổ chức trong một database của bản đầu, không phải bằng chứng các module đã có cơ sở dữ liệu độc lập.
+
+Các khóa ngoại trong database giúp kiểm tra liên kết khi phù hợp. Khi tách database, phải thay bằng giao tiếp và kiểm tra nghiệp vụ tương ứng; không giả định vẫn có khóa ngoại qua mạng.
+
+### 11.2. Ràng buộc quan trọng
+
+| Dữ liệu | Ràng buộc |
+|---|---|
+| Account | Unique normalizedEmail, normalizedPhone |
+| Customer/Operator/Driver | Unique accountId trong hồ sơ tương ứng |
+| CustomerActivityGuard | Primary key customerId |
+| DispatchProcess | Unique bookingId |
+| TripRequest | Không có hai đề nghị PENDING của cùng tiến trình |
+| Trip | Unique bookingId; tối đa một Trip chưa đóng cho mỗi Driver/Vehicle |
+| VehicleAssignment | Unique Driver và Vehicle trong các phân công chưa kết thúc |
+| PricingConfig | Unique vehicleType + effectiveFrom |
+| Fare | Unique tripId |
+| Payment | Unique fareId và tripId |
+| PaymentAttempt | Unique paymentId + attemptNumber |
+| Rating | Unique tripId; score trong 1..5 |
+| Notification | Unique eventId + recipientAccountId + channel |
+| InboxReceipt | Unique consumerName + eventId |
+| IdempotencyRecord | Unique danh tính + operation + key |
+
+Không thay thế các ràng buộc này bằng thao tác “SELECT thấy chưa có rồi INSERT” đơn thuần.
+
+### 11.3. Chỉ mục truy vấn
+
+- Booking theo customerId và createdAt.
+- Trip theo customerId/driverId và createdAt.
+- Trip hoạt động theo closedAt và trạng thái.
+- TripRequest theo driverId, status và expiresAt.
+- Notification theo recipientAccountId, deliveryStatus, publishedAt và notificationId.
+- Rating theo driverId, createdAt và ratingId.
+- Payment theo paymentStatus/requiresReview và createdAt.
+- Công việc nền theo trạng thái và thời điểm cần chạy.
+
+Chỉ mục thực tế phải được kiểm tra bằng dữ liệu và truy vấn của hệ thống, không thêm mọi tổ hợp một cách mặc định.
+
+### 11.4. Redis — tùy chọn
+
+Redis có thể chứa:
+
+- Chỉ mục vị trí tài xế.
+- Cache dữ liệu đọc.
+- Tín hiệu cập nhật realtime.
+
+Mất Redis không được làm mất:
+
+- Booking.
+- Kết quả accept/reject.
+- Trip và lịch sử.
+- Incident.
+- Fare/Payment.
+- Quyết định chống trùng quan trọng.
+
+Cache phải dựng lại được từ dữ liệu có thẩm quyền. Không dùng Redis làm nguồn duy nhất để quyết định một khoản tiền đã thu hoặc một tài xế đã nhận chuyến.
+
+## 12. Bảo mật và vận hành
+
+### 12.1. Phân quyền
+
+Kiểm tra cả:
+
+- Tài khoản.
+- Session.
+- Role.
+- Quyền trên đối tượng cụ thể.
+
+Ví dụ, role CUSTOMER không cho phép xem Trip của mọi khách hàng.
+
+API nội bộ xác thực danh tính dịch vụ và quyền cụ thể. Không dùng user token thay service token.
+
+Khi Worker gọi trực tiếp giao diện module trong cùng ứng dụng, phải có danh tính và quyền công việc nội bộ tương ứng; không giả làm một OPERATOR.
+
+### 12.2. Quản lý cấu hình và bí mật
+
+- Giá trị bí mật được cung cấp qua môi trường chạy hoặc nơi quản lý bí mật.
+- Không commit file chứa mật khẩu database, khóa ký hoặc secret provider.
+- Tách môi trường phát triển, kiểm thử và triển khai.
+- Dữ liệu seed là dữ liệu giả.
+- Không ghi token hoặc raw thông tin thanh toán nhạy cảm vào log.
+
+### 12.3. Audit và quan sát hệ thống
+
+Mỗi thao tác quan trọng cần correlationId để theo dõi qua API, Worker và dịch vụ ngoài.
+
+Theo dõi ít nhất:
+
+- Độ trễ API.
+- Công việc nền quá hạn.
+- Outbox chưa xử lý.
+- Đề nghị nhận chuyến quá hạn chưa được chốt.
+- Payment UNKNOWN hoặc requiresReview.
+- Thông báo FAILED.
+- Trip ERROR chưa đóng.
+
+Audit nghiệp vụ cần được lưu bền vững. Log kỹ thuật không thay thế AuditLog.
+
+### 12.4. Healthcheck
+
+- Liveness: tiến trình còn hoạt động.
+- Readiness: có thể phục vụ yêu cầu cần thiết, đặc biệt là kết nối dữ liệu chính.
+- Worker health: có xử lý công việc và có backlog bất thường hay không.
+
+Nhà cung cấp thanh toán tạm ngừng không nên khiến toàn bộ API tài khoản hoặc xem chuyến bị coi là hỏng. Phải thể hiện lỗi tại chức năng bị ảnh hưởng.
+
+### 12.5. Sao lưu và phục hồi
+
+Sao lưu dữ liệu nghiệp vụ cùng thông tin cần phục hồi công việc nền và chống trùng.
+
+Sau phục hồi:
+
+- Quét công việc chưa hoàn tất.
+- Xử lý đề nghị đã quá expiresAt.
+- Không đặt lại deadline điều phối.
+- Đối soát Attempt có kết quả chưa rõ.
+- Không phát sinh lần thu tiền mới chỉ vì dữ liệu tiến trình bị gián đoạn.
+
+Mục tiêu sao lưu và kiểm thử phục hồi thực hiện theo SRS. Chưa có kết quả phục hồi thực tế ở giai đoạn thiết kế.
+
+## 13. Báo cáo và dữ liệu tổng hợp
+
+Báo cáo cơ bản dùng định nghĩa:
+
+- Số chuyến: theo Trip.createdAt.
+- Chuyến hủy: Trip CANCELLED trong cùng tập chuyến của kỳ.
+- Tỷ lệ hủy: cancelledTrips / totalTrips.
+- Không có Trip: tỷ lệ trả null.
+- Không tìm được tài xế: chỉ số Booking riêng.
+- Doanh thu ghi nhận: Payment SUCCESS theo paidAt.
+- PaymentAttempt không được cộng như một Payment riêng.
+- CASH PENDING không được tính là đã thu.
+
+Trong bản đầu, báo cáo phải đọc dữ liệu theo một ảnh chụp nhất quán.
+
+Nếu tách dịch vụ và dùng projection:
+
+- Mỗi đối tượng tổng hợp phải có khóa duy nhất theo nguồn.
+- Sự kiện lặp không được cộng số tiền lần nữa.
+- Xử lý version để không ghi đè bằng sự kiện cũ.
+- Chỉ công bố snapshotAt mà nguồn dữ liệu đã được tổng hợp đầy đủ.
+- Chưa đủ dữ liệu thì không dùng số 0 thay cho dữ liệu thiếu.
+
+## 14. Định hướng tách microservices
+
+Tách dịch vụ là một bước thay đổi kiến trúc, không chỉ đưa tám thư mục vào tám container.
+
+### 14.1. Nguyên tắc
+
+Sau khi tách:
+
+- Mỗi dịch vụ sở hữu dữ liệu và quyền ghi riêng.
+- Không ghi trực tiếp database của dịch vụ khác.
+- Giao tiếp đồng bộ có timeout.
+- Sự kiện có chống trùng và quản lý phiên bản.
+- Read model có thể chậm hơn dữ liệu nguồn.
+- Quyết định quan trọng không dựa duy nhất vào projection có thể cũ.
+
+### 14.2. Thứ tự đề xuất
+
+1. Hoàn thiện các module và test nghiệp vụ trong bản đầu.
+2. Tách Notification vì lỗi của nó không được đảo ngược nghiệp vụ nguồn.
+3. Xem xét tách Rating và báo cáo khi nguồn dữ liệu đã có sự kiện bền vững.
+4. Xem xét tách xử lý thanh toán sau khi hợp đồng provider và đối soát ổn định.
+5. Chỉ tách Booking, Dispatch, Trip và Fleet khi cơ chế phối hợp phân tán đã được thiết kế và kiểm thử.
+
+### 14.3. Điều kiện trước khi tách luồng nhận chuyến
+
+Phải có phương án được duyệt cho:
+
+- Giữ chỗ Customer/Driver/Vehicle.
+- Tranh chấp accept và cancel.
+- Coordinator lỗi giữa các bước.
+- Mất phản hồi sau khi một bên đã ghi thành công.
+- Giữ chỗ quá hạn và cơ chế thu hồi an toàn.
+- Gửi lại lệnh mà không tạo thêm Trip.
+- Bên thứ ba đọc dữ liệu trong lúc quy trình chưa hoàn tất.
+- Khóa Account đồng thời với phân công.
+- Khôi phục sau sự cố.
+
+Saga có thể điều phối nhiều bước và thao tác bù, nhưng không tự biến nhiều database thành một transaction nguyên tử.
+
+Nếu phương án phân tán yêu cầu trả 202 hoặc bổ sung trạng thái chờ, phải cập nhật API và test case để duyệt trước. Không được âm thầm làm yếu cam kết hiện tại của API accept.
+
+## 15. Đối chiếu kiểm thử và các điểm cần chốt
+
+### 15.1. Các kiểm thử bảo vệ kiến trúc
+
+| Rủi ro | Test case tiêu biểu |
+|---|---|
+| Hai Booking hoạt động của cùng khách | TC-BOOKING-023 |
+| Hủy và nhận chuyến cùng thắng | TC-BOOKING-024 |
+| Một Driver nhận hai Trip | TC-DISPATCH-024 |
+| Khởi động lại làm tăng thời gian tìm tài xế | TC-DISPATCH-023 |
+| Phát lại accept đặt BUSY trở lại | TC-DISPATCH-025 |
+| Ghi đè bằng version cũ | TC-TRIPSTATUS-021 |
+| Khôi phục ERROR đặt lại startedAt | TC-TRIPSTATUS-026 |
+| Lộ GPS chuyến mới cho khách cũ | TC-TRACKING-023 |
+| CASH được coi thành công trước xác nhận | TC-PAYMENT-003, TC-PAYMENT-021 |
+| UNKNOWN vẫn cho thu lại | TC-PAYMENT-023 |
+| Callback lặp làm tăng doanh thu | TC-PAYMENT-025 |
+| Rating phụ thuộc thanh toán thành công | TC-RATING-024 |
+| Sự kiện lặp tạo thông báo trùng | TC-NOTIF-023 |
+| Một xe gán cho hai tài xế | TC-ADMIN-023 |
+| Khóa Account tự làm kết thúc chuyến | TC-ADMIN-028 |
+
+Các test case hiện đều NOT_RUN. Tài liệu không khẳng định hệ thống đã vượt qua các kiểm thử này.
+
+### 15.2. Các quyết định còn mở
+
+1. Đề bài có bắt buộc các microservice độc lập ngay trong lần triển khai đầu không?
+2. Có duyệt phương án PostgreSQL chính và tám module trong cùng backend không?
+3. Giới hạn đăng nhập sai: ngưỡng, cửa sổ thời gian, cách phản hồi.
+4. Quy tắc Booking có điểm đón/đến trùng tọa độ.
+5. Quy tắc ký tự trong fullName.
+6. Có đưa điểm đánh giá trung bình vào MVP không?
+7. Có bổ sung tìm khách hàng theo keyword không?
+8. Nhà cung cấp thanh toán sandbox và hợp đồng webhook/đối soát.
+9. Phương pháp xác nhận quãng đường thực tế và xử lý hành trình thiếu dữ liệu.
+10. Cách xác định GPS còn mới, bao gồm vai trò của recordedAt và receivedAt.
+11. Cấu hình retry, thời gian lưu dữ liệu kỹ thuật và quy trình vận hành tương ứng.
+
+Các điểm này cần được giải quyết trước khi triển khai phần backend phụ thuộc vào chúng. Không tự đánh dấu test đạt hoặc thêm API chỉ để che lấp quyết định còn thiếu.
+
+## 16. Tài liệu kỹ thuật tham khảo
+
+- [PostgreSQL — Transactions](https://www.postgresql.org/docs/current/tutorial-transactions.html): nguyên tắc cập nhật toàn bộ hoặc không cập nhật trong transaction.
+- [PostgreSQL — Numeric Types](https://www.postgresql.org/docs/current/datatype-numeric.html): kiểu số nguyên, số thập phân chính xác và số dấu phẩy động.
+- [Redis — EXPIRE](https://redis.io/docs/latest/commands/expire/): cơ chế hết hạn key, được phân biệt với việc chốt trạng thái nghiệp vụ.
+
+Các quyết định phân chia module, quyền sở hữu dữ liệu và phạm vi MVP là đề xuất riêng cho CAB System.
