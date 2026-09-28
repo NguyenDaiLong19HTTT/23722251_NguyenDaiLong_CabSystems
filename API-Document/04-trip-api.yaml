@@ -1,111 +1,638 @@
 openapi: 3.0.3
+
 info:
-  title: CAB System - Trip API
-  description: >
-    API cập nhật và theo dõi trạng thái chuyến xe. Tương ứng FR08, FR09, BR03,
-    BR04, BP03, UC04, UC06, AC04, AC05.
-  version: "1.0.0"
+  title: CAB System - Trip Execution & Tracking API
+  version: "1.1.0"
+  description: |
+    Đặc tả thực hiện chuyến, lịch sử, theo dõi và vị trí
+    theo SRS CAB System phiên bản 1.1.
+
+    Truy xuất yêu cầu:
+    - BR03, BR04, BR09.
+    - FR08, FR09, FR15, FR18, FR19, FR20.
+    - BRu02, BRu04, BRu05, BRu09, BRu10,
+      BRu16, BRu19, BRu20.
+    - UC04, UC06, UC11, UC12, UC13.
+    - AC04, AC05, AC08, AC09, AC10, AC11.
+    - NFR03, NFR04, NFR06, NFR09.
+
+    Luồng trạng thái thông thường:
+    DRIVER_ASSIGNED -> ARRIVED_PICKUP -> PICKED_UP
+    -> IN_PROGRESS -> COMPLETED.
+
+    Ngoại lệ:
+    - CANCELLED: hủy hợp lệ trước khi đón khách.
+    - ERROR: sự cố cần vận hành xử lý.
+
+    Quy tắc:
+    - Trip được tạo bởi quy trình phân công của Dispatch.
+    - Không có endpoint công khai cho client tự tạo Trip.
+    - Một Booking có tối đa một Trip.
+    - Chỉ tài xế được phân công cập nhật trạng thái thông thường.
+    - Khách hàng chỉ truy cập chuyến của mình.
+    - OPERATOR có quyền tra cứu và thao tác vận hành theo SRS.
+    - Trip COMPLETED không đồng nghĩa Payment SUCCESS.
+    - Booking vẫn DRIVER_ASSIGNED nếu Trip bị hủy sau phân công.
+
+    Cập nhật có kiểm soát:
+    - Trip có version bắt đầu từ 1.
+    - Mỗi thay đổi trạng thái hoặc xử lý sự cố làm thay đổi
+      dữ liệu điều khiển chuyến phải tăng version.
+    - Client gửi expectedVersion khi thực hiện lệnh thay đổi.
+    - Nếu dữ liệu đã thay đổi, trả 409 TRIP_VERSION_CONFLICT.
+    - Kiểm tra kết quả chống lặp trước kiểm tra expectedVersion.
+    - GPS không làm tăng version của Trip.
+
+    Phản hồi dữ liệu chuyến sử dụng Cache-Control: no-store.
+    Không ghi access token hoặc dữ liệu nhạy cảm vào log.
+
+    Đây là tài liệu thiết kế, chưa xác nhận dịch vụ đã triển khai.
+
 servers:
-  - url: https://api.cabsystem.example.com/v1
+  - url: /v1
+    description: Đường dẫn cơ sở dự kiến của CAB API.
+
 tags:
   - name: Trip
-    description: Chuyến xe
+    description: Chi tiết, lịch sử và vòng đời chuyến.
+  - name: Tracking
+    description: Theo dõi chuyến và cập nhật vị trí.
+  - name: TripIncident
+    description: Tài xế báo sự cố trong chuyến.
+
+security:
+  - bearerAuth: []
 
 paths:
+  /trips:
+    get:
+      tags: [Trip]
+      operationId: listMyTrips
+      summary: Xem lịch sử chuyến của tài khoản đang đăng nhập
+      description: |
+        FR20, UC13, AC11.
+
+        Quyền:
+        - CUSTOMER: chỉ chuyến có customerId của mình.
+        - DRIVER: chỉ chuyến có driverId của mình.
+
+        OPERATOR sử dụng danh sách chuyến trong Operations API.
+
+        Không nhận customerId hoặc driverId để chọn người khác.
+        Các bộ lọc chỉ thu hẹp dữ liệu đã được phân quyền.
+
+        from và to lọc theo createdAt:
+        - from là cận bao gồm.
+        - to là cận không bao gồm.
+        - Nếu có cả hai, from phải nhỏ hơn to.
+
+        Sắp xếp theo createdAt giảm dần,
+        sau đó tripId làm thứ tự phụ ổn định.
+
+        Cursor gắn với tài khoản và bộ lọc đã sử dụng.
+        Khi đổi bộ lọc, bắt đầu lại từ trang đầu.
+
+        Không có chuyến thì trả items rỗng.
+      parameters:
+        - name: tripStatus
+          in: query
+          schema:
+            $ref: "#/components/schemas/TripStatus"
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Danh sách chuyến trong phạm vi được phép.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TripPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
   /trips/{tripId}:
     get:
       tags: [Trip]
-      summary: Xem thông tin chi tiết chuyến xe
-      security:
-        - bearerAuth: []
+      operationId: getTrip
+      summary: Xem chi tiết chuyến
+      description: |
+        FR08, FR20, UC06, UC13.
+
+        Quyền:
+        - CUSTOMER của chuyến.
+        - DRIVER được phân công.
+        - OPERATOR được phép tra cứu vận hành.
+
+        Trả trạng thái, version, điểm đón/đến, định danh các bên,
+        thời điểm hành trình và lịch sử trạng thái.
+
+        Dữ liệu thanh toán được quản lý bởi Payment API.
+        Không suy ra đã thanh toán từ tripStatus COMPLETED.
+
+        Khi ERROR:
+        - closedAt chưa có: sự cố chưa kết thúc chuyến.
+        - closedAt có: vận hành đã xác nhận kết thúc bất thường.
+        - Không tự coi ERROR đã đóng là COMPLETED.
+
+        version trong response được dùng làm expectedVersion
+        cho thao tác thay đổi tiếp theo.
       parameters:
-        - $ref: '#/components/parameters/TripId'
+        - $ref: "#/components/parameters/TripId"
       responses:
-        '200':
-          description: Chi tiết chuyến xe
+        "200":
+          description: Chi tiết hiện tại của chuyến.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Trip'
-        '404':
-          description: Không tìm thấy chuyến
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/Trip"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/TripNotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
 
   /trips/{tripId}/tracking:
     get:
-      tags: [Trip]
-      summary: Theo dõi chuyến xe theo thời gian thực
-      description: >
-        FR09 - Cho phép khách hàng và nhân viên vận hành theo dõi trạng thái
-        hiện tại của chuyến, thông tin tài xế và thời gian dự kiến đến.
-      security:
-        - bearerAuth: []
+      tags: [Tracking]
+      operationId: getTripTracking
+      summary: Xem trạng thái, vị trí và ETA của chuyến
+      description: |
+        FR09, UC04, AC04.
+
+        Quyền:
+        - CUSTOMER của chuyến.
+        - OPERATOR được phép giám sát.
+
+        Đây là ảnh chụp dữ liệu tại thời điểm truy vấn,
+        không tự thiết lập kết nối cập nhật liên tục.
+
+        trackingStatus:
+        - LIVE: chuyến chưa đóng và vị trí còn mới.
+        - STALE: chuyến chưa đóng nhưng vị trí đã cũ.
+        - UNAVAILABLE: chưa có vị trí hợp lệ.
+        - STOPPED: chuyến đã đóng.
+
+        Ngưỡng dữ liệu cũ theo SRS là 30 giây.
+        Độ mới được tính từ recordedAt đã được kiểm tra,
+        không thay bằng thời điểm client mở màn hình.
+
+        ETA:
+        - Chỉ áp dụng khi tài xế đang đến điểm đón,
+          tức Trip DRIVER_ASSIGNED.
+        - Có giá trị khi vị trí mới và dịch vụ tính ETA khả dụng.
+        - Không xác định được thì trả null với etaStatus UNAVAILABLE.
+        - Các trạng thái khác dùng etaStatus NOT_APPLICABLE.
+        - Không dùng 0 để thay cho dữ liệu thiếu.
+
+        Khi Trip đã đóng:
+        - trackingStatus STOPPED.
+        - driverLocation là null.
+        - Không tiếp tục phát vị trí hiện tại của tài xế
+          đang thực hiện chuyến khác.
+        - estimatedArrivalSeconds là null.
+
+        Khi mất GPS:
+        - Giữ trạng thái chuyến.
+        - Có thể trả vị trí cuối với trackingStatus STALE.
+        - Không tự hoàn thành, hủy hoặc giải phóng tài xế.
       parameters:
-        - $ref: '#/components/parameters/TripId'
+        - $ref: "#/components/parameters/TripId"
       responses:
-        '200':
-          description: Thông tin theo dõi chuyến
+        "200":
+          description: Dữ liệu theo dõi với trạng thái độ mới rõ ràng.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TripTracking'
-        '404':
-          description: Không tìm thấy chuyến
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/TrackingSnapshot"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/TripNotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
 
   /trips/{tripId}/status:
     patch:
       tags: [Trip]
-      summary: Tài xế cập nhật trạng thái chuyến
-      description: >
-        FR08, BRu05 - Tài xế cập nhật trạng thái theo trình tự: ARRIVED_PICKUP,
-        PICKED_UP, IN_PROGRESS, COMPLETED.
-      security:
-        - bearerAuth: []
+      operationId: updateTripStatus
+      summary: Tài xế cập nhật quá trình thực hiện chuyến
+      description: |
+        FR08, UC06, BRu05, AC05.
+
+        Chỉ DRIVER được phân công cho Trip.
+
+        Chuyển trạng thái được phép:
+        - DRIVER_ASSIGNED -> ARRIVED_PICKUP.
+        - ARRIVED_PICKUP -> PICKED_UP.
+        - PICKED_UP -> IN_PROGRESS.
+        - IN_PROGRESS -> COMPLETED.
+
+        Không nhận CANCELLED hoặc ERROR tại endpoint này:
+        - Hủy dùng /trips/{tripId}/cancel.
+        - Báo sự cố dùng /trips/{tripId}/incidents.
+
+        Không nhận DRIVER_ASSIGNED để tạo hoặc phân công chuyến.
+        Không cho OPERATOR bỏ qua trình tự tại endpoint này.
+
+        Khi thành công:
+        - Cập nhật tripStatus.
+        - Tăng version.
+        - Thêm đúng một bản ghi lịch sử.
+        - Ghi người thực hiện và thời điểm phía máy chủ.
+        - Ghi nhận sự kiện/thông báo tương ứng.
+
+        Các thời điểm:
+        - ARRIVED_PICKUP: ghi arrivedAt.
+        - PICKED_UP: ghi pickedUpAt.
+        - IN_PROGRESS: ghi startedAt.
+        - COMPLETED: ghi completedAt và closedAt.
+
+        Không nhận các thời điểm này từ client.
+        Không ghi đè các mốc đã có khi vận hành khôi phục
+        một chuyến từng gặp ERROR.
+
+        Khi COMPLETED:
+        - Kết thúc việc tài xế phục vụ Trip này.
+        - Cập nhật tài xế AVAILABLE hoặc OFFLINE theo điều kiện.
+        - Kích hoạt quá trình xác nhận dữ liệu và tính cước.
+        - Không tự đánh dấu thanh toán thành công.
+
+        Nếu chưa đủ dữ liệu tính cước:
+        - Trip vẫn COMPLETED.
+        - Chưa chốt Fare và chưa thu tiền.
+        - Tạo yêu cầu kiểm tra cho vận hành.
+        - Không ép chuyển COMPLETED thành ERROR.
+
+        Chống xử lý lặp:
+        - Cùng Idempotency-Key và body trả kết quả đã lưu.
+        - Không tăng version, thêm lịch sử hoặc thông báo lần nữa.
+        - Phản hồi gửi lại có thể là ảnh chụp của lần xử lý đầu.
+        - Dùng GET Trip để xem trạng thái mới nhất.
+
+        Với khóa mới, expectedVersion cũ hoặc chuyển trạng thái
+        không hợp lệ phải bị từ chối.
       parameters:
-        - $ref: '#/components/parameters/TripId'
+        - $ref: "#/components/parameters/TripId"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [status]
-              properties:
-                status:
-                  $ref: '#/components/schemas/TripStatus'
-                location:
-                  $ref: '#/components/schemas/Coordinates'
+              $ref: "#/components/schemas/UpdateTripStatusRequest"
             example:
-              status: "ARRIVED_PICKUP"
-              location:
-                latitude: 10.7757
-                longitude: 106.7004
+              expectedVersion: 1
+              tripStatus: ARRIVED_PICKUP
       responses:
-        '200':
-          description: Trạng thái chuyến được cập nhật
+        "200":
+          $ref: "#/components/responses/TripMutationSucceeded"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/TripNotFound"
+        "409":
+          description: |
+            TRIP_VERSION_CONFLICT, INVALID_TRIP_TRANSITION,
+            TRIP_CLOSED, IDEMPOTENCY_CONFLICT hoặc REQUEST_IN_PROGRESS.
+            Không thay đổi dữ liệu khi kiểm tra thất bại.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Trip'
-        '400':
-          description: Cập nhật không đúng trình tự trạng thái
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
+  /trips/{tripId}/cancel:
+    post:
+      tags: [Trip]
+      operationId: cancelTrip
+      summary: Hủy chuyến trước khi đón khách
+      description: |
+        FR19, UC12, BRu16, AC10.
+
+        Quyền:
+        - CUSTOMER của chuyến.
+        - DRIVER được phân công.
+        - OPERATOR được phép xử lý vận hành.
+
+        Chỉ hủy thông thường khi Trip:
+        - DRIVER_ASSIGNED; hoặc
+        - ARRIVED_PICKUP.
+
+        PICKED_UP, IN_PROGRESS và ERROR không được hủy tại đây.
+        Sau khi đón khách, phải chuyển sang quy trình sự cố.
+
+        Lý do:
+        - CHANGE_OF_PLANS: khách thay đổi kế hoạch.
+        - VEHICLE_ISSUE: tài xế hoặc vận hành xác nhận sự cố xe.
+        - NO_SHOW: chỉ tài xế của chuyến được sử dụng.
+        - OTHER: lý do khác, vẫn phải mô tả cụ thể.
+
+        NO_SHOW chỉ hợp lệ khi:
+        - Trip đang ARRIVED_PICKUP.
+        - Có arrivedAt.
+        - Đã chờ ít nhất 5 phút theo thời gian máy chủ.
+
+        Khi thành công:
+        - Trip CANCELLED.
+        - Ghi cancellation và closedAt.
+        - Tăng version, thêm lịch sử và nhật ký.
+        - Giải phóng tài xế khỏi Trip.
+        - Đưa tài xế OFFLINE nếu xe hoặc tài xế không đủ điều kiện.
+        - Ghi nhận thông báo cho bên còn lại.
+
+        Không tính phí hủy tự động trong MVP.
+        Không ghi completedAt cho chuyến bị hủy.
+        Không thay Booking DRIVER_ASSIGNED thành CANCELLED.
+
+        Nếu Trip đã CANCELLED:
+        - Trả 200 với dữ liệu đã lưu.
+        - Không ghi đè lý do, người hủy hoặc thời điểm.
+        - Không giải phóng tài xế lần nữa nếu tài xế đang phục vụ chuyến khác.
+
+        Tranh chấp với thao tác đón khách:
+        - Nếu PICKED_UP đã được xác nhận, hủy bị từ chối.
+        - Nếu hủy đã thành công, cập nhật PICKED_UP bị từ chối.
+      parameters:
+        - $ref: "#/components/parameters/TripId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CancelTripRequest"
+            example:
+              expectedVersion: 2
+              reasonCode: CHANGE_OF_PLANS
+              reason: "Tôi không còn nhu cầu di chuyển."
+      responses:
+        "200":
+          description: Trip đã CANCELLED; có thể là kết quả đã lưu.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '404':
-          description: Không tìm thấy chuyến
+                $ref: "#/components/schemas/CancelledTrip"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/TripNotFound"
+        "409":
+          description: |
+            TRIP_VERSION_CONFLICT, TRIP_NOT_CANCELLABLE,
+            NO_SHOW_WAIT_NOT_REACHED, IDEMPOTENCY_CONFLICT
+            hoặc REQUEST_IN_PROGRESS.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
+  /trips/{tripId}/incidents:
+    post:
+      tags: [TripIncident]
+      operationId: reportTripIncident
+      summary: Tài xế báo sự cố làm gián đoạn chuyến
+      description: |
+        FR15, UC06, UC09, BRu05.
+
+        Chỉ DRIVER được phân công.
+        OPERATOR sử dụng chức năng sự cố trong Operations API.
+
+        Cho phép khi Trip:
+        - DRIVER_ASSIGNED.
+        - ARRIVED_PICKUP.
+        - PICKED_UP.
+        - IN_PROGRESS.
+        - ERROR nhưng chưa closedAt.
+
+        Khi báo sự cố lần đầu:
+        - Tạo IncidentRecord OPEN.
+        - Lưu trạng thái ngay trước ERROR.
+        - Chuyển Trip sang ERROR.
+        - Tăng version và thêm lịch sử trạng thái.
+        - Giữ tài xế BUSY.
+        - Ghi nhận cảnh báo cho vận hành.
+
+        Khi Trip đã ERROR và chưa đóng:
+        - Có thể ghi nhận sự cố bổ sung.
+        - Không ghi đè trạng thái trước ERROR.
+        - Tăng version vì dữ liệu xử lý sự cố đã thay đổi.
+        - Không thêm chuyển trạng thái ERROR -> ERROR vào lịch sử.
+
+        Cùng Idempotency-Key và body không tạo IncidentRecord trùng.
+
+        Không nhận resolution, handledBy hoặc trạng thái RESOLVED
+        từ tài xế.
+
+        Chỉ vận hành được quyết định khôi phục hoặc kết thúc
+        chuyến gặp ERROR theo Operations API.
+
+        Tài khoản bị khóa không dùng được endpoint này.
+        Trường hợp đó phải được chuyển qua quy trình hỗ trợ vận hành.
+      parameters:
+        - $ref: "#/components/parameters/TripId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReportIncidentRequest"
+            example:
+              expectedVersion: 4
+              issueType: VEHICLE_BREAKDOWN
+              description: "Xe gặp sự cố kỹ thuật, không thể tiếp tục."
+      responses:
+        "201":
+          description: Đã ghi nhận sự cố và cập nhật Trip nhất quán.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IncidentReportResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/TripNotFound"
+        "409":
+          description: |
+            TRIP_VERSION_CONFLICT, TRIP_CLOSED,
+            IDEMPOTENCY_CONFLICT hoặc REQUEST_IN_PROGRESS.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
+  /drivers/me/location:
+    put:
+      tags: [Tracking]
+      operationId: updateMyDriverLocation
+      summary: Tài xế cập nhật vị trí hiện tại
+      description: |
+        FR18, UC11, BRu19, AC09.
+
+        Chỉ DRIVER có Account ACTIVE và Session hợp lệ.
+        driverId được xác định từ tài khoản đăng nhập.
+
+        Không nhận driverId hoặc tripId do client tự gán.
+        Hệ thống xác định liên kết chuyến đang phục vụ.
+
+        Có thể gửi vị trí khi OFFLINE để chuẩn bị yêu cầu trực tuyến.
+        Gửi vị trí không tự chuyển tài xế sang AVAILABLE.
+
+        Khi AVAILABLE hoặc BUSY, chu kỳ gửi đề xuất là 5 giây
+        theo SRS, nếu thiết bị có kết nối.
+
+        recordedAt là thời điểm thiết bị ghi nhận tọa độ.
+        receivedAt được máy chủ tự ghi khi nhận dữ liệu.
+
+        Kiểm tra:
+        - Tọa độ trong phạm vi hợp lệ.
+        - recordedAt không lớn hơn thời điểm tiếp nhận của máy chủ.
+        - Vị trí mới nhất không bị ghi đè bởi dữ liệu cũ hơn.
+
+        Nếu dữ liệu mới hơn vị trí đang lưu:
+        - Cập nhật vị trí gần nhất.
+        - Trả locationUpdated true.
+
+        Nếu dữ liệu cũ hơn:
+        - Không ghi đè vị trí hiện tại.
+        - Trả 200 với locationUpdated false.
+
+        Nếu cùng recordedAt và cùng tọa độ:
+        - Xem như gửi lại.
+        - Không thay receivedAt của bản ghi đã lưu.
+        - Trả locationUpdated false.
+
+        Nếu cùng recordedAt nhưng khác tọa độ:
+        - Trả 409 LOCATION_TIMESTAMP_CONFLICT.
+
+        Vị trí được lưu không đồng nghĩa đủ mới để ghép chuyến.
+        Dispatch vẫn kiểm tra ngưỡng 30 giây từ recordedAt.
+
+        Cập nhật GPS không:
+        - Tăng version của Trip.
+        - Tạo TripStatusHistory.
+        - Tự đổi trạng thái chuyến.
+        - Tự giải phóng tài xế.
+        - Cho phép client tự quyết định quãng đường tính cước.
+
+        Dữ liệu vị trí gần nhất và dữ liệu hành trình để xác nhận
+        quãng đường là hai mục đích khác nhau; thiết kế lưu trữ
+        được cụ thể hóa trong tài liệu microservices.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDriverLocationRequest"
+            example:
+              latitude: 10.7731
+              longitude: 106.7030
+              recordedAt: "2026-09-28T08:10:00Z"
+      responses:
+        "200":
+          description: Đã xử lý mẫu vị trí; xem locationUpdated.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocationUpdateResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: LOCATION_TIMESTAMP_CONFLICT.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
 
 components:
   securitySchemes:
@@ -113,6 +640,9 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: |
+        Kiểm tra token, Session, Account, vai trò
+        và quyền đối với chuyến hoặc hồ sơ tài xế.
 
   parameters:
     TripId:
@@ -120,19 +650,55 @@ components:
       in: path
       required: true
       schema:
+        $ref: "#/components/schemas/Identifier"
+      example: "TRP0001"
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Mã do client tạo cho một thao tác.
+
+        Phạm vi gồm tài khoản, thao tác và tripId.
+        Gửi lại cùng thao tác phải giữ nguyên khóa và body.
+
+        Cùng khóa nhưng khác body trả IDEMPOTENCY_CONFLICT.
+        Request cùng khóa đang xử lý trả REQUEST_IN_PROGRESS.
+
+        Khi người dùng chủ động thực hiện một thao tác mới,
+        dùng khóa mới và expectedVersion mới nhất.
+
+        Giữ liên kết khóa và kết quả khi bản ghi nghiệp vụ
+        liên quan vẫn được lưu.
+      schema:
         type: string
-        example: "TRP0001"
+        minLength: 1
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._:-]+$'
+      example: "550e8400-e29b-41d4-a716-446655440001"
+
+  headers:
+    NoStore:
+      description: Không lưu phản hồi vào bộ nhớ đệm.
+      schema:
+        type: string
+        enum: [no-store]
 
   schemas:
-    Coordinates:
-      type: object
-      properties:
-        latitude:
-          type: number
-          format: double
-        longitude:
-          type: number
-          format: double
+    Identifier:
+      type: string
+      minLength: 1
+
+    Version:
+      type: integer
+      format: int64
+      minimum: 1
+      description: Phiên bản dữ liệu điều khiển chuyến.
+
+    VehicleType:
+      type: string
+      enum: [STANDARD, PREMIUM, MOTORBIKE, VAN]
 
     TripStatus:
       type: string
@@ -145,66 +711,601 @@ components:
         - CANCELLED
         - ERROR
 
-    Trip:
+    Location:
       type: object
+      additionalProperties: false
+      required: [address, latitude, longitude]
       properties:
-        tripId:
+        address:
           type: string
-          example: "TRP0001"
-        bookingId:
-          type: string
-        customerId:
-          type: string
-        driverId:
-          type: string
-        pickupLocation:
-          type: string
-        destination:
-          type: string
-        status:
-          $ref: '#/components/schemas/TripStatus'
-        startTime:
-          type: string
-          format: date-time
-          nullable: true
-        endTime:
-          type: string
-          format: date-time
-          nullable: true
-        fare:
+          minLength: 1
+          pattern: '\S'
+        latitude:
           type: number
           format: double
-          nullable: true
+          minimum: -90
+          maximum: 90
+        longitude:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
 
-    TripTracking:
+    UpdateTripStatusRequest:
       type: object
+      additionalProperties: false
+      required: [expectedVersion, tripStatus]
+      properties:
+        expectedVersion:
+          $ref: "#/components/schemas/Version"
+        tripStatus:
+          type: string
+          enum:
+            - ARRIVED_PICKUP
+            - PICKED_UP
+            - IN_PROGRESS
+            - COMPLETED
+
+    CancelTripRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, reasonCode, reason]
+      properties:
+        expectedVersion:
+          $ref: "#/components/schemas/Version"
+        reasonCode:
+          $ref: "#/components/schemas/CancellationReasonCode"
+        reason:
+          type: string
+          minLength: 1
+          pattern: '\S'
+
+    CancellationReasonCode:
+      type: string
+      enum:
+        - CHANGE_OF_PLANS
+        - VEHICLE_ISSUE
+        - NO_SHOW
+        - OTHER
+
+    TripCancellation:
+      type: object
+      additionalProperties: false
+      required:
+        - reasonCode
+        - reason
+        - cancelledBy
+        - cancelledAt
+      properties:
+        reasonCode:
+          $ref: "#/components/schemas/CancellationReasonCode"
+        reason:
+          type: string
+          minLength: 1
+        cancelledBy:
+          $ref: "#/components/schemas/Identifier"
+        cancelledAt:
+          type: string
+          format: date-time
+      description: cancelledBy là accountId của người thực hiện.
+
+    TripStatusHistoryEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - version
+        - newStatus
+        - actorType
+        - actorId
+        - changedAt
+      properties:
+        version:
+          $ref: "#/components/schemas/Version"
+        previousStatus:
+          $ref: "#/components/schemas/TripStatus"
+        newStatus:
+          $ref: "#/components/schemas/TripStatus"
+        actorType:
+          type: string
+          enum: [USER, SYSTEM]
+        actorId:
+          type: string
+          minLength: 1
+          description: |
+            accountId nếu USER;
+            định danh dịch vụ nếu SYSTEM.
+        changedAt:
+          type: string
+          format: date-time
+        reason:
+          type: string
+      description: |
+        Bản ghi tạo Trip ban đầu không có previousStatus.
+        Các lần đổi trạng thái sau phải có previousStatus.
+
+        Một thay đổi trạng thái chỉ tạo một bản ghi.
+        GPS và việc gửi lại thao tác không tạo bản ghi mới.
+
+    Trip:
+      type: object
+      additionalProperties: false
+      required:
+        - tripId
+        - bookingId
+        - customerId
+        - driverId
+        - vehicleId
+        - vehicleType
+        - pickup
+        - destination
+        - tripStatus
+        - version
+        - createdAt
+        - updatedAt
+        - statusHistory
       properties:
         tripId:
+          $ref: "#/components/schemas/Identifier"
+        bookingId:
+          $ref: "#/components/schemas/Identifier"
+        customerId:
+          $ref: "#/components/schemas/Identifier"
+        driverId:
+          $ref: "#/components/schemas/Identifier"
+        vehicleId:
+          $ref: "#/components/schemas/Identifier"
+        vehicleType:
+          $ref: "#/components/schemas/VehicleType"
+        pickup:
+          $ref: "#/components/schemas/Location"
+        destination:
+          $ref: "#/components/schemas/Location"
+        tripStatus:
+          $ref: "#/components/schemas/TripStatus"
+        version:
+          $ref: "#/components/schemas/Version"
+        arrivedAt:
           type: string
-        status:
-          $ref: '#/components/schemas/TripStatus'
-        driver:
-          type: object
-          properties:
-            driverId:
-              type: string
-            fullName:
-              type: string
-            phone:
-              type: string
-            currentLocation:
-              $ref: '#/components/schemas/Coordinates'
-        estimatedArrivalMinutes:
-          type: integer
-          example: 5
+          format: date-time
+        pickedUpAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        closedAt:
+          type: string
+          format: date-time
+        closeReason:
+          type: string
+        statusBeforeError:
+          type: string
+          enum:
+            - DRIVER_ASSIGNED
+            - ARRIVED_PICKUP
+            - PICKED_UP
+            - IN_PROGRESS
+          description: |
+            Trạng thái cần tham chiếu khi xử lý ERROR hiện tại.
+            Không ghi đè khi báo thêm sự cố trong cùng đợt ERROR.
+            Sau khôi phục, thông tin đợt lỗi được giữ trong lịch sử/sự cố.
+        cancellation:
+          $ref: "#/components/schemas/TripCancellation"
+        createdAt:
+          type: string
+          format: date-time
         updatedAt:
           type: string
           format: date-time
+        statusHistory:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/TripStatusHistoryEntry"
+      description: |
+        Các trường thời điểm chưa phát sinh được bỏ khỏi response.
+
+        Ràng buộc nghiệp vụ:
+        - COMPLETED có startedAt, completedAt và closedAt.
+        - CANCELLED có cancellation và closedAt, không có completedAt.
+        - ERROR đang xử lý chưa có closedAt.
+        - ERROR kết thúc bất thường có closedAt và closeReason.
+        - Trạng thái đang hoạt động không có closedAt.
+        - cancellation chỉ xuất hiện khi CANCELLED.
+        - statusBeforeError chỉ mô tả đợt ERROR hiện tại.
+        - Lịch sử được sắp theo version tăng dần.
+
+        Quãng đường xác nhận, cước và thanh toán được tra cứu
+        ở Fare & Payment API; không nhận các giá trị đó
+        từ thao tác cập nhật trạng thái chuyến.
+
+    CancelledTrip:
+      allOf:
+        - $ref: "#/components/schemas/Trip"
+        - type: object
+          required: [cancellation, closedAt]
+          properties:
+            tripStatus:
+              type: string
+              enum: [CANCELLED]
+          not:
+            required: [completedAt]
+
+    TripSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - tripId
+        - bookingId
+        - pickup
+        - destination
+        - vehicleType
+        - tripStatus
+        - createdAt
+      properties:
+        tripId:
+          $ref: "#/components/schemas/Identifier"
+        bookingId:
+          $ref: "#/components/schemas/Identifier"
+        pickup:
+          $ref: "#/components/schemas/Location"
+        destination:
+          $ref: "#/components/schemas/Location"
+        vehicleType:
+          $ref: "#/components/schemas/VehicleType"
+        tripStatus:
+          $ref: "#/components/schemas/TripStatus"
+        createdAt:
+          type: string
+          format: date-time
+        closedAt:
+          type: string
+          format: date-time
+
+    TripPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TripSummary"
+        nextCursor:
+          type: string
+          nullable: true
+          description: null khi không còn trang tiếp theo.
+
+    DriverPublicProfile:
+      type: object
+      additionalProperties: false
+      required: [driverId, fullName, phone]
+      properties:
+        driverId:
+          $ref: "#/components/schemas/Identifier"
+        fullName:
+          type: string
+        phone:
+          type: string
+          description: Điện thoại liên hệ theo định dạng quốc tế.
+      description: |
+        Chỉ trả cho khách của chuyến hoặc OPERATOR được phép.
+        Không phải hồ sơ tài xế công khai cho mọi tài khoản.
+
+    VehiclePublicProfile:
+      type: object
+      additionalProperties: false
+      required: [vehicleId, licensePlate, vehicleType]
+      properties:
+        vehicleId:
+          $ref: "#/components/schemas/Identifier"
+        licensePlate:
+          type: string
+        vehicleType:
+          $ref: "#/components/schemas/VehicleType"
+
+    DriverLocation:
+      type: object
+      additionalProperties: false
+      required: [latitude, longitude, recordedAt, receivedAt]
+      properties:
+        latitude:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+        longitude:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+        recordedAt:
+          type: string
+          format: date-time
+        receivedAt:
+          type: string
+          format: date-time
+
+    NullableDriverLocation:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required: [latitude, longitude, recordedAt, receivedAt]
+      properties:
+        latitude:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+        longitude:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+        recordedAt:
+          type: string
+          format: date-time
+        receivedAt:
+          type: string
+          format: date-time
+      description: |
+        Cùng cấu trúc DriverLocation.
+        null khi chưa có vị trí hoặc đã dừng theo dõi.
+
+    TrackingSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - tripId
+        - tripStatus
+        - tripVersion
+        - driver
+        - vehicle
+        - trackingStatus
+        - driverLocation
+        - etaStatus
+        - estimatedArrivalSeconds
+        - snapshotAt
+      properties:
+        tripId:
+          $ref: "#/components/schemas/Identifier"
+        tripStatus:
+          $ref: "#/components/schemas/TripStatus"
+        tripVersion:
+          $ref: "#/components/schemas/Version"
+        driver:
+          $ref: "#/components/schemas/DriverPublicProfile"
+        vehicle:
+          $ref: "#/components/schemas/VehiclePublicProfile"
+        trackingStatus:
+          type: string
+          enum: [LIVE, STALE, UNAVAILABLE, STOPPED]
+        driverLocation:
+          $ref: "#/components/schemas/NullableDriverLocation"
+        etaStatus:
+          type: string
+          enum: [AVAILABLE, UNAVAILABLE, NOT_APPLICABLE]
+        estimatedArrivalSeconds:
+          type: integer
+          nullable: true
+          minimum: 0
+          description: |
+            Thời gian dự kiến đến điểm đón.
+            Chỉ có số khi etaStatus AVAILABLE.
+            Các trường hợp khác phải null.
+        snapshotAt:
+          type: string
+          format: date-time
+          description: Thời điểm máy chủ tạo response.
+
+    UpdateDriverLocationRequest:
+      type: object
+      additionalProperties: false
+      required: [latitude, longitude, recordedAt]
+      properties:
+        latitude:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+        longitude:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+        recordedAt:
+          type: string
+          format: date-time
+
+    LocationUpdateResult:
+      type: object
+      additionalProperties: false
+      required: [locationUpdated, currentLocation]
+      properties:
+        locationUpdated:
+          type: boolean
+          description: |
+            true nếu vị trí gần nhất được cập nhật.
+            false nếu mẫu cũ hơn hoặc là lần gửi lại.
+        currentLocation:
+          $ref: "#/components/schemas/DriverLocation"
+
+    IncidentType:
+      type: string
+      enum:
+        - VEHICLE_BREAKDOWN
+        - ACCIDENT
+        - PASSENGER_ISSUE
+        - OTHER
+
+    ReportIncidentRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, issueType, description]
+      properties:
+        expectedVersion:
+          $ref: "#/components/schemas/Version"
+        issueType:
+          $ref: "#/components/schemas/IncidentType"
+        description:
+          type: string
+          minLength: 1
+          pattern: '\S'
+
+    CreatedIncident:
+      type: object
+      additionalProperties: false
+      required:
+        - incidentId
+        - tripId
+        - issueType
+        - description
+        - status
+        - reportedBy
+        - createdAt
+      properties:
+        incidentId:
+          $ref: "#/components/schemas/Identifier"
+        tripId:
+          $ref: "#/components/schemas/Identifier"
+        issueType:
+          $ref: "#/components/schemas/IncidentType"
+        description:
+          type: string
+        status:
+          type: string
+          enum: [OPEN]
+        reportedBy:
+          $ref: "#/components/schemas/Identifier"
+        createdAt:
+          type: string
+          format: date-time
+      description: reportedBy là accountId của tài xế báo sự cố.
+
+    IncidentReportResponse:
+      type: object
+      additionalProperties: false
+      required: [incident, trip]
+      properties:
+        incident:
+          $ref: "#/components/schemas/CreatedIncident"
+        trip:
+          allOf:
+            - $ref: "#/components/schemas/Trip"
+            - type: object
+              required: [statusBeforeError]
+              properties:
+                tripStatus:
+                  type: string
+                  enum: [ERROR]
+              not:
+                required: [closedAt]
+
+    FieldError:
+      type: object
+      additionalProperties: false
+      required: [field, message]
+      properties:
+        field:
+          type: string
+        message:
+          type: string
 
     ErrorResponse:
       type: object
+      additionalProperties: false
+      required: [errorCode, message]
       properties:
         errorCode:
           type: string
         message:
           type: string
+          description: |
+            Không chứa token, stack trace hoặc dữ liệu
+            của người không có quyền truy cập.
+        details:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldError"
+        correlationId:
+          type: string
+
+  responses:
+    TripMutationSucceeded:
+      description: |
+        Đã xử lý hoặc trả lại kết quả đã lưu của cùng thao tác.
+        Gửi lại không làm phát sinh tác động nghiệp vụ lần nữa.
+        Dùng GET Trip nếu cần trạng thái mới nhất.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Trip"
+
+    BadRequest:
+      description: |
+        VALIDATION_ERROR.
+        Dữ liệu sai, thiếu trường, thiếu Idempotency-Key
+        khi bắt buộc hoặc chứa thuộc tính không được phép.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    Unauthenticated:
+      description: |
+        UNAUTHENTICATED.
+        Token thiếu/sai/hết hạn hoặc Session không hợp lệ.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    Forbidden:
+      description: |
+        FORBIDDEN hoặc ACCOUNT_NOT_ACTIVE.
+        Không đúng vai trò, không có quyền với chuyến,
+        dùng lý do dành cho vai trò khác hoặc Account không ACTIVE.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    TripNotFound:
+      description: TRIP_NOT_FOUND. Không tìm thấy chuyến.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    ServiceUnavailable:
+      description: |
+        SERVICE_UNAVAILABLE.
+        Phụ thuộc cần thiết không sẵn sàng để xử lý an toàn.
+
+        503 hoặc mất phản hồi không chứng minh chắc chắn rằng
+        thao tác ghi trước đó chưa được thực hiện.
+
+        Với lệnh thay đổi Trip:
+        - Gửi lại cùng Idempotency-Key và body; hoặc
+        - Tra cứu Trip để xác định trạng thái.
+
+        Không tạo khóa mới chỉ vì mất phản hồi.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    UnexpectedError:
+      description: |
+        Lỗi ngoài dự kiến; sử dụng HTTP 5xx phù hợp.
+        Không trả chi tiết nội bộ cho client.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
