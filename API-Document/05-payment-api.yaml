@@ -1,147 +1,750 @@
 openapi: 3.0.3
+
 info:
   title: CAB System - Fare & Payment API
-  description: >
-    API tính cước và xử lý thanh toán. Tương ứng FR10, FR11, FR12, BR05, BRu06,
-    BRu07, BRu08, BP04, UC07, AC06.
-  version: "1.0.0"
+  version: "1.1.0"
+  description: |
+    Đặc tả cước thực tế và thanh toán theo SRS CAB System phiên bản 1.1.
+
+    Truy xuất yêu cầu:
+    - BR05, BR11.
+    - FR10, FR11, FR12.
+    - BRu06, BRu07, BRu08, BRu09, BRu10, BRu17.
+    - UC07.
+    - AC06.
+    - NFR03, NFR04, NFR05, NFR06, NFR08.
+
+    Phân biệt:
+    - Fare: cước thực tế đã chốt.
+    - Payment: khoản thanh toán gắn với Fare.
+    - PaymentAttempt: một lần xử lý thanh toán.
+
+    Quy tắc:
+    - Chỉ chốt Fare khi Trip COMPLETED và dữ liệu hợp lệ.
+    - Mỗi Trip có tối đa một Fare đã chốt.
+    - Mỗi Fare có tối đa một Payment.
+    - Một Payment có nhiều PaymentAttempt theo thời gian.
+    - Không có hai PaymentAttempt đang xử lý đồng thời.
+    - Không thu tiền lại cho Payment SUCCESS.
+    - Chọn CASH không đồng nghĩa đã thanh toán.
+    - Timeout không đồng nghĩa giao dịch thất bại.
+    - Không lưu thông tin thẻ hoặc tài khoản thanh toán nhạy cảm.
+    - Không nhận số tiền thanh toán do client tự quyết định.
+
+    Trạng thái:
+    - PENDING.
+    - PROCESSING.
+    - SUCCESS.
+    - FAILED.
+    - UNKNOWN.
+
+    Tiền tệ:
+    - Đơn vị VND.
+    - Đơn giá và các thành phần cước dùng biểu diễn thập phân chính xác.
+    - Tổng tiền cuối cùng được làm tròn tới đồng gần nhất.
+    - Nếu đúng nửa đồng, làm tròn lên vì giá trị tiền không âm.
+    - Không làm tròn riêng từng thành phần trước khi cộng.
+
+    Các phản hồi chứa cước hoặc giao dịch dùng Cache-Control: no-store.
+
+    Nhà cung cấp:
+    - MVP tích hợp một nhà cung cấp thanh toán điện tử.
+    - Chỉ cho phép phương thức mà nhà cung cấp đó hỗ trợ.
+    - Môi trường học tập sử dụng sandbox.
+    - Tên nhà cung cấp và hợp đồng callback cụ thể chưa được chốt
+      trong SRS; phần tích hợp phải được hoàn thiện trước khi triển khai.
+
+    Đây là tài liệu thiết kế, chưa xác nhận dịch vụ đã triển khai.
+
 servers:
-  - url: https://api.cabsystem.example.com/v1
+  - url: /v1
+    description: Đường dẫn cơ sở dự kiến của CAB API.
+
 tags:
   - name: Fare
-    description: Tính cước chuyến xe
+    description: Cước thực tế đã chốt.
   - name: Payment
-    description: Thanh toán
+    description: Khởi tạo và tra cứu thanh toán.
+  - name: PaymentAttempt
+    description: Lịch sử các lần xử lý.
+  - name: PaymentInternal
+    description: Đối soát bằng dịch vụ nội bộ.
+  - name: PaymentWebhook
+    description: Tiếp nhận kết quả từ nhà cung cấp.
+
+security:
+  - bearerAuth: []
 
 paths:
   /trips/{tripId}/fare:
     get:
       tags: [Fare]
-      summary: Lấy thông tin cước chuyến
-      description: >
-        FR10, BRu06 - Hệ thống xác định số tiền khách hàng phải trả dựa trên
-        loại dịch vụ và thông tin chuyến đi, chỉ sau khi chuyến hoàn thành.
-      security:
-        - bearerAuth: []
+      operationId: getTripFare
+      summary: Xem cước thực tế của chuyến
+      description: |
+        FR10, UC07, BRu06, AC06.
+
+        Quyền:
+        - CUSTOMER của chuyến.
+        - DRIVER được phân công.
+        - OPERATOR được phép tra cứu.
+
+        Endpoint chỉ đọc Fare đã được chốt.
+        GET không tự tạo hoặc sửa cước.
+
+        Fare được tính sau sự kiện Trip COMPLETED,
+        từ dữ liệu hành trình đã được hệ thống xác nhận.
+
+        Công thức:
+        totalAmount = baseAmount + distanceAmount + timeAmount.
+
+        Trong đó:
+        - baseAmount = baseFare.
+        - distanceAmount = distanceKm * pricePerKm.
+        - timeAmount = durationMinutes * pricePerMinute.
+        - durationMinutes được xác định từ startedAt và completedAt.
+
+        Sử dụng phiên bản biểu giá đã lưu cùng Booking.
+        Biểu giá mới không làm thay đổi Fare của Booking cũ.
+
+        Không dùng khoảng cách đường thẳng giữa hai điểm
+        thay cho quãng đường thực tế.
+
+        Nếu chưa đủ dữ liệu:
+        - Không trả cước giả hoặc mặc định bằng 0.
+        - Không cho khởi tạo thanh toán.
+        - Chuyển kiểm tra vận hành khi cần.
       parameters:
-        - $ref: '#/components/parameters/TripId'
+        - $ref: "#/components/parameters/TripId"
       responses:
-        '200':
-          description: Thông tin cước
+        "200":
+          description: Cước thực tế đã chốt.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Fare'
-        '409':
-          description: Chuyến chưa hoàn thành, chưa thể tính cước
+                $ref: "#/components/schemas/Fare"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/TripNotFound"
+        "409":
+          description: |
+            TRIP_NOT_COMPLETED, FARE_NOT_READY hoặc FARE_REQUIRES_REVIEW.
+
+            FARE_NOT_READY: chưa có cước đã chốt.
+            FARE_REQUIRES_REVIEW: dữ liệu cần vận hành xác minh.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
 
   /trips/{tripId}/payments:
     post:
       tags: [Payment]
-      summary: Khởi tạo thanh toán cho chuyến xe
-      description: >
-        FR11 - Hỗ trợ thanh toán tiền mặt hoặc điện tử qua nhà cung cấp bên ngoài.
-        BRu07 - Không lưu trực tiếp thông tin thẻ/tài khoản thanh toán nhạy cảm.
-      security:
-        - bearerAuth: []
+      operationId: createTripPayment
+      summary: Khởi tạo khoản thanh toán của chuyến
+      description: |
+        FR11, FR12, UC07, AC06.
+
+        Chỉ CUSTOMER của chuyến.
+
+        Điều kiện:
+        - Trip COMPLETED.
+        - Có Fare đã chốt.
+        - Chưa có Payment khác cho Fare.
+        - Phương thức được hỗ trợ và đang khả dụng.
+
+        customerId, fareId, amount và currency do máy chủ xác định.
+        Không nhận số tiền, trạng thái hoặc provider từ client.
+
+        Khi thành công:
+        - Tạo một Payment.
+        - Sao chép tổng tiền từ Fare.
+        - Tạo PaymentAttempt đầu tiên.
+        - Ghi nhận kết quả chống lặp trước khi xử lý bên ngoài.
+
+        CASH:
+        - Payment và PaymentAttempt ở PENDING.
+        - Chờ tài xế xác nhận đã thu đủ tiền.
+
+        Điện tử:
+        - Ghi nhận lần xử lý trước khi gửi nhà cung cấp.
+        - Chuyển PROCESSING khi bắt đầu yêu cầu bên ngoài.
+        - Gắn merchant reference với PaymentAttempt.
+        - Có thể cung cấp checkoutUrl sau khi nhà cung cấp phản hồi.
+        - Client tra cứu Payment nếu checkoutUrl chưa có.
+
+        HTTP 201 chỉ xác nhận khoản thanh toán đã được tạo.
+        Không có nghĩa tiền đã được thu.
+
+        Chống gửi trùng:
+        - Cùng Idempotency-Key và body trả kết quả đã lưu.
+        - Cùng khóa nhưng khác body trả IDEMPOTENCY_CONFLICT.
+        - Khóa khác cho Trip đã có Payment trả PAYMENT_ALREADY_EXISTS.
+        - Không tạo Payment thứ hai để thử lại.
+        - Khi cần thử lại, dùng /payments/{paymentId}/retry.
+
+        Nếu mất phản hồi hoặc nhận 503:
+        - Gửi lại cùng khóa và body; hoặc
+        - Tra cứu /trips/{tripId}/payment.
+        - Không tự tạo khóa mới để khởi tạo thêm giao dịch.
       parameters:
-        - $ref: '#/components/parameters/TripId'
+        - $ref: "#/components/parameters/TripId"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreatePaymentRequest'
-            example:
-              paymentMethod: "E_WALLET"
-              returnUrl: "https://app.cabsystem.example.com/payment/callback"
+              $ref: "#/components/schemas/CreatePaymentRequest"
+            examples:
+              cash:
+                value:
+                  paymentMethod: CASH
+              electronic:
+                value:
+                  paymentMethod: E_WALLET
+                  returnUrl: "https://app.cabsystem.example.com/payment-result"
       responses:
-        '201':
-          description: "Thanh toán được khởi tạo (tiền mặt: ghi nhận ngay; điện tử: chuyển hướng nhà cung cấp)"
+        "201":
+          description: |
+            Đã tạo Payment và lần xử lý đầu tiên.
+            Đây không phải xác nhận đã thanh toán.
+          headers:
+            Location:
+              description: Đường dẫn tra cứu Payment.
+              schema:
+                type: string
+                example: "/v1/payments/PAY0001"
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Payment'
-        '400':
-          description: Phương thức thanh toán không hợp lệ
+                $ref: "#/components/schemas/Payment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/TripNotFound"
+        "409":
+          description: |
+            TRIP_NOT_COMPLETED, FARE_NOT_READY,
+            FARE_REQUIRES_REVIEW, PAYMENT_ALREADY_EXISTS,
+            PAYMENT_METHOD_UNAVAILABLE, IDEMPOTENCY_CONFLICT
+            hoặc REQUEST_IN_PROGRESS.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
+  /trips/{tripId}/payment:
+    get:
+      tags: [Payment]
+      operationId: getPaymentByTrip
+      summary: Tra cứu khoản thanh toán theo chuyến
+      description: |
+        Quyền:
+        - CUSTOMER của chuyến.
+        - DRIVER được phân công.
+        - OPERATOR được phép tra cứu.
+
+        Dùng khi người dùng biết tripId nhưng chưa có paymentId,
+        hoặc đã mất phản hồi của thao tác khởi tạo.
+
+        GET không tự tạo Payment hoặc gửi yêu cầu thu tiền.
+      parameters:
+        - $ref: "#/components/parameters/TripId"
+      responses:
+        "200":
+          $ref: "#/components/responses/PaymentReadSucceeded"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: TRIP_NOT_FOUND hoặc PAYMENT_NOT_FOUND.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
 
   /payments/{paymentId}:
     get:
       tags: [Payment]
-      summary: Xem trạng thái thanh toán
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/PaymentId'
-      responses:
-        '200':
-          description: Chi tiết thanh toán
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Payment'
-        '404':
-          description: Không tìm thấy giao dịch
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+      operationId: getPayment
+      summary: Xem trạng thái hiện tại của khoản thanh toán
+      description: |
+        FR12, UC07.
 
-  /payments/{paymentId}/webhook:
+        Quyền:
+        - CUSTOMER sở hữu khoản thanh toán.
+        - DRIVER của chuyến tương ứng.
+        - OPERATOR được phép tra cứu.
+
+        Không tự thu tiền hoặc tự mở PaymentAttempt mới.
+
+        checkout chỉ trả cho CUSTOMER sở hữu Payment.
+        Không trả checkoutUrl cho DRIVER hoặc OPERATOR.
+
+        checkout chỉ xuất hiện khi lần xử lý hiện tại
+        còn cho phép khách tiếp tục thanh toán điện tử.
+
+        Client không suy ra SUCCESS từ việc đã mở checkoutUrl
+        hoặc quay về returnUrl. Phải đọc paymentStatus từ máy chủ.
+
+        requiresReview true nghĩa là có bất thường cần kiểm tra;
+        các thao tác thu tiền mới bị chặn đến khi xử lý xong.
+      parameters:
+        - $ref: "#/components/parameters/PaymentId"
+      responses:
+        "200":
+          $ref: "#/components/responses/PaymentReadSucceeded"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/PaymentNotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
+  /payments/{paymentId}/attempts:
+    get:
+      tags: [PaymentAttempt]
+      operationId: listPaymentAttempts
+      summary: Xem lịch sử các lần xử lý thanh toán
+      description: |
+        FR12, BRu17.
+
+        Quyền:
+        - CUSTOMER sở hữu khoản thanh toán.
+        - OPERATOR được phép tra cứu.
+
+        DRIVER xem kết quả tổng quát qua GET Payment,
+        không truy cập lịch sử tích hợp nhà cung cấp tại đây.
+
+        Sắp xếp theo attemptNumber tăng dần.
+        Không trả raw callback, chữ ký, token, số thẻ
+        hoặc dữ liệu thanh toán nhạy cảm.
+      parameters:
+        - $ref: "#/components/parameters/PaymentId"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Lịch sử xử lý của khoản thanh toán.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentAttemptPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/PaymentNotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
+  /payments/{paymentId}/confirm-cash:
     post:
       tags: [Payment]
-      summary: Nhận kết quả giao dịch từ nhà cung cấp thanh toán bên ngoài
-      description: >
-        FR12 - Ghi nhận kết quả thanh toán thành công/thất bại từ nhà cung cấp
-        thanh toán bên ngoài (server-to-server callback).
+      operationId: confirmCashPayment
+      summary: Tài xế xác nhận đã thu đủ tiền mặt
+      description: |
+        FR11, UC07, AC06.
+
+        Chỉ DRIVER được phân công cho chuyến của Payment.
+
+        CUSTOMER và OPERATOR không được gọi endpoint này
+        để tự xác nhận đã thu tiền.
+
+        Điều kiện xử lý mới:
+        - Trip COMPLETED.
+        - Payment.method CASH.
+        - Payment.paymentStatus PENDING.
+        - PaymentAttempt hiện tại là CASH và PENDING.
+        - requiresReview false.
+        - expectedVersion khớp dữ liệu hiện tại.
+
+        Người tài xế phải thực sự nhận đủ số tiền đã chốt
+        trước khi gửi thao tác xác nhận.
+
+        Không nhận amount hoặc confirmedBy từ client.
+        Máy chủ lấy số tiền từ Payment và người xác nhận từ Session.
+
+        Khi thành công:
+        - PaymentAttempt SUCCESS.
+        - Payment SUCCESS.
+        - Lưu paidAt và confirmedBy.
+        - Tăng version.
+        - Ghi nhật ký và sự kiện thông báo.
+
+        Không thay đổi trạng thái Trip hoặc Driver.
+        Trip đã kết thúc trước thao tác thu tiền.
+
+        Gửi lại cùng Idempotency-Key không ghi thu tiền lần nữa.
+        Khóa mới cho Payment đã SUCCESS trả PAYMENT_ALREADY_PAID.
       parameters:
-        - $ref: '#/components/parameters/PaymentId'
+        - $ref: "#/components/parameters/PaymentId"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PaymentWebhookPayload'
+              $ref: "#/components/schemas/ConfirmCashRequest"
+            example:
+              expectedVersion: 1
       responses:
-        '200':
-          description: Đã xử lý callback
-        '400':
-          description: Payload không hợp lệ
+        "200":
+          description: Đã xác nhận thu tiền mặt hoặc trả kết quả đã lưu.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/CashPaymentSucceeded"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/PaymentNotFound"
+        "409":
+          description: |
+            PAYMENT_VERSION_CONFLICT, PAYMENT_ALREADY_PAID,
+            PAYMENT_NOT_CASH, PAYMENT_NOT_PENDING,
+            PAYMENT_REQUIRES_REVIEW, IDEMPOTENCY_CONFLICT
+            hoặc REQUEST_IN_PROGRESS.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
 
   /payments/{paymentId}/retry:
     post:
       tags: [Payment]
-      summary: Thử lại thanh toán điện tử thất bại
-      description: FR12 - Khi thanh toán điện tử thất bại, cho phép xử lý lại theo chính sách doanh nghiệp.
-      security:
-        - bearerAuth: []
+      operationId: retryPayment
+      summary: Mở lần xử lý mới sau thất bại đã xác định
+      description: |
+        FR12, UC07, BRu17.
+
+        Chỉ CUSTOMER sở hữu khoản thanh toán.
+
+        Điều kiện:
+        - Payment FAILED.
+        - Lần xử lý trước đã xác định thất bại.
+        - Không còn lần xử lý đang hoạt động hoặc chưa rõ kết quả.
+        - requiresReview false.
+        - expectedVersion khớp dữ liệu hiện tại.
+
+        Có thể chọn lại phương thức được hỗ trợ.
+        Chuyển từ điện tử sang CASH chỉ được phép
+        sau khi xác định lần điện tử trước đã thất bại.
+
+        Không cho retry khi PENDING, PROCESSING, UNKNOWN hoặc SUCCESS.
+        Trong MVP, không đổi phương thức giữa một lần xử lý chưa kết thúc.
+
+        Khi tiếp nhận:
+        - Giữ nguyên paymentId, fareId, amount và currency.
+        - Tạo PaymentAttempt mới với attemptNumber tiếp theo.
+        - Giữ nguyên lịch sử lần trước.
+        - Cập nhật currentAttemptId và method.
+        - Đặt Payment PENDING.
+        - Tăng version.
+
+        Nếu chọn điện tử, tiếp tục quy trình gửi nhà cung cấp.
+        Nếu chọn CASH, chờ tài xế xác nhận.
+
+        Cùng Idempotency-Key và body không tạo thêm lần thử.
+        HTTP 202 không xác nhận đã thu tiền.
       parameters:
-        - $ref: '#/components/parameters/PaymentId'
+        - $ref: "#/components/parameters/PaymentId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetryPaymentRequest"
+            example:
+              expectedVersion: 4
+              paymentMethod: CASH
       responses:
-        '200':
-          description: Yêu cầu thanh toán mới được khởi tạo
+        "202":
+          description: Đã ghi nhận lần xử lý mới hoặc trả kết quả đã lưu.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Payment'
-        '409':
-          description: Giao dịch không ở trạng thái cho phép thử lại
+                $ref: "#/components/schemas/Payment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/PaymentNotFound"
+        "409":
+          description: |
+            PAYMENT_VERSION_CONFLICT, PAYMENT_NOT_RETRYABLE,
+            PAYMENT_REQUIRES_RECONCILIATION, PAYMENT_REQUIRES_REVIEW,
+            PAYMENT_METHOD_UNAVAILABLE, IDEMPOTENCY_CONFLICT
+            hoặc REQUEST_IN_PROGRESS.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
+  /payments/{paymentId}/reconcile:
+    post:
+      tags: [PaymentInternal]
+      operationId: reconcilePayment
+      summary: Dịch vụ nội bộ tra cứu kết quả với nhà cung cấp
+      security:
+        - serviceBearerAuth: []
+      description: |
+        FR12, UC07.
+
+        Chỉ dịch vụ nội bộ có quyền payment:reconcile.
+        Không dùng access token người dùng để gọi trực tiếp.
+
+        Không nhận status, amount hoặc transactionId từ client.
+        Đọc các tham chiếu giao dịch đã lưu phía máy chủ.
+
+        Đối soát dành cho:
+        - Payment UNKNOWN; hoặc
+        - Lần điện tử PROCESSING cần kiểm tra kết quả;
+        - Trường hợp bất thường được quy trình vận hành chuyển tới.
+
+        Gọi API tra cứu của nhà cung cấp và xác minh:
+        - Đúng giao dịch/merchant reference.
+        - Đúng số tiền và đơn vị tiền.
+        - Kết quả có ý nghĩa cuối cùng theo hợp đồng nhà cung cấp.
+
+        Kết quả chắc chắn:
+        - Cập nhật SUCCESS hoặc FAILED theo dữ liệu xác minh.
+
+        Chưa rõ kết quả:
+        - Giữ UNKNOWN hoặc PROCESSING phù hợp.
+        - Không suy ra FAILED chỉ từ timeout hoặc chưa tìm thấy
+          giao dịch nếu nhà cung cấp chưa bảo đảm đó là kết quả cuối.
+
+        Payment SUCCESS không bị hạ trạng thái.
+
+        Nhiều lệnh đối soát cùng lúc không tạo giao dịch thu tiền mới.
+        Đối soát chỉ tra cứu và xử lý kết quả, không gọi thu tiền lại.
+
+        Mọi cập nhật phải kiểm tra dữ liệu hiện tại để không
+        ghi đè callback mới hơn đã được xử lý.
+      parameters:
+        - $ref: "#/components/parameters/PaymentId"
+      responses:
+        "200":
+          description: |
+            Kết quả Payment sau lần đối soát.
+            Có thể vẫn UNKNOWN nếu nhà cung cấp chưa xác định được.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: UNAUTHENTICATED_SERVICE.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: FORBIDDEN_SERVICE.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/PaymentNotFound"
+        "409":
+          description: |
+            PAYMENT_NOT_RECONCILABLE hoặc REQUEST_IN_PROGRESS.
+            Ví dụ Payment chỉ có lần CASH đang chờ xác nhận.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
+  /payments/webhooks/{provider}:
+    post:
+      tags: [PaymentWebhook]
+      operationId: receivePaymentWebhook
+      summary: Nhận callback thanh toán từ nhà cung cấp
+      security: []
+      description: |
+        FR12, BRu08, UC07, AC06.
+
+        Không dùng bearerAuth của người dùng.
+        security rỗng không có nghĩa bỏ qua xác thực callback.
+
+        BẮT BUỘC:
+        - Xác minh chữ ký hoặc cơ chế xác thực chính thức của nhà cung cấp.
+        - Xác minh trên dữ liệu gốc theo đúng quy tắc nhà cung cấp,
+          trước khi chuẩn hóa payload.
+        - Chỉ nhận provider đã cấu hình.
+        - Không xử lý nếu cấu hình xác minh chưa hoàn chỉnh.
+        - Không tin trạng thái do trình duyệt gửi tới returnUrl.
+
+        Tìm PaymentAttempt bằng merchant reference và các
+        tham chiếu giao dịch đã được CAB ghi nhận trước đó.
+        Không tin paymentId do payload tự khai báo nếu chưa đối chiếu.
+
+        Trước khi ghi nhận kết quả:
+        - Đúng nhà cung cấp và tài khoản merchant.
+        - Đúng PaymentAttempt.
+        - Đúng transaction reference.
+        - Đúng amount và currency.
+        - Kết quả được diễn giải theo hợp đồng nhà cung cấp.
+
+        Callback hợp lệ:
+        - Chống lặp bằng mã sự kiện của nhà cung cấp nếu có.
+        - Đồng thời chống tác động trùng theo giao dịch và kết quả.
+        - Cập nhật PaymentAttempt và Payment nhất quán.
+        - Tăng version khi dữ liệu Payment thực sự thay đổi.
+        - Ghi nhật ký và sự kiện thông báo một lần.
+
+        Callback trùng:
+        - Trả xác nhận phù hợp cho nhà cung cấp.
+        - Không thu tiền, tăng tổng tiền hoặc gửi thông báo lần nữa.
+
+        Callback đến muộn:
+        - Không hạ Payment SUCCESS xuống FAILED.
+        - Nếu xung đột với kết quả đã xác định hoặc báo thành công
+          cho lần cũ sau khi đã có lần thanh toán khác,
+          đánh dấu requiresReview và tạo sự cố.
+        - Chặn thu tiền thêm trong khi kiểm tra.
+        - Không tự sửa lịch sử hoặc tự hoàn tiền trong MVP.
+
+        Chỉ xác nhận đã tiếp nhận thành công sau khi dữ liệu
+        đã được xử lý hoặc ghi nhận bền vững để xử lý tiếp.
+        Không trả xác nhận thành công khi callback đã bị mất.
+
+        PHẦN CẦN HOÀN THIỆN KHI CHỌN NHÀ CUNG CẤP:
+        - Tên và định dạng header/chữ ký.
+        - Cấu trúc request thực tế.
+        - Thuật toán xác minh và quy tắc chống phát lại.
+        - Mapping mã kết quả.
+        - Cấu trúc và mã phản hồi xác nhận.
+        - Phương thức HTTP/content type mà nhà cung cấp yêu cầu.
+
+        POST JSON dưới đây là hợp đồng dự kiến.
+        Nếu nhà cung cấp dùng giao thức khác, phải điều chỉnh
+        hoặc đặc tả adapter tương ứng trước triển khai.
+
+        Không dùng payload tự tạo để khẳng định đã tích hợp
+        thành công với một nhà cung cấp thực tế.
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          description: Mã nhà cung cấp đã được cấu hình phía máy chủ.
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              description: |
+                Payload gốc của nhà cung cấp.
+                Schema cụ thể được bổ sung sau khi chọn nhà cung cấp.
+      responses:
+        "200":
+          description: |
+            Phản hồi xác nhận theo hợp đồng nhà cung cấp.
+            Chấp nhận callback hợp lệ hoặc callback trùng đã xử lý.
+            Cấu trúc response cụ thể chưa được chốt.
+        "400":
+          description: |
+            Callback không hợp lệ hoặc dữ liệu giao dịch không khớp.
+            Không cập nhật thành công thanh toán.
+        "401":
+          description: Không xác minh được nguồn gửi/chữ ký.
+        "404":
+          description: Nhà cung cấp hoặc giao dịch tham chiếu không hợp lệ.
+        "503":
+          description: |
+            Không thể tiếp nhận an toàn.
+            Cơ chế gửi lại phải theo hợp đồng nhà cung cấp.
 
 components:
   securitySchemes:
@@ -149,6 +752,18 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: |
+        Kiểm tra Account, Session, vai trò và quyền
+        đối với Trip hoặc Payment.
+
+    serviceBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Token dịch vụ nội bộ có quyền payment:reconcile.
+        Xác minh bên phát hành, bên nhận, thời hạn và quyền dịch vụ.
+        Không chấp nhận token người dùng thay thế.
 
   parameters:
     TripId:
@@ -156,99 +771,532 @@ components:
       in: path
       required: true
       schema:
-        type: string
-        example: "TRP0001"
+        $ref: "#/components/schemas/Identifier"
+      example: "TRP0001"
+
     PaymentId:
       name: paymentId
       in: path
       required: true
       schema:
+        $ref: "#/components/schemas/Identifier"
+      example: "PAY0001"
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Mã do client tạo cho một thao tác.
+
+        Phạm vi gồm tài khoản, thao tác và tài nguyên tương ứng.
+        Gửi lại giữ nguyên khóa và body.
+
+        Kiểm tra kết quả đã lưu trước expectedVersion
+        và các điều kiện dành cho thao tác mới.
+
+        Cùng khóa nhưng khác body trả IDEMPOTENCY_CONFLICT.
+        Khóa đang xử lý trả REQUEST_IN_PROGRESS.
+
+        Giữ bản ghi chống lặp cùng dữ liệu giao dịch liên quan.
+        Không coi khóa từ client là biện pháp duy nhất:
+        vẫn phải bảo đảm một Payment cho Fare và một lần xử lý hoạt động.
+
+        Phản hồi gửi lại là kết quả của lần xử lý ban đầu.
+        GET Payment để xem trạng thái mới nhất.
+      schema:
         type: string
-        example: "PAY0001"
+        minLength: 1
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._:-]+$'
+      example: "550e8400-e29b-41d4-a716-446655440002"
+
+  headers:
+    NoStore:
+      description: Không lưu phản hồi vào bộ nhớ đệm.
+      schema:
+        type: string
+        enum: [no-store]
 
   schemas:
-    Fare:
-      type: object
-      properties:
-        tripId:
-          type: string
-        vehicleType:
-          type: string
-        distanceKm:
-          type: number
-          format: double
-        durationMinutes:
-          type: number
-          format: double
-        amount:
-          type: number
-          format: double
-        currency:
-          type: string
-          example: "VND"
+    Identifier:
+      type: string
+      minLength: 1
+
+    Version:
+      type: integer
+      format: int64
+      minimum: 1
+
+    Currency:
+      type: string
+      enum: [VND]
 
     PaymentMethod:
       type: string
       enum: [CASH, E_WALLET, CREDIT_CARD]
+      description: |
+        Enum mô tả các phương thức mà CAB có thể hỗ trợ.
+        Không có nghĩa mọi phương thức đều đã được cấu hình.
+        Máy chủ chỉ chấp nhận phương thức đang khả dụng.
 
     PaymentStatus:
       type: string
-      enum: [PENDING, SUCCESS, FAILED]
+      enum: [PENDING, PROCESSING, SUCCESS, FAILED, UNKNOWN]
+      description: |
+        PENDING: chờ xử lý hoặc chờ thu tiền mặt.
+        PROCESSING: đang xử lý điện tử.
+        SUCCESS: xác nhận thành công.
+        FAILED: đã xác định thất bại.
+        UNKNOWN: chưa xác định kết quả, cần đối soát.
+
+    ReturnUrl:
+      type: string
+      format: uri
+      description: |
+        URL frontend để người dùng quay về sau thanh toán.
+
+        Phải thuộc danh sách origin và đường dẫn được CAB cho phép.
+        Không chấp nhận URL tùy ý.
+        Ngoài môi trường phát triển cục bộ phải dùng HTTPS.
+
+        Đây không phải URL webhook và không dùng để xác nhận SUCCESS.
+        Không đặt access token, refresh token hoặc thông tin thẻ trong URL.
 
     CreatePaymentRequest:
       type: object
+      additionalProperties: false
       required: [paymentMethod]
       properties:
         paymentMethod:
-          $ref: '#/components/schemas/PaymentMethod'
+          $ref: "#/components/schemas/PaymentMethod"
         returnUrl:
+          $ref: "#/components/schemas/ReturnUrl"
+      oneOf:
+        - properties:
+            paymentMethod:
+              type: string
+              enum: [CASH]
+          not:
+            required: [returnUrl]
+        - required: [returnUrl]
+          properties:
+            paymentMethod:
+              type: string
+              enum: [E_WALLET, CREDIT_CARD]
+
+    ConfirmCashRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion]
+      properties:
+        expectedVersion:
+          $ref: "#/components/schemas/Version"
+
+    RetryPaymentRequest:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, paymentMethod]
+      properties:
+        expectedVersion:
+          $ref: "#/components/schemas/Version"
+        paymentMethod:
+          $ref: "#/components/schemas/PaymentMethod"
+        returnUrl:
+          $ref: "#/components/schemas/ReturnUrl"
+      oneOf:
+        - properties:
+            paymentMethod:
+              type: string
+              enum: [CASH]
+          not:
+            required: [returnUrl]
+        - required: [returnUrl]
+          properties:
+            paymentMethod:
+              type: string
+              enum: [E_WALLET, CREDIT_CARD]
+
+    PricingSnapshot:
+      type: object
+      additionalProperties: false
+      required: [currency, baseFare, pricePerKm, pricePerMinute]
+      properties:
+        currency:
+          $ref: "#/components/schemas/Currency"
+        baseFare:
+          type: number
+          minimum: 0
+        pricePerKm:
+          type: number
+          minimum: 0
+        pricePerMinute:
+          type: number
+          minimum: 0
+      description: Các đơn giá đã lưu tại thời điểm tạo Booking.
+
+    Fare:
+      type: object
+      additionalProperties: false
+      required:
+        - fareId
+        - tripId
+        - pricingVersionId
+        - pricingSnapshot
+        - distanceKm
+        - durationMinutes
+        - baseAmount
+        - distanceAmount
+        - timeAmount
+        - totalAmount
+        - currency
+        - calculatedAt
+      properties:
+        fareId:
+          $ref: "#/components/schemas/Identifier"
+        tripId:
+          $ref: "#/components/schemas/Identifier"
+        pricingVersionId:
+          $ref: "#/components/schemas/Identifier"
+        pricingSnapshot:
+          $ref: "#/components/schemas/PricingSnapshot"
+        distanceKm:
+          type: number
+          minimum: 0
+          description: Quãng đường thực tế đã được hệ thống xác nhận.
+        durationMinutes:
+          type: number
+          minimum: 0
+          description: |
+            Thời gian hành trình từ startedAt đến completedAt.
+            Không làm tròn riêng trước khi tính tiền.
+        baseAmount:
+          type: number
+          minimum: 0
+        distanceAmount:
+          type: number
+          minimum: 0
+        timeAmount:
+          type: number
+          minimum: 0
+        totalAmount:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Tổng tiền cuối cùng đã làm tròn tới đồng.
+        currency:
+          $ref: "#/components/schemas/Currency"
+        calculatedAt:
           type: string
-          description: Bắt buộc khi paymentMethod là thanh toán điện tử
+          format: date-time
+      description: |
+        Fare đã chốt không được sửa qua API người dùng.
+        Bất thường về cước phải được ghi nhận để vận hành xử lý,
+        không âm thầm ghi đè cước đã dùng cho thanh toán.
+
+    Checkout:
+      type: object
+      additionalProperties: false
+      required: [attemptId, redirectUrl]
+      properties:
+        attemptId:
+          $ref: "#/components/schemas/Identifier"
+        redirectUrl:
+          type: string
+          format: uri
+          description: |
+            URL thanh toán được máy chủ nhận và kiểm tra
+            từ nhà cung cấp đã cấu hình.
+        expiresAt:
+          type: string
+          format: date-time
+          description: Có nếu nhà cung cấp cung cấp thời hạn.
+      description: |
+        Chỉ trả cho CUSTOMER sở hữu khoản thanh toán.
+        Hết hạn URL không tự chứng minh giao dịch đã FAILED.
+        Phải kiểm tra trạng thái với nhà cung cấp.
 
     Payment:
       type: object
+      additionalProperties: false
+      required:
+        - paymentId
+        - tripId
+        - fareId
+        - customerId
+        - amount
+        - currency
+        - method
+        - paymentStatus
+        - currentAttemptId
+        - requiresReview
+        - version
+        - createdAt
+        - updatedAt
       properties:
         paymentId:
-          type: string
-          example: "PAY0001"
+          $ref: "#/components/schemas/Identifier"
         tripId:
-          type: string
+          $ref: "#/components/schemas/Identifier"
+        fareId:
+          $ref: "#/components/schemas/Identifier"
+        customerId:
+          $ref: "#/components/schemas/Identifier"
         amount:
-          type: number
-          format: double
-        paymentMethod:
-          $ref: '#/components/schemas/PaymentMethod'
+          type: integer
+          format: int64
+          minimum: 0
+          description: Bản sao totalAmount của Fare đã chốt.
+        currency:
+          $ref: "#/components/schemas/Currency"
+        method:
+          $ref: "#/components/schemas/PaymentMethod"
         paymentStatus:
-          $ref: '#/components/schemas/PaymentStatus'
-        transactionId:
+          $ref: "#/components/schemas/PaymentStatus"
+        currentAttemptId:
+          $ref: "#/components/schemas/Identifier"
+        checkout:
+          $ref: "#/components/schemas/Checkout"
+        requiresReview:
+          type: boolean
+          description: |
+            Có bất thường cần kiểm tra.
+            Khi true, chặn retry và xác nhận thu tiền mới.
+            Không tự hạ Payment SUCCESS chỉ để thể hiện bất thường.
+        version:
+          $ref: "#/components/schemas/Version"
+        paidAt:
           type: string
-          nullable: true
-          description: Mã giao dịch của nhà cung cấp thanh toán bên ngoài
-        redirectUrl:
-          type: string
-          nullable: true
-          description: URL chuyển hướng đến nhà cung cấp thanh toán (nếu là thanh toán điện tử)
+          format: date-time
+        confirmedBy:
+          $ref: "#/components/schemas/Identifier"
         createdAt:
           type: string
           format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      description: |
+        method là phương thức của lần xử lý hiện tại.
+        Phương thức các lần trước được giữ trong PaymentAttempt.
 
-    PaymentWebhookPayload:
+        Khi SUCCESS phải có paidAt.
+        Khi CASH SUCCESS phải có confirmedBy là accountId tài xế.
+
+        Payment chưa SUCCESS không có paidAt/confirmedBy.
+        Không gửi null cho các trường chưa áp dụng.
+
+        checkout không xuất hiện khi CASH, khi lần xử lý đã kết thúc,
+        hoặc khi người xem không phải CUSTOMER sở hữu.
+
+        Bất thường từ kết quả nhà cung cấp phải được xử lý
+        theo quy trình đối soát/sự cố, không tự ghi đè lịch sử.
+
+    CashPaymentSucceeded:
+      allOf:
+        - $ref: "#/components/schemas/Payment"
+        - type: object
+          required: [paidAt, confirmedBy]
+          properties:
+            method:
+              type: string
+              enum: [CASH]
+            paymentStatus:
+              type: string
+              enum: [SUCCESS]
+          not:
+            required: [checkout]
+
+    PaymentAttempt:
       type: object
-      required: [transactionId, status]
+      additionalProperties: false
+      required:
+        - attemptId
+        - paymentId
+        - attemptNumber
+        - method
+        - amount
+        - currency
+        - status
+        - createdAt
+        - updatedAt
       properties:
-        transactionId:
-          type: string
+        attemptId:
+          $ref: "#/components/schemas/Identifier"
+        paymentId:
+          $ref: "#/components/schemas/Identifier"
+        attemptNumber:
+          type: integer
+          minimum: 1
+        method:
+          $ref: "#/components/schemas/PaymentMethod"
+        amount:
+          type: integer
+          format: int64
+          minimum: 0
+        currency:
+          $ref: "#/components/schemas/Currency"
         status:
+          $ref: "#/components/schemas/PaymentStatus"
+        provider:
           type: string
-          enum: [SUCCESS, FAILED]
-        failureReason:
+          description: Chỉ có khi là phương thức điện tử.
+        merchantReference:
+          type: string
+          description: |
+            Mã CAB gửi nhà cung cấp để đối chiếu với lần xử lý.
+            Phải được ghi nhận trước khi gửi yêu cầu thu tiền.
+        providerTransactionId:
+          type: string
+          description: Có sau khi nhận được định danh từ nhà cung cấp.
+        failureCode:
+          type: string
+        failureMessage:
+          type: string
+          description: Thông báo đã loại bỏ dữ liệu nhạy cảm.
+        confirmedBy:
+          $ref: "#/components/schemas/Identifier"
+        resolvedAt:
+          type: string
+          format: date-time
+          description: Thời điểm xác định SUCCESS hoặc FAILED.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      description: |
+        Mỗi lần xử lý giữ nguyên method, amount và currency
+        đã ghi nhận khi tạo.
+
+        CASH không có thông tin nhà cung cấp.
+        UNKNOWN chưa có resolvedAt.
+
+        Không xóa lần trước khi retry.
+        Các kết quả mâu thuẫn được lưu vết để đối soát;
+        không âm thầm ghi đè một kết quả cuối cùng đã xác nhận.
+
+    PaymentAttemptPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PaymentAttempt"
+        nextCursor:
           type: string
           nullable: true
+          description: null khi không còn trang tiếp theo.
+
+    FieldError:
+      type: object
+      additionalProperties: false
+      required: [field, message]
+      properties:
+        field:
+          type: string
+        message:
+          type: string
 
     ErrorResponse:
       type: object
+      additionalProperties: false
+      required: [errorCode, message]
       properties:
         errorCode:
           type: string
         message:
           type: string
+          description: |
+            Không chứa token, chữ ký, thông tin thẻ,
+            thông tin đăng nhập nhà cung cấp hoặc stack trace.
+        details:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldError"
+        correlationId:
+          type: string
+
+  responses:
+    PaymentReadSucceeded:
+      description: Trạng thái hiện tại của khoản thanh toán.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Payment"
+
+    BadRequest:
+      description: |
+        VALIDATION_ERROR hoặc RETURN_URL_NOT_ALLOWED.
+
+        Dữ liệu sai, thiếu trường, thiếu Idempotency-Key khi bắt buộc,
+        phương thức ngoài enum hoặc thuộc tính không được phép.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    Unauthenticated:
+      description: |
+        UNAUTHENTICATED.
+        Token thiếu/sai/hết hạn hoặc Session không hợp lệ.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    Forbidden:
+      description: |
+        FORBIDDEN hoặc ACCOUNT_NOT_ACTIVE.
+        Không đúng vai trò, không có quyền với Trip/Payment,
+        hoặc Account không ACTIVE.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    TripNotFound:
+      description: TRIP_NOT_FOUND.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    PaymentNotFound:
+      description: PAYMENT_NOT_FOUND.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    ServiceUnavailable:
+      description: |
+        SERVICE_UNAVAILABLE.
+        Không thể xử lý an toàn do phụ thuộc cần thiết không sẵn sàng.
+
+        Không coi lỗi kỹ thuật hoặc mất phản hồi là bằng chứng
+        chắc chắn chưa thu tiền.
+
+        Nếu Payment đã tồn tại, giữ trạng thái phù hợp
+        và đối soát khi kết quả chưa rõ.
+
+        Với lệnh từ client, gửi lại cùng Idempotency-Key và body.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    UnexpectedError:
+      description: |
+        Lỗi ngoài dự kiến; sử dụng HTTP 5xx phù hợp.
+        Không trả chi tiết nội bộ cho client.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
