@@ -2,53 +2,110 @@ openapi: 3.0.3
 
 info:
   title: CAB System - Authentication & Account API
-  version: "1.1.0"
+  version: "1.2.0"
   description: |
-    Đặc tả tài khoản và xác thực theo SRS CAB System phiên bản 1.1.
+    Đặc tả tài khoản và xác thực theo SRS CAB System phiên bản 1.2,
+    đối chiếu rubric chấm project và Micro_Service_Design phiên bản 1.2.
 
     Truy xuất yêu cầu:
-    - BR08.
+    - BR08, BR09.
     - FR01.1 đến FR01.7.
-    - BRu09, BRu11 đến BRu15.
-    - UC01.1 đến UC01.6.
-    - AC01, NFR04, NFR05.
+    - FR23.1 đến FR23.4: yêu cầu và xác minh OTP đăng ký tài xế.
+    - FR26.1, FR26.3: tra cứu Customer theo mã.
+    - BRu09, BRu11 đến BRu15, BRu23.
+    - UC01.1 đến UC01.6, UC17, UC20.
+    - AC01, AC15, AC18, AC20.
+    - NFR04, NFR05, NFR11, NFR15, NFR17.
 
     Phạm vi:
-    - Đăng ký công khai chỉ tạo CUSTOMER.
+    - /auth/register chỉ tạo Account CUSTOMER và hồ sơ Customer.
+    - Đăng ký tài xế là luồng riêng có xác minh OTP.
+    - File này định nghĩa yêu cầu OTP và xác minh số điện thoại.
+    - API gửi, xem và xét duyệt DriverApplication nằm trong
+      07-operations-api.yaml.
+    - API tra cứu Driver theo mã nằm trong tài liệu quản lý Driver.
     - CUSTOMER, DRIVER và OPERATOR dùng chung chức năng đăng nhập.
-    - Tài khoản DRIVER được cấp qua chức năng vận hành.
-    - Tài khoản OPERATOR được cấp bằng quy trình quản trị riêng.
-    - Không có đăng ký công khai DRIVER hoặc OPERATOR.
+    - OPERATOR có thể cấp Account DRIVER qua nghiệp vụ quản trị.
+    - Account OPERATOR được cấp bằng quy trình quản trị riêng.
+    - Không có đăng ký OPERATOR công khai.
+
+    Quy tắc tài xế chờ duyệt:
+    - Account DRIVER ACTIVE được đăng nhập dù hồ sơ đang
+      PENDING_APPROVAL hoặc REJECTED.
+    - Đăng nhập không đồng nghĩa được phép nhận chuyến.
+    - Điều kiện bật AVAILABLE và nhận chuyến được kiểm tra
+      tại nghiệp vụ Driver/Dispatch.
+    - Không dùng role DRIVER trong JWT làm bằng chứng hồ sơ đã được duyệt.
 
     Quy tắc chung:
-    - accountId, role và trạng thái phiên phải được xác minh phía máy chủ.
-    - Không cấp quyền chỉ dựa vào thông tin do client gửi.
+    - Mọi request bên ngoài đi qua API Gateway.
+    - accountId, role và Session được xác minh phía máy chủ.
+    - Không cấp quyền từ dữ liệu hoặc header danh tính do client tự gửi.
     - Access token phải gắn với một Session.
-    - Phiên bị thu hồi không được tiếp tục truy cập dù JWT chưa hết hạn.
+    - Xác minh chữ ký JWT, thuật toán cho phép, issuer, audience và thời hạn.
+    - Phiên bị thu hồi không tiếp tục truy cập dù JWT chưa hết hạn.
     - Chỉ Account ACTIVE được dùng chức năng yêu cầu xác thực.
-    - Không ghi mật khẩu, access token hoặc refresh token vào log.
-    - Phản hồi chứa token hoặc hồ sơ cá nhân sử dụng Cache-Control: no-store.
+    - Dịch vụ đích vẫn kiểm tra quyền trên đối tượng.
+    - Không ghi mật khẩu, OTP, verification token, access token
+      hoặc refresh token vào log.
+    - Phản hồi chứa token, challenge hoặc hồ sơ cá nhân dùng
+      Cache-Control: no-store.
     - Sử dụng HTTPS ngoài môi trường phát triển cục bộ.
+    - Query database phải được tham số hóa.
+    - Các trường văn bản là dữ liệu, không phải HTML được phép thực thi.
 
-    Thời hạn theo cấu hình MVP trong SRS:
-    - Access token: tối đa 15 phút.
-    - Session: tối đa 7 ngày tính từ lần đăng nhập.
+    Quy tắc lưu trữ:
+    - Mật khẩu lưu bằng cơ chế băm chuyên dụng.
+    - Email và số điện thoại được mã hóa khi lưu.
+    - Kiểm tra duy nhất dùng giá trị tra cứu có khóa theo thiết kế.
+    - Không trả ciphertext, giá trị tra cứu, passwordHash hoặc khóa mã hóa.
+    - Email và phone trong response là dữ liệu đã được cho phép hiển thị,
+      không phải yêu cầu lưu plaintext trong database.
+
+    Thời hạn phiên theo cấu hình MVP:
+    - Access token tối đa 15 phút.
+    - Session tối đa 7 ngày tính từ lần đăng nhập.
     - Refresh không kéo dài thời điểm hết hạn tuyệt đối của Session.
-    - Access token mới không được có hạn vượt quá thời điểm hết hạn Session.
+    - Access token mới không hết hạn sau thời điểm hết hạn Session.
 
-    Đây là tài liệu thiết kế, không xác nhận rằng dịch vụ đã được triển khai.
+    Thông số OTP đề xuất:
+    - OTP gồm 6 chữ số.
+    - Hiệu lực OTP tối đa 5 phút từ khi tạo challenge.
+    - Tối đa 5 lần nhập sai cho một challenge.
+    - Khoảng cách gửi lại tối thiểu 60 giây.
+    - Verification token hiệu lực tối đa 5 phút từ khi xác minh thành công.
+    - Verification token chỉ dùng để gửi hồ sơ đăng ký tài xế.
+    - Các thời hạn trả về trong response là giá trị có thẩm quyền.
+    - Provider OTP và cấu hình tích hợp cụ thể còn cần được chốt.
+
+    Rate limiting:
+    - Áp dụng theo IP, tài khoản hoặc số điện thoại/challenge tùy endpoint.
+    - Vượt giới hạn trả 429 và Retry-After.
+    - Khi không thể áp dụng kiểm soát bắt buộc an toàn cho login/OTP,
+      trả 503; không âm thầm bỏ giới hạn.
+    - Gateway không tự retry thao tác ghi khi chưa có bảo vệ chống lặp.
+
+    Đây là tài liệu thiết kế, không xác nhận dịch vụ đã được triển khai
+    hoặc kiểm thử thành công.
 
 servers:
   - url: /v1
     description: |
-      Đường dẫn cơ sở dự kiến.
-      Host được xác định khi triển khai hoặc cấu hình công cụ thử API.
+      Đường dẫn cơ sở trên API Gateway.
+      Host được xác định khi triển khai hoặc cấu hình Postman.
+      Không cấu hình client gọi trực tiếp cổng của CAB Core.
 
 tags:
   - name: Auth
-    description: Đăng ký, đăng nhập và quản lý phiên.
+    description: Đăng ký khách hàng, đăng nhập và quản lý phiên.
   - name: Account
     description: Hồ sơ của tài khoản đang đăng nhập.
+  - name: DriverRegistration
+    description: |
+      Yêu cầu và xác minh OTP đăng ký tài xế.
+      Không tạo Account hoặc Driver tại hai endpoint OTP.
+  - name: Customer
+    description: Tra cứu hồ sơ Customer theo mã và quyền truy cập.
 
 security:
   - bearerAuth: []
@@ -61,20 +118,27 @@ paths:
       summary: Đăng ký tài khoản khách hàng
       security: []
       description: |
-        FR01.1, UC01.1, BRu11, BRu12.
+        FR01.1, UC01.1, BRu11, BRu12, AC01.
 
         Tạo Account có role CUSTOMER và accountStatus ACTIVE,
         đồng thời tạo hồ sơ Customer liên kết.
 
-        Email được cắt khoảng trắng hai đầu và chuyển về chữ thường.
-        Điện thoại được gửi theo định dạng quốc tế E.164.
+        Email được trim và chuyển về chữ thường.
+        Điện thoại dùng định dạng quốc tế E.164.
         Email và điện thoại phải duy nhất trên toàn bộ Account.
 
         Từ chối thuộc tính ngoài schema, bao gồm role và accountStatus.
-        Không tự tạo phiên đăng nhập; người dùng đăng nhập sau đăng ký.
+        Không tự tạo phiên; người dùng đăng nhập sau đăng ký.
 
-        Account và Customer phải được tạo nhất quán.
+        Account và Customer phải được tạo trong một transaction.
         Không trả thành công khi chỉ tạo được một trong hai đối tượng.
+
+        Endpoint này không dùng để đăng ký tài xế.
+        Việc phone đúng định dạng không có nghĩa số điện thoại đã được OTP xác minh.
+
+        Endpoint chưa cung cấp cơ chế replay theo Idempotency-Key.
+        Gửi lại sau khi đăng ký đã thành công có thể nhận 409;
+        ràng buộc duy nhất phải ngăn tạo tài khoản trùng.
       requestBody:
         required: true
         content:
@@ -100,6 +164,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "409":
           $ref: "#/components/responses/ContactConflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
         default:
@@ -112,7 +178,7 @@ paths:
       summary: Đăng nhập cho CUSTOMER, DRIVER hoặc OPERATOR
       security: []
       description: |
-        FR01.2, UC01.2, BRu12, BRu13.
+        FR01.2, UC01.2, BRu12, BRu13, AC01, AC15.
 
         Đăng nhập bằng emailOrPhone và password.
         Vai trò được lấy từ Account, không nhận từ request.
@@ -123,17 +189,25 @@ paths:
 
         Sau khi xác thực đúng:
         - Kiểm tra Account ACTIVE.
+        - Kiểm tra hồ sơ tương ứng với role tồn tại và nhất quán.
         - Tạo Session mới.
         - Cấp access token và refresh token.
-        - Trả hồ sơ tương ứng với vai trò.
+        - Trả thông tin Account và mã hồ sơ tương ứng.
+
+        Account DRIVER ACTIVE có hồ sơ PENDING_APPROVAL hoặc REJECTED
+        vẫn được đăng nhập để xem hồ sơ và kết quả xét duyệt.
+        Không từ chối đăng nhập chỉ vì tài xế chưa APPROVED.
+
+        Quyền bật AVAILABLE và nhận chuyến được kiểm tra riêng
+        tại nghiệp vụ Driver/Dispatch.
 
         Tài khoản không tồn tại hoặc mật khẩu sai đều trả 401
-        với errorCode INVALID_CREDENTIALS và thông báo chung.
+        với INVALID_CREDENTIALS và thông báo chung.
 
         Chỉ trả ACCOUNT_NOT_ACTIVE sau khi đã xác minh
         thông tin đăng nhập đúng.
 
-        Nếu hồ sơ theo vai trò bị thiếu hoặc dữ liệu tài khoản không nhất quán,
+        Nếu hồ sơ theo role bị thiếu hoặc dữ liệu không nhất quán,
         không cấp phiên; ghi nhận lỗi để xử lý.
       requestBody:
         required: true
@@ -168,6 +242,9 @@ paths:
           description: |
             INVALID_CREDENTIALS.
             Không phân biệt tài khoản không tồn tại với mật khẩu sai.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
@@ -177,6 +254,8 @@ paths:
                 message: "Thông tin đăng nhập không hợp lệ."
         "403":
           $ref: "#/components/responses/AccountNotActive"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
         default:
@@ -189,26 +268,30 @@ paths:
       summary: Làm mới token của phiên hiện tại
       security: []
       description: |
-        FR01.5, UC01.5, BRu15.
+        FR01.5, UC01.5, BRu15, AC01.
 
-        Endpoint không yêu cầu access token.
+        Không yêu cầu access token.
         Refresh token trong body là thông tin xác thực cho thao tác này.
 
         Kiểm tra:
         - Refresh token tồn tại, còn hạn và là token hiện hành của Session.
-        - Session chưa bị thu hồi và chưa hết hạn tuyệt đối.
-        - Account đang ACTIVE.
+        - Session chưa thu hồi và chưa hết hạn tuyệt đối.
+        - Account ACTIVE.
+        - Hồ sơ theo role còn nhất quán.
 
         Khi thành công:
         - Thay refresh token cũ bằng token mới.
         - Cấp access token mới.
         - Giữ nguyên thời điểm hết hạn tuyệt đối của Session.
 
-        Token cũ không được dùng lại.
-        Nếu hai request đồng thời dùng cùng một refresh token,
-        tối đa một request được thành công.
+        Nếu hai request đồng thời dùng cùng refresh token,
+        tối đa một request thành công.
 
+        Token cũ không dùng lại được.
         Không tạo Session mới để kéo dài thời hạn 7 ngày.
+
+        Hồ sơ Driver chưa APPROVED không tự làm Session mất hiệu lực.
+        Quyền nhận chuyến vẫn được kiểm tra riêng.
       requestBody:
         required: true
         content:
@@ -232,6 +315,9 @@ paths:
             INVALID_REFRESH_TOKEN.
             Token không hợp lệ, đã thay thế, hết hạn,
             hoặc Session đã hết hạn/bị thu hồi.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
@@ -241,6 +327,8 @@ paths:
                 message: "Phiên không thể làm mới. Vui lòng đăng nhập lại."
         "403":
           $ref: "#/components/responses/AccountNotActive"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
         default:
@@ -252,20 +340,21 @@ paths:
       operationId: logout
       summary: Đăng xuất phiên hiện tại
       description: |
-        FR01.6, UC01.6, BRu15.
+        FR01.6, UC01.6, BRu15, AC01.
 
-        Xác định Session từ access token đã được xác minh,
-        không nhận accountId hoặc sessionId từ body.
+        Xác định Session từ access token đã xác minh.
+        Không nhận accountId hoặc sessionId từ body.
+        Endpoint không có request body.
 
         Thu hồi Session hiện tại và refresh token của Session đó.
         Các Session khác của cùng Account không bị ảnh hưởng.
 
-        Access token thuộc Session đã thu hồi không được tiếp tục
+        Access token của Session đã thu hồi không được tiếp tục
         truy cập chức năng được bảo vệ.
 
         Gửi lại sau khi Session đã thu hồi có thể nhận 401.
-        Trạng thái cuối vẫn là đã đăng xuất;
-        không được thu hồi nhầm Session khác.
+        Trạng thái cuối vẫn là đã đăng xuất.
+        Không thu hồi nhầm Session khác.
 
         Không trả 204 nếu chưa xác nhận thu hồi thành công.
       responses:
@@ -274,10 +363,14 @@ paths:
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/AccountNotActive"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
         default:
@@ -289,18 +382,18 @@ paths:
       operationId: changePassword
       summary: Đổi mật khẩu và thu hồi mọi phiên
       description: |
-        FR01.4, UC01.4, BRu15.
+        FR01.4, UC01.4, BRu15, AC01.
 
-        Yêu cầu phiên đăng nhập hợp lệ và currentPassword đúng.
+        Yêu cầu Session hợp lệ và currentPassword đúng.
         Không nhận accountId của người khác trong request.
 
-        Kiểm tra mật khẩu mới, lưu bản băm và thu hồi
-        mọi Session của Account, bao gồm Session đang thực hiện.
+        Kiểm tra mật khẩu mới, lưu bản băm và thu hồi mọi Session
+        của Account, bao gồm Session đang thực hiện.
 
-        Không trả thành công trước khi việc đổi mật khẩu
-        và thu hồi các phiên đã được xác nhận.
+        Đổi mật khẩu và thu hồi phiên phải được cập nhật nhất quán.
+        Không trả thành công trước khi transaction commit.
 
-        Người dùng phải đăng nhập lại bằng mật khẩu mới.
+        Người dùng đăng nhập lại bằng mật khẩu mới.
         Không trả token mới trong response.
 
         currentPassword sai trả 400 với CURRENT_PASSWORD_INVALID.
@@ -321,6 +414,9 @@ paths:
           description: |
             VALIDATION_ERROR hoặc CURRENT_PASSWORD_INVALID.
             Không đổi mật khẩu khi kiểm tra thất bại.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
@@ -329,6 +425,195 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/AccountNotActive"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
+  /auth/driver-registration/otp:
+    post:
+      tags: [DriverRegistration]
+      operationId: requestDriverRegistrationOtp
+      summary: Yêu cầu OTP đăng ký tài xế
+      security: []
+      description: |
+        FR23.1, FR23.2, UC17, BRu23, AC15.
+
+        Không yêu cầu Account hoặc user access token.
+        Mục đích được máy chủ cố định là DRIVER_REGISTRATION.
+        Client không được tự đặt purpose, role hoặc trạng thái tài khoản.
+
+        Kiểm tra:
+        - Phone đúng E.164.
+        - Phone chưa thuộc một Account đã đăng ký.
+        - Giới hạn theo IP và phone.
+        - Khoảng cách gửi lại tối thiểu 60 giây.
+
+        Việc kiểm tra giới hạn theo phone và phát hành challenge mới
+        phải được phối hợp để request đồng thời không vượt giới hạn.
+
+        Khi tiếp nhận thành công:
+        - Tạo challengeId không thể đoán một cách thực tế.
+        - Tạo OTP ngẫu nhiên an toàn gồm 6 chữ số.
+        - Ghi codeDigest, thời hạn và công việc gửi bền vững.
+        - Vô hiệu hóa challenge cũ cùng phone/purpose.
+        - Vô hiệu hóa quyền xác minh chưa sử dụng phát sinh từ challenge cũ.
+        - Trả 202 sau khi việc tiếp nhận đã được ghi nhận bền vững.
+
+        Công việc gửi được thực hiện ngoài transaction database.
+        Nếu cần giữ mã để gửi bất đồng bộ, payload công việc phải
+        được mã hóa, giới hạn quyền đọc và xóa theo thời hạn;
+        không lưu OTP plaintext trong bảng, outbox hoặc log.
+
+        202 chỉ xác nhận đã tiếp nhận yêu cầu gửi,
+        không chứng minh người dùng đã nhận SMS.
+
+        expiresAt tính từ khi tạo challenge.
+        Không kéo dài thời hạn chỉ vì Worker hoặc provider xử lý chậm.
+        Không gửi mã đã hết hạn.
+
+        Đây là endpoint dùng lại để yêu cầu mã mới.
+        Request lặp trong thời gian chờ trả 429.
+        Sau thời gian chờ, request mới tạo challenge mới và làm mã cũ mất hiệu lực.
+
+        Lỗi provider được theo dõi qua công việc gửi.
+        Không bật OTP cố định hoặc trả OTP trong response để vượt qua lỗi tích hợp.
+
+        Chưa tạo Account, Driver, DriverApplication hoặc Session ở bước này.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DriverOtpRequest"
+            example:
+              phone: "+84901234567"
+      responses:
+        "202":
+          description: Đã tiếp nhận challenge và công việc gửi OTP.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DriverOtpChallengeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/ContactConflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
+  /auth/driver-registration/otp/verify:
+    post:
+      tags: [DriverRegistration]
+      operationId: verifyDriverRegistrationOtp
+      summary: Xác minh OTP và cấp quyền gửi hồ sơ tài xế
+      security: []
+      description: |
+        FR23.3, FR23.4, UC17, BRu23, AC15.
+
+        Không yêu cầu user access token.
+        Challenge và OTP là thông tin dùng để xác minh số điện thoại.
+
+        Phone và purpose được lấy từ challenge phía máy chủ.
+        Không nhận phone khác, role hoặc accountStatus trong request.
+
+        Kiểm tra:
+        - Challenge tồn tại và có purpose DRIVER_REGISTRATION.
+        - Challenge còn hạn, chưa bị thay thế hoặc vô hiệu hóa.
+        - Chưa vượt số lần nhập sai.
+        - OTP khớp.
+        - Challenge chưa được xác minh thành công.
+
+        Mã sai làm tăng failedAttempts một cách nguyên tử.
+        Lần sai thứ năm làm challenge mất hiệu lực.
+        Request đồng thời không được vượt giới hạn thử.
+
+        Challenge không tồn tại, hết hạn, bị vô hiệu hóa,
+        vượt số lần thử hoặc OTP sai đều trả 400
+        với OTP_INVALID_OR_EXPIRED.
+
+        Khi thành công, trong cùng transaction:
+        - Ghi verifiedAt.
+        - Tạo PhoneVerification gắn với challenge, phone và purpose.
+        - Lưu digest của verification token và thời điểm hết hạn.
+        - Bảo đảm một challenge chỉ cấp một quyền xác minh.
+
+        Trả verification token ngẫu nhiên đủ mạnh cho client.
+        Token không phải JWT đăng nhập, không đại diện role DRIVER
+        và không cho phép gọi API tài khoản hoặc chuyến.
+
+        Token dùng tại POST /driver-applications,
+        được định nghĩa trong 07-operations-api.yaml.
+        Phone của hồ sơ phải khớp số đã xác minh.
+        Tạo Account/Driver/hồ sơ và tiêu thụ token nằm trong cùng transaction.
+
+        Token hiệu lực tối đa 5 phút và chỉ dùng một lần.
+        Không đưa token vào URL hoặc log.
+
+        Endpoint verify không cung cấp replay trả lại token.
+        Xác minh lại challenge đã thành công trả 409 OTP_ALREADY_VERIFIED.
+        Nếu mất response chứa token, client yêu cầu OTP mới sau thời gian chờ
+        và thực hiện lại xác minh; hệ thống không cấp thêm token cho challenge cũ.
+
+        Bước này chưa tạo Account, Driver, DriverApplication hoặc Session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VerifyDriverOtpRequest"
+      responses:
+        "200":
+          description: Số điện thoại đã được xác minh cho mục đích đăng ký tài xế.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DriverPhoneVerificationResponse"
+        "400":
+          description: |
+            VALIDATION_ERROR hoặc OTP_INVALID_OR_EXPIRED.
+            Không trả OTP đúng hoặc chi tiết nội bộ của challenge.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidOtp:
+                  summary: Mã không hợp lệ hoặc không còn hiệu lực
+                  value:
+                    errorCode: OTP_INVALID_OR_EXPIRED
+                    message: "Mã xác minh không hợp lệ hoặc đã hết hiệu lực."
+        "409":
+          description: |
+            OTP_ALREADY_VERIFIED.
+            Challenge đã xác minh thành công và không cấp lại token.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                errorCode: OTP_ALREADY_VERIFIED
+                message: "Yêu cầu xác minh này đã được sử dụng."
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
         default:
@@ -340,17 +625,22 @@ paths:
       operationId: getMyAccount
       summary: Xem hồ sơ của tài khoản đang đăng nhập
       description: |
-        FR01.3, UC01.3, BRu09.
+        FR01.3, UC01.3, BRu09, AC01.
 
         Account được xác định từ thông tin xác thực.
         Không nhận accountId hoặc customerId để chọn người khác.
 
-        Trả thông tin chung và đúng một mã hồ sơ theo vai trò:
+        Trả thông tin chung và đúng một mã hồ sơ theo role:
         - CUSTOMER: customerId.
         - DRIVER: driverId.
         - OPERATOR: operatorId.
 
-        Không trả passwordHash, refreshTokenHash hoặc danh sách token.
+        DRIVER chờ duyệt vẫn xem được Account của mình.
+        Chi tiết hồ sơ đăng ký và kết quả xét duyệt được đọc
+        qua GET /driver-applications/me trong tài liệu quản lý tài xế.
+
+        Không trả passwordHash, refreshTokenHash, OTP,
+        verification token, ciphertext hoặc khóa tra cứu.
       responses:
         "200":
           description: Hồ sơ của tài khoản đang đăng nhập.
@@ -365,6 +655,8 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/AccountNotActive"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
         default:
@@ -375,7 +667,7 @@ paths:
       operationId: updateMyAccount
       summary: Cập nhật một phần hồ sơ của chính mình
       description: |
-        FR01.3, UC01.3, BRu12, BRu14.
+        FR01.3, UC01.3, BRu12, BRu14, AC01.
 
         Cho phép sửa fullName, email hoặc phone.
         Phải có ít nhất một trường hồ sơ trong request.
@@ -388,16 +680,23 @@ paths:
 
         Email được chuẩn hóa giống đăng ký.
         Điện thoại sử dụng E.164.
-        Email và điện thoại phải duy nhất trên toàn bộ Account.
+        Email và phone phải duy nhất trên toàn bộ Account.
 
-        Từ chối thuộc tính ngoài schema, bao gồm role,
-        accountStatus, accountId, customerId, driverId và operatorId.
+        Đổi email/phone cập nhật đồng thời dữ liệu mã hóa
+        và giá trị tra cứu theo thiết kế; không lưu bản plaintext phụ.
+
+        Từ chối thuộc tính ngoài schema, bao gồm:
+        role, accountStatus, accountId, customerId, driverId,
+        operatorId, approvalStatus và driverStatus.
 
         currentPassword chỉ dùng để xác minh, không phải mật khẩu mới.
         Đổi mật khẩu sử dụng /auth/change-password.
 
-        Mọi trường trong cùng request được cập nhật nhất quán.
+        Mọi trường trong request được cập nhật nhất quán.
         Nếu một trường không hợp lệ hoặc trùng, không cập nhật một phần.
+
+        Việc cập nhật phone tại endpoint này không tự tạo bằng chứng OTP
+        cho số mới và không thay đổi kết quả xác minh lịch sử của hồ sơ đăng ký.
       requestBody:
         required: true
         content:
@@ -429,6 +728,9 @@ paths:
             VALIDATION_ERROR hoặc CURRENT_PASSWORD_INVALID.
             Có thể do body rỗng, trường không cho phép,
             thiếu mật khẩu xác minh hoặc mật khẩu xác minh sai.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
@@ -439,6 +741,68 @@ paths:
           $ref: "#/components/responses/AccountNotActive"
         "409":
           $ref: "#/components/responses/ContactConflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
+  /customers/{customerId}:
+    get:
+      tags: [Customer]
+      operationId: getCustomerById
+      summary: Tra cứu hồ sơ khách hàng theo mã
+      description: |
+        FR26.1, FR26.3, UC20, BRu09, AC18.
+        Đáp ứng chức năng tra cứu Customer theo mã tại tiêu chí 11.
+
+        Người gọi phải có Account ACTIVE và Session hợp lệ.
+
+        Quyền:
+        - CUSTOMER chỉ xem customerId thuộc Account của mình.
+        - OPERATOR xem Customer trong phạm vi vận hành.
+        - DRIVER không được sử dụng endpoint này.
+
+        Thứ tự kiểm tra:
+        - Xác minh token, Account và Session.
+        - Kiểm tra role được phép.
+        - Kiểm tra phạm vi dữ liệu.
+        - Đọc hồ sơ Customer và Account liên kết.
+
+        DRIVER có token hợp lệ trả 403 FORBIDDEN.
+        CUSTOMER yêu cầu customerId không thuộc mình trả 404.
+        Mã không tồn tại cũng trả 404 với cùng cấu trúc thông báo.
+
+        OPERATOR có quyền có thể xem Customer có Account
+        ACTIVE, INACTIVE hoặc SUSPENDED.
+        Trạng thái Account trong response là của Customer được xem,
+        không phải trạng thái của OPERATOR đang gọi.
+
+        Không trả hồ sơ Driver/Operator thay cho Customer.
+        Không trả mật khẩu, token, OTP, ciphertext hoặc dữ liệu quản lý khóa.
+      parameters:
+        - $ref: "#/components/parameters/CustomerId"
+      responses:
+        "200":
+          description: Hồ sơ Customer thuộc phạm vi được phép.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerProfile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/CustomerNotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
         default:
@@ -452,9 +816,30 @@ components:
       bearerFormat: JWT
       description: |
         Access token gắn với Account và Session.
-        Máy chủ xác minh chữ ký, thời hạn, Session,
-        trạng thái tài khoản và quyền cho thao tác.
+
+        Xác minh chữ ký bằng thuật toán nằm trong danh sách cho phép,
+        issuer, audience, thời hạn, Session và trạng thái Account.
+
+        Decode được payload không có nghĩa token hợp lệ.
+
+        Token bị sửa sub/role hoặc chữ ký trả 401.
+        Token hợp lệ nhưng sai role của chức năng trả 403.
+
         JWT chưa hết hạn không bảo đảm Session còn hợp lệ.
+        Dịch vụ vẫn kiểm tra quyền trên đối tượng được yêu cầu.
+
+        Verification token đăng ký tài xế không dùng thay bearer token.
+
+  parameters:
+    CustomerId:
+      name: customerId
+      in: path
+      required: true
+      description: |
+        Mã hồ sơ Customer, không phải accountId.
+        Biết mã không đồng nghĩa có quyền truy cập.
+      schema:
+        $ref: "#/components/schemas/Identifier"
 
   headers:
     NoStore:
@@ -462,6 +847,15 @@ components:
       schema:
         type: string
         enum: [no-store]
+
+    RetryAfter:
+      description: |
+        Số giây tối thiểu cần chờ trước khi thử lại.
+        Giá trị được tính từ giới hạn đang áp dụng phía máy chủ.
+      schema:
+        type: integer
+        minimum: 1
+      example: 60
 
   schemas:
     Identifier:
@@ -477,7 +871,8 @@ components:
       pattern: '\S'
       description: |
         Họ tên có ít nhất một ký tự không phải khoảng trắng.
-        Cắt khoảng trắng hai đầu trước khi kiểm tra và lưu.
+        Trim hai đầu trước khi kiểm tra và lưu.
+        Là dữ liệu văn bản, không phải HTML được phép thực thi.
       example: "Nguyễn Văn An"
 
     Email:
@@ -485,15 +880,15 @@ components:
       format: email
       description: |
         Email hợp lệ.
-        Cắt khoảng trắng hai đầu và chuyển về chữ thường
-        trước khi kiểm tra trùng và lưu.
+        Trim hai đầu và chuyển về chữ thường trước khi kiểm tra.
+        Giá trị trong hợp đồng API không có nghĩa database lưu plaintext.
       example: "an@example.com"
 
     Phone:
       type: string
       pattern: '^\+[1-9][0-9]{7,14}$'
       description: |
-        Điện thoại ở dạng quốc tế E.164, không có dấu cách.
+        Điện thoại quốc tế E.164, không có dấu cách.
         Ví dụ số Việt Nam 0901234567 được gửi thành +84901234567.
         Kiểm tra định dạng không đồng nghĩa đã xác minh sở hữu số.
       example: "+84901234567"
@@ -505,7 +900,7 @@ components:
       minLength: 1
       description: |
         Mật khẩu hiện tại được gửi nguyên trạng.
-        Không trim, không thay đổi chữ hoa/chữ thường.
+        Không trim hoặc thay đổi chữ hoa/chữ thường.
 
     NewPassword:
       type: string
@@ -514,18 +909,14 @@ components:
       minLength: 8
       pattern: '\S'
       description: |
-        Mật khẩu mới có ít nhất 8 ký tự,
-        không được chỉ gồm khoảng trắng.
+        Mật khẩu mới có ít nhất 8 ký tự.
+        Không được chỉ gồm khoảng trắng.
         Không trim hoặc thay đổi nội dung người dùng nhập.
 
     RegisterRequest:
       type: object
       additionalProperties: false
-      required:
-        - fullName
-        - email
-        - phone
-        - password
+      required: [fullName, email, phone, password]
       properties:
         fullName:
           $ref: "#/components/schemas/FullName"
@@ -539,16 +930,12 @@ components:
     LoginRequest:
       type: object
       additionalProperties: false
-      required:
-        - emailOrPhone
-        - password
+      required: [emailOrPhone, password]
       properties:
         emailOrPhone:
           type: string
           minLength: 1
-          description: |
-            Email hoặc số điện thoại E.164.
-            Không phải username riêng.
+          description: Email hoặc số điện thoại E.164; không phải username riêng.
           example: "an@example.com"
         password:
           $ref: "#/components/schemas/PasswordInput"
@@ -556,8 +943,7 @@ components:
     RefreshRequest:
       type: object
       additionalProperties: false
-      required:
-        - refreshToken
+      required: [refreshToken]
       properties:
         refreshToken:
           type: string
@@ -568,9 +954,7 @@ components:
     ChangePasswordRequest:
       type: object
       additionalProperties: false
-      required:
-        - currentPassword
-        - newPassword
+      required: [currentPassword, newPassword]
       properties:
         currentPassword:
           $ref: "#/components/schemas/PasswordInput"
@@ -602,6 +986,110 @@ components:
             - not:
                 required: [phone]
             - required: [currentPassword]
+
+    DriverOtpRequest:
+      type: object
+      additionalProperties: false
+      required: [phone]
+      properties:
+        phone:
+          $ref: "#/components/schemas/Phone"
+
+    DriverOtpChallengeResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - challengeId
+        - purpose
+        - status
+        - createdAt
+        - expiresAt
+        - resendAvailableAt
+      properties:
+        challengeId:
+          type: string
+          minLength: 1
+          description: |
+            Mã challenge ngẫu nhiên, không thể đoán một cách thực tế.
+            Không chứa OTP hoặc số điện thoại dạng có thể suy diễn.
+        purpose:
+          type: string
+          enum: [DRIVER_REGISTRATION]
+        status:
+          type: string
+          enum: [ACCEPTED]
+          description: |
+            Đã ghi nhận challenge và công việc gửi.
+            Không phải xác nhận SMS đã đến thiết bị.
+        createdAt:
+          type: string
+          format: date-time
+          description: Thời điểm máy chủ tạo challenge.
+        expiresAt:
+          type: string
+          format: date-time
+          description: |
+            Thời điểm OTP hết hiệu lực.
+            Tối đa 5 phút sau createdAt theo cấu hình đề xuất.
+        resendAvailableAt:
+          type: string
+          format: date-time
+          description: |
+            Thời điểm sớm nhất có thể yêu cầu mã mới theo khoảng chờ gửi lại.
+            Các giới hạn theo IP/phone khác vẫn có thể tiếp tục áp dụng.
+
+    VerifyDriverOtpRequest:
+      type: object
+      additionalProperties: false
+      required: [challengeId, otp]
+      properties:
+        challengeId:
+          type: string
+          minLength: 1
+          description: Mã nhận từ endpoint yêu cầu OTP.
+        otp:
+          type: string
+          minLength: 6
+          maxLength: 6
+          pattern: '^[0-9]{6}$'
+          writeOnly: true
+          description: |
+            Sáu chữ số, gửi dưới dạng string để giữ số 0 ở đầu.
+            Không đưa vào URL hoặc log.
+
+    DriverPhoneVerificationResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - verificationToken
+        - purpose
+        - verifiedPhone
+        - verifiedAt
+        - expiresAt
+      properties:
+        verificationToken:
+          type: string
+          minLength: 32
+          description: |
+            Token ngẫu nhiên đủ mạnh, dùng một lần để gửi hồ sơ tài xế.
+            Không phải access token hoặc refresh token.
+            Chỉ lưu digest phía máy chủ.
+            Client giữ tạm an toàn đến khi gửi hồ sơ hoặc token hết hạn.
+        purpose:
+          type: string
+          enum: [DRIVER_REGISTRATION]
+        verifiedPhone:
+          $ref: "#/components/schemas/Phone"
+        verifiedAt:
+          type: string
+          format: date-time
+          description: Thời điểm máy chủ xác minh OTP thành công.
+        expiresAt:
+          type: string
+          format: date-time
+          description: |
+            Thời điểm quyền gửi hồ sơ hết hiệu lực.
+            Tối đa 5 phút sau verifiedAt theo cấu hình đề xuất.
 
     Account:
       type: object
@@ -694,6 +1182,21 @@ components:
               type: string
               enum: [ACTIVE]
 
+    CustomerProfile:
+      description: |
+        Hồ sơ Customer và thông tin Account liên kết.
+        CUSTOMER chỉ đọc hồ sơ mình.
+        OPERATOR có quyền có thể đọc cả Account INACTIVE/SUSPENDED.
+        Không dùng schema đăng ký mới vì hồ sơ được đọc không nhất thiết ACTIVE.
+      allOf:
+        - $ref: "#/components/schemas/Account"
+        - type: object
+          required: [customerId]
+          properties:
+            role:
+              type: string
+              enum: [CUSTOMER]
+
     AuthSessionResponse:
       type: object
       additionalProperties: false
@@ -739,9 +1242,7 @@ components:
     FieldError:
       type: object
       additionalProperties: false
-      required:
-        - field
-        - message
+      required: [field, message]
       properties:
         field:
           type: string
@@ -753,9 +1254,7 @@ components:
     ErrorResponse:
       type: object
       additionalProperties: false
-      required:
-        - errorCode
-        - message
+      required: [errorCode, message]
       properties:
         errorCode:
           type: string
@@ -765,12 +1264,13 @@ components:
           type: string
           description: |
             Thông báo an toàn cho người dùng.
-            Không chứa mật khẩu, token, stack trace hoặc chi tiết database.
+            Không chứa mật khẩu, OTP, token, stack trace,
+            khóa hoặc chi tiết database.
         details:
           type: array
           description: |
-            Danh sách lỗi theo trường khi phù hợp.
-            Không đưa giá trị mật khẩu hoặc token vào thông báo.
+            Lỗi theo trường khi phù hợp.
+            Không đưa giá trị mật khẩu, OTP hoặc token vào thông báo.
           items:
             $ref: "#/components/schemas/FieldError"
         correlationId:
@@ -783,6 +1283,9 @@ components:
         VALIDATION_ERROR.
         Body hoặc dữ liệu không hợp lệ, thiếu trường,
         hoặc chứa thuộc tính không được phép.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
           schema:
@@ -791,8 +1294,12 @@ components:
     Unauthenticated:
       description: |
         UNAUTHENTICATED.
-        Thiếu access token, token không hợp lệ/hết hạn,
-        hoặc Session không tồn tại, hết hạn hay đã bị thu hồi.
+        Thiếu access token, token không hợp lệ/hết hạn/bị sửa,
+        sai issuer hoặc audience, hoặc Session không tồn tại,
+        hết hạn hay đã bị thu hồi.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
           schema:
@@ -804,9 +1311,12 @@ components:
     AccountNotActive:
       description: |
         ACCOUNT_NOT_ACTIVE.
-        Account đang INACTIVE hoặc SUSPENDED.
-        Không trả thông tin trạng thái tài khoản cho người
-        chưa chứng minh được thông tin xác thực phù hợp.
+        Account của người gọi đang INACTIVE hoặc SUSPENDED.
+        Không trả trạng thái tài khoản cho người chưa chứng minh
+        được thông tin xác thực phù hợp.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
           schema:
@@ -815,11 +1325,55 @@ components:
             errorCode: ACCOUNT_NOT_ACTIVE
             message: "Tài khoản hiện không được phép sử dụng chức năng này."
 
+    Forbidden:
+      description: |
+        FORBIDDEN hoặc ACCOUNT_NOT_ACTIVE.
+        Đã xác minh danh tính nhưng role không được phép gọi chức năng,
+        hoặc Account của người gọi không hoạt động.
+        Không trả dữ liệu của đối tượng được yêu cầu.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            wrongRole:
+              value:
+                errorCode: FORBIDDEN
+                message: "Bạn không có quyền sử dụng chức năng này."
+            inactiveAccount:
+              value:
+                errorCode: ACCOUNT_NOT_ACTIVE
+                message: "Tài khoản hiện không được phép sử dụng chức năng này."
+
+    CustomerNotFound:
+      description: |
+        CUSTOMER_NOT_FOUND.
+        Customer không tồn tại hoặc nằm ngoài phạm vi dữ liệu
+        mà người gọi được phép xem.
+        Không phân biệt hai trường hợp trong thông báo.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            errorCode: CUSTOMER_NOT_FOUND
+            message: "Không tìm thấy hồ sơ khách hàng."
+
     ContactConflict:
       description: |
         CONTACT_CONFLICT.
         Email hoặc điện thoại sau chuẩn hóa đã thuộc Account khác.
+        Với yêu cầu OTP đăng ký tài xế, phone đã có Account không tạo challenge mới.
         Không trả thông tin của tài khoản đang sở hữu.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
           schema:
@@ -828,11 +1382,40 @@ components:
             errorCode: CONTACT_CONFLICT
             message: "Email hoặc số điện thoại đã được sử dụng."
 
+    TooManyRequests:
+      description: |
+        RATE_LIMIT_EXCEEDED.
+        Vượt giới hạn theo IP, tài khoản, phone hoặc challenge,
+        hoặc chưa đủ thời gian để yêu cầu OTP mới.
+
+        Retry-After cho biết thời gian chờ tối thiểu.
+        Không tiếp tục tạo challenge, Session hoặc thay đổi nghiệp vụ
+        sau khi request bị từ chối tại bước giới hạn.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            errorCode: RATE_LIMIT_EXCEEDED
+            message: "Bạn gửi yêu cầu quá thường xuyên. Vui lòng thử lại sau."
+
     ServiceUnavailable:
       description: |
         SERVICE_UNAVAILABLE.
         Không thể xác minh hoặc xử lý an toàn do phụ thuộc cần thiết
-        không sẵn sàng. Không bỏ qua kiểm tra phiên để cấp quyền.
+        không sẵn sàng.
+
+        Không bỏ qua kiểm tra Session để cấp quyền.
+        Không bỏ giới hạn bắt buộc của login/OTP khi Redis không khả dụng.
+        Không trả thành công nếu chưa ghi nhận bền vững thay đổi cần thiết.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
           schema:
@@ -845,8 +1428,16 @@ components:
       description: |
         Lỗi ngoài dự kiến; sử dụng HTTP 5xx phù hợp.
         Không trả chi tiết nội bộ cho client.
-        Nếu phản hồi bị mất sau một thay đổi, client phải xác minh trạng thái;
-        không được mặc định rằng thao tác chắc chắn chưa thực hiện.
+
+        Nếu phản hồi bị mất sau một thay đổi,
+        client không được mặc định rằng thao tác chưa thực hiện.
+
+        Luồng OTP verify có quy tắc khôi phục riêng:
+        nếu mất token sau xác minh thành công, yêu cầu OTP mới
+        sau khoảng chờ và xác minh lại.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
           schema:
