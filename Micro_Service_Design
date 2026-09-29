@@ -35,19 +35,29 @@ Hệ thống hỗ trợ:
 6. Đánh giá.
 7. Thông báo trong ứng dụng.
 8. Quản lý tài xế, phương tiện và giám sát vận hành.
+Các chức năng bổ sung để đáp ứng rubric:
+
+9. Tài xế tự đăng ký bằng số điện thoại, xác thực OTP và gửi thông tin cá nhân/phương tiện để xét duyệt.
+10. Điều hành viên xem, duyệt hoặc từ chối hồ sơ đăng ký tài xế; tài xế nhận kết quả.
+11. Tra cứu thông tin khách hàng và tài xế theo mã, có kiểm tra quyền trên đối tượng.
+12. Liệt kê tài xế có thể nhận chuyến trong bán kính 1 km, hỗ trợ giới hạn kết quả và phân trang.
+13. Liệt kê booking của khách hàng, hỗ trợ giới hạn kết quả và phân trang.
+14. Trình diễn hệ thống qua API Gateway, Docker Compose, RabbitMQ và các endpoint kiểm tra sức khỏe.
+15. Kiểm chứng bảo vệ dữ liệu lưu trữ, phân quyền, JWT, SQL injection, XSS, rate limiting và idempotency.
+
+Các chức năng trên là phạm vi thiết kế cần triển khai và kiểm thử; chưa được đánh dấu hoàn thành.
 
 Báo cáo cơ bản thuộc phạm vi tùy chọn đã nêu trong SRS.
 
 ### 1.2. Các chức năng chưa thuộc MVP
 
 - Đặt xe theo lịch, đi chung hoặc nhiều điểm dừng.
-- Tài xế tự đăng ký công khai.
 - Nhiều vai trò trên cùng một Account.
 - Khuyến mãi, giá tăng theo nhu cầu và phí hủy.
 - Hoàn tiền tự động.
 - Tự động tính tiền cho chuyến bị gián đoạn.
 - Tự động thay tài xế trong cùng một Trip.
-- Gửi SMS, email hoặc push qua nhà cung cấp bên ngoài.
+- Thông báo nghiệp vụ qua email, SMS hoặc push chưa thuộc MVP. Riêng SMS phục vụ OTP đăng ký tài xế thuộc phạm vi tích hợp cần thiết. Môi trường kiểm thử có thể dùng bộ giả lập OTP được ghi rõ; không coi giả lập là bằng chứng đã tích hợp SMS thực tế.
 - Tự khôi phục mật khẩu.
 - Hệ thống xếp hạng, thưởng hoặc phạt tài xế theo điểm đánh giá.
 
@@ -55,96 +65,188 @@ Các yêu cầu còn cần quyết định được liệt kê ở cuối tài l
 
 ## 2. Quyết định kiến trúc
 
-### 2.1. Phân biệt module nghiệp vụ và microservice
+### 2.1. Mục tiêu kiến trúc
 
-Một module nghiệp vụ là phần hệ thống có trách nhiệm, dữ liệu và quy tắc riêng.
+Hệ thống được thiết kế để trình diễn:
 
-Một microservice độc lập còn cần có:
+- API Gateway là cửa vào của các ứng dụng khách.
+- Các dịch vụ có tiến trình, hợp đồng giao tiếp và quyền sở hữu dữ liệu riêng.
+- Giao tiếp đồng bộ qua HTTP nội bộ.
+- Giao tiếp bất đồng bộ qua RabbitMQ.
+- Khởi chạy bằng Docker Compose.
+- Kiểm tra sức khỏe từng thành phần.
+- Khôi phục công việc sau lỗi và chống xử lý trùng.
 
-- Tiến trình và chu kỳ triển khai riêng.
-- Quyền sở hữu kho dữ liệu riêng.
-- Hợp đồng giao tiếp qua mạng.
-- Cơ chế xử lý lỗi, timeout và phiên bản hợp đồng.
-- Cơ chế phối hợp khi một nghiệp vụ liên quan nhiều dịch vụ.
+Rubric không quy định số lượng microservice hoặc yêu cầu một database server vật lý cho từng dịch vụ.
 
-Có tám file API không đồng nghĩa bắt buộc có tám tiến trình hoặc tám loại cơ sở dữ liệu.
+Phương án CAB gồm ba dịch vụ nghiệp vụ: CAB Core, Rating và Notification. CAB Core được tổ chức thành các module nội bộ. Phương án này không được mô tả là tám microservice độc lập.
 
-### 2.2. Phương án triển khai ban đầu được đề xuất
+### 2.2. Thành phần và quyền sở hữu
 
-Triển khai một backend có tám module:
+| Thành phần | Trách nhiệm | Dữ liệu |
+|---|---|---|
+| API Gateway | Định tuyến, xác thực đầu vào, giới hạn request, correlationId, health tổng hợp | Redis phục vụ rate limit; không sở hữu dữ liệu nghiệp vụ |
+| CAB Core API | Identity, Booking, Dispatch, Trip, Fare & Payment, Operations & Fleet | cab_core |
+| CAB Core Worker | Điều phối, xử lý thời hạn, tính cước, công việc thanh toán, phát outbox | cab_core |
+| Rating Service | Tạo và truy vấn đánh giá | cab_rating |
+| Notification Service | Nhận sự kiện, tạo hộp thư, đánh dấu đọc | cab_notification |
+| RabbitMQ | Truyền sự kiện giữa các dịch vụ | Queue/message được cấu hình lưu bền vững |
+| PostgreSQL | Lưu ba database với tài khoản truy cập riêng | cab_core, cab_rating, cab_notification |
+| Redis | Bộ đếm rate limit dùng chung giữa các Gateway; cache có thể tái tạo | Không lưu duy nhất dữ liệu nghiệp vụ quan trọng |
 
-1. Identity.
-2. Booking.
-3. Dispatch.
-4. Trip.
-5. Fare & Payment.
-6. Rating.
-7. Notification.
-8. Operations & Fleet.
+CAB Core API và CAB Core Worker là hai tiến trình của cùng một dịch vụ nghiệp vụ. Chúng cùng dùng database cab_core.
 
-Sử dụng:
+Rating và Notification không truy cập trực tiếp cab_core. CAB Core không ghi vào database của hai dịch vụ này.
 
-| Thành phần | Vai trò |
-|---|---|
-| CAB API | Tiếp nhận HTTP, xác thực, phân quyền và gọi các ca sử dụng nghiệp vụ |
-| CAB Worker | Xử lý công việc nền: điều phối, hết hạn đề nghị, tính cước, thanh toán và thông báo |
-| PostgreSQL | Lưu dữ liệu nghiệp vụ, công việc nền, idempotency, outbox và audit |
-| Redis — tùy chọn | Tăng tốc tra cứu vị trí và dữ liệu đọc có thể tái tạo |
-| Nhà cung cấp bản đồ/ETA | Cung cấp dữ liệu bản đồ hoặc ETA khi đã chọn và tích hợp |
-| Nhà cung cấp thanh toán sandbox | Xử lý phương thức điện tử được cấu hình |
+Ba database có thể đặt trên cùng PostgreSQL server khi chạy local. Cách này giảm tài nguyên nhưng vẫn có chung rủi ro khi server PostgreSQL ngừng hoạt động; chưa phải hạ tầng chịu lỗi độc lập.
 
-API và Worker có thể chạy thành hai tiến trình từ cùng mã nguồn. Chúng chưa phải tám microservice triển khai độc lập.
+### 2.3. Luồng truy cập
 
-Giai đoạn này không bắt buộc dùng MongoDB hoặc một message broker riêng.
+Client → API Gateway → dịch vụ nghiệp vụ.
 
-```mermaid
-flowchart TB
-    C[Ứng dụng khách hàng]
-    D[Ứng dụng tài xế]
-    O[Giao diện điều hành]
-    API[CAB API]
-    MOD[8 module nghiệp vụ]
-    DB[(PostgreSQL)]
-    W[CAB Worker]
-    R[(Redis tùy chọn)]
-    PAY[Nhà cung cấp thanh toán]
-    MAP[Nguồn bản đồ và ETA]
+Các callback/webhook từ nhà cung cấp bên ngoài cũng đi qua Gateway, sau đó chuyển đến CAB Core.
 
-    C --> API
-    D --> API
-    O --> API
-    API --> MOD
-    MOD --> DB
-    W --> MOD
-    W --> DB
-    MOD --> R
-    W --> PAY
-    PAY --> API
-    MOD --> MAP
-```
+Chỉ Gateway công bố cổng HTTP của ứng dụng ra máy host. Các dịch vụ nghiệp vụ, PostgreSQL, Redis và RabbitMQ hoạt động trong mạng nội bộ Docker, không công bố cổng trong cấu hình chạy bài mặc định.
 
-### 2.3. Ranh giới module trong phương án ban đầu
+Các endpoint đăng ký, đăng nhập, OTP và webhook được miễn user token theo từng hợp đồng, nhưng vẫn đi qua Gateway và có cơ chế kiểm tra phù hợp.
 
-Mỗi module có lớp xử lý nghiệp vụ và lớp truy cập dữ liệu riêng.
+Gateway không công khai route /internal/*.
 
-Module khác không được tự viết SQL cập nhật bảng do module đó sở hữu.
+Giao tiếp giữa các dịch vụ đi trực tiếp qua mạng nội bộ, có xác thực danh tính dịch vụ. Quy tắc “mọi request qua Gateway” được áp dụng cho request từ client và bên ngoài hệ thống; không bắt các message RabbitMQ đi qua HTTP Gateway.
 
-Các ca sử dụng liên quan nhiều module gọi các giao diện nghiệp vụ của module liên quan. Khi cần cập nhật nguyên tử, các lời gọi dùng chung transaction và kết nối cơ sở dữ liệu.
+### 2.4. Trách nhiệm Gateway
 
-Ví dụ, ca sử dụng nhận chuyến phối hợp:
+Gateway thực hiện:
 
-- Booking để kiểm tra yêu cầu còn có thể phân công.
-- Dispatch để xử lý đề nghị.
-- Trip để tạo chuyến.
-- Fleet để chuyển tài xế sang BUSY.
+- Định tuyến đến đúng dịch vụ.
+- Kiểm tra token trên endpoint cần đăng nhập.
+- Kiểm tra trạng thái Account/Session qua CAB Core.
+- Áp dụng rate limit theo IP, tài khoản và loại endpoint.
+- Giới hạn kích thước request, thời gian chờ và số kết nối.
+- Tạo hoặc chuẩn hóa correlationId.
+- Loại bỏ các header giả mạo danh tính do client tự gửi.
+- Giữ nguyên raw payload cần thiết cho kiểm tra chữ ký webhook.
+- Không tự động retry các request ghi khi chưa có cơ chế idempotency bảo vệ.
 
-Đây là lựa chọn có chủ ý cho giai đoạn đầu. Khi tách cơ sở dữ liệu, transaction dùng chung này không còn áp dụng.
+Dịch vụ đích vẫn phải kiểm tra quyền trên đối tượng. Việc request đã qua Gateway không thay thế phân quyền nghiệp vụ.
 
-### 2.4. Giới hạn của phương án ban đầu
+Gateway không trực tiếp tính cước, phân công tài xế hoặc cập nhật trạng thái thanh toán.
 
-Có thể mở rộng số tiến trình API và Worker, nhưng chưa thể triển khai từng module hoàn toàn độc lập.
+### 2.5. Giao tiếp đồng bộ
 
-Do đó, phương án này chưa chứng minh đáp ứng mục tiêu mở rộng độc lập từng microservice. Nếu yêu cầu đó bắt buộc ngay trong bài nộp, phải duyệt phương án phân tán trước khi xây dựng.
+Rating Service gọi CAB Core qua HTTP nội bộ để lấy ngữ cảnh đánh giá:
+
+- Trip có tồn tại không.
+- Customer sở hữu Trip là ai.
+- Driver lịch sử của Trip là ai.
+- Trip đã COMPLETED chưa.
+
+CAB Core xác thực danh tính dịch vụ và chỉ trả các trường cần thiết.
+
+Rating Service kiểm tra Customer đang gọi có đúng là chủ chuyến, sau đó ghi Rating và kết quả idempotency trong transaction của cab_rating.
+
+Trip COMPLETED là trạng thái kết thúc, không được chuyển ngược. Điều này giúp điều kiện đánh giá đã xác nhận không bị thay đổi bởi một thao tác khôi phục Trip sau đó.
+
+Nếu không xác minh được điều kiện do CAB Core lỗi hoặc timeout, không tạo Rating; trả lỗi tạm thời phù hợp. Không suy đoán từ dữ liệu do client gửi.
+
+Đề xuất timeout mỗi lời gọi nội bộ là 2 giây, có cấu hình. Chỉ retry có giới hạn đối với thao tác đọc hoặc thao tác đã được bảo vệ chống lặp.
+
+### 2.6. Giao tiếp bất đồng bộ
+
+CAB Core ghi OutboxEvent trong cùng transaction với thay đổi nghiệp vụ.
+
+CAB Core Worker phát sự kiện sang RabbitMQ. Notification Service nhận sự kiện và tạo thông báo trong database của mình.
+
+Các sự kiện tiêu biểu:
+
+- BOOKING_RECEIVED.
+- DRIVER_ASSIGNED.
+- TRIP_REQUEST_RECEIVED.
+- TRIP_CANCELLED.
+- TRIP_COMPLETED.
+- PAYMENT_SUCCESS.
+- PAYMENT_FAILED.
+- PAYMENT_UNKNOWN.
+- DRIVER_APPLICATION_APPROVED.
+- DRIVER_APPLICATION_REJECTED.
+
+Notification bị lỗi không làm rollback Booking, Trip, Payment hoặc kết quả duyệt hồ sơ đã commit.
+
+Sự kiện có thể được giao nhiều lần. Consumer phải chống xử lý trùng; không tuyên bố giao đúng một lần chỉ vì đã dùng RabbitMQ.
+
+### 2.7. Phạm vi transaction
+
+Các nghiệp vụ nhận chuyến, hủy chuyến, chuyển trạng thái Driver, xử lý sự cố và khóa Account được giữ trong CAB Core để có thể dùng transaction trong cab_core.
+
+Không có transaction PostgreSQL dùng chung giữa cab_core, cab_rating và cab_notification.
+
+Mỗi dịch vụ có outbox, inbox, idempotency và audit tương ứng với trách nhiệm của mình.
+
+Không giữ transaction database trong khi chờ HTTP nội bộ, OTP provider, bản đồ hoặc payment provider.
+
+### 2.8. Tổ chức source code dự kiến
+
+Repository tổ chức theo monorepo:
+
+- services/api-gateway
+- services/cab-core
+- services/rating-service
+- services/notification-service
+- packages/contracts
+- infra/postgres
+- infra/rabbitmq
+- postman
+- tests
+- docs
+- compose.yaml
+- .env.example
+- .gitignore
+
+Trong services/cab-core, chia các module:
+
+- identity
+- booking
+- dispatch
+- trip
+- billing
+- operations-fleet
+
+Mỗi dịch vụ có cấu hình build, Dockerfile, cấu hình chạy và kiểm thử riêng. CAB Core có entrypoint API và Worker riêng.
+
+packages/contracts chỉ chứa hợp đồng dùng chung, schema sự kiện hoặc kiểu dữ liệu trao đổi. Không dùng thư mục này để cho các dịch vụ chia sẻ repository truy cập database.
+
+Đây là cấu trúc dự kiến; không khẳng định các thư mục đã được tạo.
+
+### 2.9. Docker Compose
+
+Cấu hình chạy bài có tám container thường trực:
+
+1. api-gateway
+2. cab-core-api
+3. cab-core-worker
+4. rating-service
+5. notification-service
+6. postgres
+7. redis
+8. rabbitmq
+
+Migration và seed là tác vụ chạy một lần, không được tính thành dịch vụ nghiệp vụ thường trực.
+
+Mỗi thành phần có healthcheck phù hợp. Ứng dụng có retry kết nối khi khởi động và khi phụ thuộc khởi động lại; thứ tự start container không thay thế readiness.
+
+Database và RabbitMQ dùng volume lưu bền vững. Redis được cấu hình theo yêu cầu rate limit; mất dữ liệu Redis không được làm mất Booking, Trip hoặc Payment.
+
+Cấu hình xem RabbitMQ Management chỉ bật trong profile debug và giới hạn trên localhost, có tài khoản riêng. Không mở mặc định các cổng quản trị ra mạng ngoài.
+
+### 2.10. Giới hạn và đánh đổi
+
+CAB Core còn chứa nhiều module, vì luồng nhận/hủy chuyến cần giữ tính nhất quán mạnh.
+
+Rating và Notification có thể build, chạy và cập nhật riêng, nhưng vẫn phụ thuộc các hợp đồng với CAB Core.
+
+Thiết kế này thể hiện giao tiếp giữa các dịch vụ thực sự, đồng thời tránh đưa transaction phân tán vào luồng phân công tài xế ở phiên bản đầu.
+
+Nếu sau này bắt buộc tách Booking, Dispatch, Trip và Fleet thành các dịch vụ riêng, phải thiết kế thêm cơ chế giữ chỗ, điều phối, phục hồi và xử lý trạng thái trung gian trước khi thay đổi hợp đồng API.
 
 ## 3. Ngôn ngữ và quy tắc chung
 
@@ -160,10 +262,11 @@ Do đó, phương án này chưa chứng minh đáp ứng mục tiêu mở rộn
 | Role | CUSTOMER, DRIVER hoặc OPERATOR |
 
 MVP áp dụng một vai trò cho mỗi Account.
-
-Đăng ký công khai chỉ tạo CUSTOMER.
-
-Account DRIVER được tạo qua nghiệp vụ của OPERATOR. Account OPERATOR được cấp qua quy trình quản trị riêng.
+Đăng ký khách hàng tạo Account có role CUSTOMER.
+Đăng ký tài xế là luồng riêng: xác thực OTP, gửi hồ sơ và tạo Account DRIVER cùng Driver có approvalStatus=PENDING_APPROVAL, driverStatus=OFFLINE.
+Account DRIVER chưa được duyệt có thể đăng nhập để xem hồ sơ và kết quả xét duyệt, nhưng không được bật AVAILABLE hoặc nhận chuyến.
+OPERATOR vẫn có thể tạo tài xế qua nghiệp vụ quản trị; đây không phải luồng thay thế cho đăng ký tài xế qua OTP. Account OPERATOR được cấp qua quy trình quản trị riêng.
+Account OPERATOR được cấp qua quy trình quản trị riêng.
 
 ### 3.2. Trạng thái độc lập
 
@@ -210,6 +313,19 @@ Read model hoặc Redis chỉ hỗ trợ tìm ứng viên. Trước khi chấp n
 
 Booking giữ DRIVER_ASSIGNED sau khi Trip hoàn tất hoặc bị hủy. Không dùng riêng trạng thái Booking để kết luận khách còn đang đi xe.
 
+3.5. Đối chiếu thuật ngữ với rubric
+Thuật ngữ trong rubric	Thuật ngữ trong CAB
+Admin	OPERATOR
+Ride/Trip	Trip
+Review	Rating
+Ride CANCELED	Trip CANCELLED
+Payment COMPLETED	Payment SUCCESS
+Driver Online	Driver AVAILABLE hoặc BUSY; chỉ AVAILABLE được nhận chuyến mới
+Driver Offline	Driver OFFLINE
+
+
+API và database dùng thống nhất thuật ngữ CAB. Tài liệu demo ghi rõ bảng tương ứng; không tạo hai trạng thái khác tên nhưng cùng ý nghĩa trong một đối tượng.
+Trip COMPLETED không tự đồng nghĩa với Payment SUCCESS.
 ## 4. Ranh giới và quyền sở hữu dữ liệu
 
 | Module | Trách nhiệm chính | Dữ liệu sở hữu |
@@ -222,6 +338,22 @@ Booking giữ DRIVER_ASSIGNED sau khi Trip hoàn tất hoặc bị hủy. Không
 | Rating | Đánh giá của khách cho chuyến | Rating |
 | Notification | Hộp thư, công bố và trạng thái đọc | Notification, công việc giao thông báo |
 | Operations & Fleet | Hồ sơ tài xế, xe, phân công xe, góc nhìn vận hành | Driver, Vehicle, VehicleAssignment, các read model vận hành |
+### Nơi triển khai và database của từng module
+
+| Module | Dịch vụ triển khai | Database |
+|---|---|---|
+| Identity | CAB Core | cab_core |
+| Booking | CAB Core | cab_core |
+| Dispatch | CAB Core | cab_core |
+| Trip | CAB Core | cab_core |
+| Fare & Payment | CAB Core | cab_core |
+| Operations & Fleet | CAB Core | cab_core |
+| Rating | Rating Service | cab_rating |
+| Notification | Notification Service | cab_notification |
+
+IdempotencyRecord, OutboxEvent, InboxReceipt, BackgroundJob và AuditLog thuộc dịch vụ sử dụng chúng. Không tạo một bảng hạ tầng chung cho phép mọi dịch vụ ghi trực tiếp.
+
+Liên kết khác database dùng ID và hợp đồng giao tiếp; không có khóa ngoại xuyên database.
 
 Các cấu trúc kỹ thuật gồm:
 
@@ -259,24 +391,60 @@ Thay xe phải đi qua một nghiệp vụ thống nhất, cập nhật phân c�
 
 | Entity | Thuộc tính chính |
 |---|---|
-| Account | accountId, fullName, normalizedEmail, normalizedPhone, passwordHash, role, accountStatus, version, createdAt, updatedAt |
+| Account | accountId, fullName, emailEncrypted, phoneEncrypted, emailLookupHash, phoneLookupHash, passwordHash, role, accountStatus, version, createdAt, updatedAt |
 | Customer | customerId, accountId |
 | Operator | operatorId, accountId |
 | Session | sessionId, accountId, refreshTokenHash, expiresAt, revokedAt, createdAt, rotatedAt |
+| OtpChallenge | challengeId, phoneEncrypted, phoneLookupHash, purpose, codeDigest, expiresAt, failedAttempts, verifiedAt, invalidatedAt |
+| PhoneVerification | verificationId, challengeId, phoneLookupHash, tokenDigest, expiresAt, consumedAt |
 
-Ràng buộc:
+#### Chuẩn hóa và bảo vệ dữ liệu tài khoản
 
-- Email và phone duy nhất trên toàn bộ Account.
-- Phone dùng E.164.
+- Chuẩn hóa email bằng trim và lowercase trước khi tạo giá trị tra cứu.
+- Chuẩn hóa phone về E.164 trước khi tạo giá trị tra cứu.
+- emailEncrypted và phoneEncrypted lưu dữ liệu đã mã hóa.
+- emailLookupHash và phoneLookupHash là HMAC của giá trị chuẩn hóa, dùng khóa tra cứu riêng.
+- Không dùng hash không khóa cho dữ liệu dễ dò như số điện thoại.
+- Đặt ràng buộc duy nhất trên emailLookupHash và phoneLookupHash.
+- Không lưu thêm normalizedEmail hoặc normalizedPhone dạng rõ trong database.
+- Giá trị email/phone rõ chỉ được giải mã ở thao tác có quyền.
 - Password không được tự trim.
+- Password được lưu dưới dạng passwordHash, không lưu plaintext.
 - Customer.accountId và Operator.accountId duy nhất.
-- Mỗi hồ sơ phù hợp với role của Account.
+- Mỗi hồ sơ phải phù hợp với role của Account.
+
+#### Phiên đăng nhập
+
 - Không lưu refresh token dạng rõ.
 - Refresh luân chuyển token nhưng không kéo dài thời hạn tuyệt đối của Session.
 - Logout thu hồi phiên hiện tại.
 - Đổi mật khẩu hoặc khóa Account thu hồi toàn bộ phiên liên quan.
+- Việc access token chưa hết hạn không thay thế kiểm tra Account và Session.
 
-Driver.accountId do Fleet quản lý, nhưng việc tạo Account và Driver phải hoàn tất nhất quán.
+#### OTP đăng ký tài xế
+
+Các thông số dưới đây là cấu hình thiết kế đề xuất của CAB, không phải con số do rubric quy định:
+
+- OTP được tạo ngẫu nhiên an toàn, có sáu chữ số, hiệu lực năm phút.
+- Mỗi challenge cho tối đa năm lần nhập sai.
+- Gửi lại sau tối thiểu 60 giây.
+- OTP cũ bị vô hiệu hóa khi phát hành OTP thay thế.
+- codeDigest dùng cơ chế có khóa bí mật để giảm nguy cơ dò ngoại tuyến khi database bị lộ.
+- Không ghi OTP vào log hoặc trả OTP trong API công khai.
+
+Sau khi xác minh OTP thành công:
+
+- Cấp một verification token ngắn hạn.
+- Token gắn với phone và purpose đăng ký tài xế.
+- Token chỉ được sử dụng một lần.
+- Database chỉ lưu digest của verification token.
+- Tạo tài khoản tài xế phải tiêu thụ verification token trong cùng transaction tạo hồ sơ.
+
+OTP provider được gọi ngoài transaction database.
+
+Bộ giả lập OTP chỉ bật trong môi trường test; không dùng OTP cố định trong cấu hình triển khai.
+
+Driver.accountId do Fleet quản lý. Việc tạo Account DRIVER và Driver profile phải hoàn tất nhất quán trong CAB Core.
 
 ### 5.2. Booking
 
@@ -408,27 +576,79 @@ Ràng buộc:
 - Hộp thư người dùng chỉ trả SENT thuộc tài khoản đăng nhập.
 - Công bố lại hoặc gửi lại sự kiện không đặt isRead về false.
 - Sắp xếp theo publishedAt, sau đó notificationId giảm dần.
+Kết quả duyệt hồ sơ tạo thông báo IN_APP cho Account DRIVER tương ứng qua:
 
+- DRIVER_APPLICATION_APPROVED.
+- DRIVER_APPLICATION_REJECTED.
+
+Các sự kiện này dùng referenceType=DRIVER_APPLICATION.
+
+Các eventType và referenceType trên phải được bổ sung vào API Notification.
+
+Thông báo được tạo từ kết quả nghiệp vụ đã commit, không lấy quyết định xét duyệt do client tự cung cấp.
 ### 5.8. Operations & Fleet
 
 | Entity | Thuộc tính chính |
 |---|---|
-| Driver | driverId, accountId, licenseNumber, approvalStatus, rejectionReason, driverStatus, version, createdAt, updatedAt |
+| Driver | driverId, accountId, licenseNumberEncrypted, licenseLookupHash, approvalStatus, rejectionReason, driverStatus, version, createdAt, updatedAt |
 | Vehicle | vehicleId, plateNumber, normalizedPlateKey, vehicleType, vehicleStatus, version, createdAt, updatedAt |
 | VehicleAssignment | assignmentId, driverId, vehicleId, startedAt, endedAt, assignedByAccountId |
+| DriverApplication | applicationId, driverId, submittedVehicleDetails, status, version, submittedAt, reviewedAt, reviewedByAccountId, rejectionReason |
 | Operational read models | Các góc nhìn danh sách tài khoản, chuyến, thanh toán và báo cáo |
 
-Ràng buộc:
+#### Ràng buộc dữ liệu
 
 - Driver.accountId duy nhất.
-- licenseNumber duy nhất sau chuẩn hóa.
+- Giấy phép được chuẩn hóa trước khi tạo licenseLookupHash.
+- licenseNumberEncrypted lưu giá trị giấy phép đã mã hóa.
+- licenseLookupHash dùng HMAC với khóa tra cứu riêng và có ràng buộc duy nhất.
+- API chỉ trả giá trị giấy phép rõ khi người gọi có quyền.
 - normalizedPlateKey duy nhất.
 - Thay phân công xe chỉ khi tài xế OFFLINE và không có chuyến hoạt động.
 - Xe đang phục vụ chuyến không được đổi thông tin hoặc phân công.
 - Duyệt hồ sơ không tự bật AVAILABLE.
 - Chuyển Account về ACTIVE không khôi phục Session cũ hoặc tự bật AVAILABLE.
 
-Trong bản đầu dùng chung PostgreSQL, các danh sách có thể đọc qua giao diện truy vấn của module sở hữu. Không bắt buộc sao chép dữ liệu sang projection nếu chưa có nhu cầu thực tế.
+#### Hồ sơ đăng ký tài xế
+
+DriverApplication.status gồm:
+
+- SUBMITTED.
+- APPROVED.
+- REJECTED.
+
+Luồng đăng ký:
+
+1. Xác minh số điện thoại bằng OTP.
+2. Gửi thông tin cá nhân, giấy phép và phương tiện.
+3. Tạo Account DRIVER, Driver PENDING_APPROVAL/OFFLINE và DriverApplication SUBMITTED trong cùng transaction.
+4. Tài xế đăng nhập được nhưng chưa đủ quyền bật nhận chuyến.
+5. OPERATOR duyệt hoặc từ chối hồ sơ.
+6. Hệ thống ghi kết quả và phát sự kiện thông báo.
+
+Thông tin xe khai báo chưa được coi là Vehicle ACTIVE hoặc VehicleAssignment hợp lệ.
+
+Khi duyệt:
+
+- Kiểm tra giấy phép, biển số và các ràng buộc phân công.
+- Tạo hoặc liên kết Vehicle hợp lệ.
+- Tạo VehicleAssignment trong cùng transaction duyệt.
+- Không chuyển xe đang thuộc tài xế khác hoặc đang có chuyến bằng thao tác duyệt hồ sơ.
+- Giữ Driver OFFLINE sau khi duyệt thành công.
+
+Khi từ chối:
+
+- Bắt buộc có lý do.
+- Driver giữ OFFLINE.
+- Ghi người xét duyệt và thời điểm xét duyệt.
+
+Cập nhật DriverApplication và Driver.approvalStatus phải nhất quán. Không duy trì hai API xét duyệt với quy tắc khác nhau.
+
+#### Truy vấn vận hành
+
+Các danh sách vận hành của CAB Core đọc qua giao diện truy vấn của module sở hữu trong cab_core.
+
+Dữ liệu Rating và Notification được lấy qua dịch vụ tương ứng, không JOIN trực tiếp vào database của dịch vụ khác.
 
 ## 6. Ánh xạ API vào module
 
@@ -464,8 +684,139 @@ Các endpoint vận hành được phân công tiếp như sau:
 Tiền tố `/operations` thể hiện nhóm người được sử dụng, không có nghĩa mọi dữ liệu nằm trong Operations.
 
 Hợp đồng request/response chi tiết nằm trong các file YAML. Tài liệu kiến trúc không tự thêm endpoint công khai chưa được duyệt.
+### 6.1. API bổ sung theo rubric
+
+Ngoại trừ ba endpoint health ở gốc Gateway, các endpoint nghiệp vụ dưới đây nằm dưới /v1.
+
+| Endpoint đề xuất | Mục đích | Nơi xử lý |
+|---|---|---|
+| GET /customers/{customerId} | Tra cứu khách hàng theo mã | Identity trong CAB Core |
+| GET /drivers/{driverId} | Tra cứu tài xế theo mã | Fleet trong CAB Core |
+| GET /drivers/nearby | Danh sách tài xế gần tọa độ | Dispatch phối hợp Fleet/Trip |
+| GET /bookings | Danh sách booking của khách đăng nhập | Booking |
+| POST /auth/driver-registration/otp | Yêu cầu OTP đăng ký tài xế | Identity |
+| POST /auth/driver-registration/otp/verify | Xác minh OTP | Identity |
+| POST /driver-applications | Gửi hồ sơ đăng ký bằng verification token | Identity phối hợp Fleet |
+| GET /driver-applications/me | Xem hồ sơ của tài xế đăng nhập | Fleet |
+| GET /operations/driver-applications | Danh sách hồ sơ cần xử lý | Fleet |
+| GET /operations/driver-applications/{applicationId} | Xem chi tiết hồ sơ | Fleet |
+| POST /operations/driver-applications/{applicationId}/review | Duyệt hoặc từ chối | Fleet phối hợp Identity |
+| GET /health | Kiểm tra Gateway còn hoạt động | Gateway |
+| GET /ready | Kiểm tra khả năng phục vụ của hệ thống | Gateway |
+| GET /health/services | Xem tình trạng từng thành phần | Gateway |
+
+Các endpoint mới phải được bổ sung vào YAML trước khi triển khai. Bảng này chưa thay thế hợp đồng request/response chi tiết.
+
+API đăng ký tài xế là luồng có kiểm soát bằng verification token, không yêu cầu người đăng ký đã có user access token.
+
+Role được máy chủ quyết định là DRIVER; client không được tự chọn OPERATOR.
+
+POST /driver-applications cần idempotency gắn với danh tính xác minh:
+
+- Phát lại hợp lệ trả kết quả đã lưu trước khi kiểm tra token đã consumed.
+- Token đã dùng không cho phép tạo hồ sơ khác.
+- Cùng key nhưng nội dung khác trả 409.
+
+API review yêu cầu:
+
+- Role OPERATOR.
+- Idempotency-Key.
+- expectedApplicationVersion.
+- Quyết định APPROVE hoặc REJECT.
+- REJECT bắt buộc có lý do.
+
+Nếu API chỉnh sửa Driver hiện tại cho phép thay approvalStatus, phải chuyển thao tác xét duyệt sang cùng ca sử dụng review hoặc bỏ trường này khỏi API chỉnh sửa thông thường.
+
+Không để hai đường cập nhật bỏ qua nhau.
+
+### 6.2. Quyền xem hồ sơ theo mã
+
+GET /customers/{customerId}:
+
+- CUSTOMER chỉ xem hồ sơ của mình.
+- OPERATOR được xem theo quyền vận hành.
+- Không cho CUSTOMER liệt kê hoặc đọc hồ sơ người khác bằng cách đổi ID.
+
+GET /drivers/{driverId}:
+
+- DRIVER xem hồ sơ của mình.
+- OPERATOR xem theo quyền vận hành.
+- CUSTOMER chỉ xem thông tin tài xế tối thiểu khi có quan hệ chuyến phù hợp.
+- Không trả giấy phép, email, số điện thoại hoặc hồ sơ xét duyệt trong dữ liệu công khai.
+
+Sai role đối với chức năng trả 403.
+
+Với đối tượng không thuộc phạm vi người gọi, có thể dùng 404 theo quy ước bảo vệ dữ liệu đã thống nhất.
+
+### 6.3. Danh sách tài xế gần vị trí
+
+GET /drivers/nearby nhận:
+
+- latitude.
+- longitude.
+- radiusKm.
+- limit.
+- cursor.
+
+Đề xuất radiusKm mặc định là 1; kịch bản chấm dùng đúng 1 km.
+
+Chỉ trả tài xế:
+
+- Account ACTIVE.
+- APPROVED.
+- AVAILABLE.
+- Có xe ACTIVE phù hợp.
+- GPS còn mới.
+- Không có Trip đang hoạt động.
+
+Sắp xếp theo distanceMeters tăng dần, sau đó driverId.
+
+Không công khai tọa độ chính xác, số điện thoại hoặc giấy phép; có thể trả khoảng cách gần đúng và thông tin xe tối thiểu.
+
+Phân trang dùng một kết quả tìm kiếm có thời hạn hoặc cursor gắn với snapshot, tránh thay đổi vị trí làm lặp hoặc bỏ sót hàng giữa các trang.
+
+Cursor hết hạn phải yêu cầu tìm lại.
+
+Bán kính endpoint tra cứu và bán kính điều phối là hai cấu hình khác nhau.
+
+Có thể giữ phạm vi điều phối 5 km đã đề xuất, nhưng demo theo rubric phải thể hiện được truy vấn 1 km và không trả tài xế ngoài phạm vi đó.
+
+Kết quả nearby không giữ chỗ tài xế. Khi accept vẫn phải kiểm tra lại điều kiện từ dữ liệu có thẩm quyền.
+
+### 6.4. Danh sách booking
+
+GET /bookings trả booking của Customer đang đăng nhập, không nhận customerId tùy ý từ client.
+
+Hỗ trợ:
+
+- bookingStatus.
+- limit.
+- cursor.
+
+Sắp xếp createdAt giảm dần rồi bookingId giảm dần.
+
+Đề xuất limit mặc định 20, tối đa 100.
+
+Trả nextCursor khi còn dữ liệu.
+
+Danh sách chứa cả booking đã kết thúc hoặc đã phân công. Không giới hạn vào booking đang hoạt động.
+
+### 6.5. Quy tắc Gateway
+
+Định tuyến Rating và Notification đến dịch vụ riêng. Các route còn lại đi CAB Core.
+
+Các route cụ thể như /drivers/me, /drivers/nearby và /trips/{tripId}/rating phải được phân biệt với route theo ID hoặc route Trip tổng quát.
+
+Các API nội bộ hiện có như dispatch, reconcile và tạo notification chỉ được gọi trong mạng nội bộ bằng danh tính dịch vụ; không mở cho client chỉ vì có cùng tiền tố /v1.
+
+Lời gọi HTTP và message đều truyền correlationId.
 
 ## 7. Transaction và các bất biến quan trọng
+Các transaction phối hợp Identity, Booking, Dispatch, Trip, Billing và Fleet trong mục này chạy trên cab_core.
+
+Rating và Notification dùng transaction riêng trong database của mình.
+
+Không gọi HTTP hoặc gửi message và coi đó là một phần của transaction database.
 
 Transaction không thay thế việc thiết kế khóa và ràng buộc duy nhất.
 
@@ -571,9 +922,44 @@ Thao tác khóa:
 
 Thao tác khóa Account và nhận chuyến phải kiểm tra lại cùng trạng thái Account trong transaction. Không chỉ dựa vào bản sao trong cache.
 
-### 7.6. Tạo Account DRIVER và phân công xe
+### 7.6. Đăng ký, duyệt tài xế và phân công xe
 
-Tạo Account DRIVER và Driver profile phải cùng thành công hoặc cùng thất bại.
+#### Đăng ký tài xế
+
+Thực hiện trong một transaction:
+
+1. Kiểm tra kết quả idempotency.
+2. Khóa PhoneVerification hợp lệ.
+3. Kiểm tra phone và purpose.
+4. Kiểm tra email, phone và giấy phép không trùng.
+5. Tạo Account DRIVER.
+6. Tạo Driver PENDING_APPROVAL/OFFLINE.
+7. Tạo DriverApplication SUBMITTED.
+8. Đánh dấu PhoneVerification đã consumed.
+9. Lưu kết quả idempotency.
+10. Commit trước khi trả thành công.
+
+Account DRIVER, Driver và DriverApplication phải cùng thành công hoặc cùng thất bại.
+
+#### Xét duyệt hồ sơ
+
+Thực hiện trong một transaction:
+
+1. Kiểm tra quyền OPERATOR và idempotency.
+2. Khóa DriverApplication, Driver và dữ liệu xe liên quan.
+3. Kiểm tra expectedApplicationVersion.
+4. Cập nhật quyết định xét duyệt.
+5. Tạo hoặc liên kết Vehicle/VehicleAssignment hợp lệ khi APPROVE.
+6. Cập nhật Driver.approvalStatus và version.
+7. Giữ Driver OFFLINE.
+8. Ghi audit và outbox thông báo.
+9. Commit trước khi trả thành công.
+
+Các yêu cầu duyệt lặp không tạo thêm xe, phân công hoặc thông báo.
+
+REJECT bắt buộc có lý do.
+
+#### Phân công xe
 
 Phân công xe phải cập nhật VehicleAssignment, Driver.version và Vehicle.version trong cùng transaction.
 
@@ -606,25 +992,39 @@ Quy tắc:
 - Bản ghi chống trùng phải có khả năng phục hồi sau khi tiến trình khởi động lại.
 
 Một số endpoint có khóa nghiệp vụ tự nhiên, như accept theo tripRequestId hoặc đánh dấu đọc theo notificationId; áp dụng đúng quy tắc của API tương ứng.
+#### Idempotency đối với thanh toán
 
+Với request thanh toán, client gửi lại phải dùng cùng Idempotency-Key.
+
+Một payload giống nhau nhưng dùng key mới không đủ để xác định request lặp; các ràng buộc Payment/Attempt vẫn phải ngăn thu trùng.
+
+- Cùng key và nội dung: trả HTTP status/body đã lưu.
+- Cùng key nhưng nội dung khác: trả 409.
+- Phải xác thực quyền trước khi trả dữ liệu từ bản ghi idempotency.
 ### 8.2. Transactional outbox
 
 Khi nghiệp vụ thành công, hệ thống ghi OutboxEvent trong cùng transaction với dữ liệu nghiệp vụ.
 
-Worker đọc outbox và xử lý sau commit.
+CAB Core Worker đọc outbox sau commit, phát message tới RabbitMQ và sử dụng publisher confirms.
+
+Chỉ đánh dấu đã phát sau khi broker xác nhận và message không bị trả lại do không có route phù hợp.
+
+Lỗi hoặc mất xác nhận được retry bằng cùng eventId.
 
 Một sự kiện gồm:
 
 - eventId ổn định.
 - eventType.
+- schemaVersion.
+- producer.
 - aggregateType và aggregateId.
 - aggregateVersion hoặc revision của nguồn.
 - occurredAt.
 - correlationId.
+- recipientAccountIds nếu sự kiện có người nhận xác định từ nghiệp vụ.
 - Payload tối thiểu cần thiết.
 
-Nếu Worker lỗi sau khi gửi nhưng trước khi đánh dấu hoàn tất, sự kiện có thể được gửi lại. Thiết kế phải chấp nhận điều đó.
-
+Nếu Worker lỗi sau khi gửi nhưng trước khi đánh dấu hoàn tất, sự kiện có thể được gửi lại. Thiết kế phải chấp nhận và xử lý được điều đó.
 ### 8.3. Inbox và chống xử lý trùng
 
 Consumer lưu InboxReceipt theo consumerName và eventId.
@@ -664,7 +1064,48 @@ Công bố thông báo phải ghi nội dung, publishedAt và SENT nhất quán.
 Lỗi cập nhật realtime không biến thông báo đã có trong hộp thư thành FAILED.
 
 Lỗi thông báo không đảo ngược Booking, Trip hoặc Payment.
+Kết quả duyệt hồ sơ tạo thông báo IN_APP cho Account DRIVER tương ứng qua:
 
+- DRIVER_APPLICATION_APPROVED.
+- DRIVER_APPLICATION_REJECTED.
+
+Các sự kiện này dùng referenceType=DRIVER_APPLICATION.
+
+Các eventType và referenceType trên phải được bổ sung vào API Notification.
+
+Thông báo được tạo từ kết quả nghiệp vụ đã commit, không lấy quyết định xét duyệt do client tự cung cấp.
+### 8.6. Cấu hình RabbitMQ và phục hồi
+
+Cấu hình đề xuất:
+
+- Dùng topic exchange bền vững cab.events.
+- Queue thông báo: cab.notification.events.
+- Message được cấu hình persistent.
+- Producer dùng publisher confirms và kiểm tra lỗi định tuyến.
+- Consumer dùng manual acknowledgement.
+- Consumer ghi InboxReceipt và Notification trong cùng transaction.
+- Chỉ ack sau khi transaction consumer commit.
+- Sự kiện trùng được nhận diện bởi consumerName + eventId.
+- Lỗi tạm thời được retry có khoảng chờ; đề xuất tối đa năm lần.
+- Lỗi vượt giới hạn hoặc payload không hợp lệ chuyển dead-letter queue để kiểm tra.
+- Không requeue tức thì vô hạn.
+- Replay từ dead-letter queue giữ eventId gốc để chống trùng.
+- Tài khoản RabbitMQ được giới hạn quyền publish/consume theo dịch vụ.
+
+Khi RabbitMQ dừng:
+
+- Nghiệp vụ đã commit vẫn được giữ trong database.
+- Sự kiện chưa phát nằm ở outbox.
+- Khi broker hoạt động lại, Worker phát tiếp.
+
+Bằng chứng demo cần có:
+
+1. Message được publish.
+2. Message được consumer xử lý.
+3. Một tình huống giao lặp nhưng không tạo dữ liệu trùng.
+4. Một tình huống phục hồi sau lỗi.
+
+Chỉ khởi động container RabbitMQ chưa đủ chứng minh IPC hoạt động.
 ## 9. GPS, tracking và dữ liệu tính cước
 
 ### 9.1. Tách ba loại dữ liệu
@@ -793,33 +1234,58 @@ Chỉ Driver được gán cho Trip được xác nhận đã thu tiền qua API
 Xác nhận hợp lệ cập nhật Payment, PaymentAttempt, paidAt, confirmedBy, version và sự kiện trong cùng transaction.
 
 OPERATOR không có API cưỡng chế đổi Payment thành SUCCESS.
+### 10.5. Kịch bản thanh toán online theo rubric
+
+Phải chọn ít nhất một nhà cung cấp thanh toán có môi trường sandbox và tài liệu tích hợp phù hợp.
+
+Luồng demo:
+
+1. Hoàn thành Trip.
+2. Có JourneyMetrics và Fare hợp lệ.
+3. Customer tạo yêu cầu thanh toán online.
+4. Hệ thống tạo Payment/Attempt và merchantReference ổn định.
+5. Customer thực hiện thanh toán trên sandbox của nhà cung cấp.
+6. Callback/webhook đi qua Gateway đến CAB Core.
+7. Hệ thống xác minh nguồn, chữ ký, số tiền, tiền tệ và mã tham chiếu.
+8. Payment chuyển SUCCESS; paidAt được ghi.
+9. API đọc kết quả thể hiện chuyến đã thanh toán thông qua Payment liên kết.
+10. Gửi lại callback và request cũ không tạo lần thu tiền mới.
+
+Trip vẫn giữ COMPLETED sau thanh toán; không thêm trạng thái Trip PAID.
+
+Không dùng việc client tự gửi paymentStatus=SUCCESS hoặc redirect trình duyệt để chứng minh đã thanh toán.
+
+Nếu mới dùng provider giả lập, phải ghi rõ đó là kiểm thử tích hợp giả lập; chưa coi là đã hoàn thành tích hợp sandbox bên ngoài.
 
 ## 11. Lựa chọn cơ sở dữ liệu và chỉ mục
 
-### 11.1. PostgreSQL là nơi lưu chính
+### 11.1. Ba database theo dịch vụ
 
-Đề xuất các schema logic:
+| Database | Dữ liệu |
+|---|---|
+| cab_core | Identity, Booking, Dispatch, Trip, Billing, Fleet và hạ tầng của CAB Core |
+| cab_rating | Rating, idempotency, audit và hạ tầng của Rating Service |
+| cab_notification | Notification, inbox, job và hạ tầng của Notification Service |
 
-- identity.
-- booking.
-- dispatch.
-- trip.
-- billing.
-- rating.
-- notification.
-- fleet.
-- infrastructure.
+Mỗi dịch vụ dùng database role riêng, không có quyền đọc/ghi database khác.
 
-Đây là cách tổ chức trong một database của bản đầu, không phải bằng chứng các module đã có cơ sở dữ liệu độc lập.
+Có thể chạy cả ba database trên một PostgreSQL server trong môi trường local.
 
-Các khóa ngoại trong database giúp kiểm tra liên kết khi phù hợp. Khi tách database, phải thay bằng giao tiếp và kiểm tra nghiệp vụ tương ứng; không giả định vẫn có khóa ngoại qua mạng.
+Không sử dụng cross-database query để thay thế IPC.
+
+Khóa ngoại chỉ áp dụng bên trong database tương ứng.
+
+Các ID trỏ sang dịch vụ khác phải được kiểm tra qua hợp đồng hoặc sự kiện có nguồn đáng tin cậy.
 
 ### 11.2. Ràng buộc quan trọng
 
 | Dữ liệu | Ràng buộc |
 |---|---|
-| Account | Unique normalizedEmail, normalizedPhone |
+| Account | Unique emailLookupHash, phoneLookupHash |
 | Customer/Operator/Driver | Unique accountId trong hồ sơ tương ứng |
+| Driver | Unique licenseLookupHash |
+| PhoneVerification | Chỉ được consumed một lần |
+| DriverApplication | Gắn với Driver; bản MVP chỉ có một hồ sơ đăng ký ban đầu cho mỗi Driver |
 | CustomerActivityGuard | Primary key customerId |
 | DispatchProcess | Unique bookingId |
 | TripRequest | Không có hai đề nghị PENDING của cùng tiến trình |
@@ -833,6 +1299,8 @@ Các khóa ngoại trong database giúp kiểm tra liên kết khi phù hợp. K
 | Notification | Unique eventId + recipientAccountId + channel |
 | InboxReceipt | Unique consumerName + eventId |
 | IdempotencyRecord | Unique danh tính + operation + key |
+
+Các ràng buộc được thực hiện trong database của dịch vụ sở hữu dữ liệu.
 
 Không thay thế các ràng buộc này bằng thao tác “SELECT thấy chưa có rồi INSERT” đơn thuần.
 
@@ -849,24 +1317,26 @@ Không thay thế các ràng buộc này bằng thao tác “SELECT thấy chưa
 
 Chỉ mục thực tế phải được kiểm tra bằng dữ liệu và truy vấn của hệ thống, không thêm mọi tổ hợp một cách mặc định.
 
-### 11.4. Redis — tùy chọn
+### 11.4. Redis
 
-Redis có thể chứa:
+Redis được dùng cho bộ đếm rate limit dùng chung giữa các tiến trình Gateway.
 
-- Chỉ mục vị trí tài xế.
-- Cache dữ liệu đọc.
-- Tín hiệu cập nhật realtime.
+Cache vị trí hoặc kết quả nearby là tùy chọn và phải tái tạo được từ dữ liệu có thẩm quyền.
 
-Mất Redis không được làm mất:
+Không dùng Redis làm nơi duy nhất lưu:
 
 - Booking.
-- Kết quả accept/reject.
+- TripRequest và kết quả accept/reject.
 - Trip và lịch sử.
 - Incident.
 - Fare/Payment.
-- Quyết định chống trùng quan trọng.
+- Kết quả idempotency quan trọng.
 
-Cache phải dựng lại được từ dữ liệu có thẩm quyền. Không dùng Redis làm nguồn duy nhất để quyết định một khoản tiền đã thu hoặc một tài xế đã nhận chuyến.
+Khi Redis không khả dụng, các endpoint cần giới hạn để ngăn lạm dụng như login, OTP và tạo Booking trả lỗi tạm thời 503 theo chính sách fail-closed.
+
+Không âm thầm bỏ toàn bộ giới hạn.
+
+Mất Redis không được làm mất dữ liệu nghiệp vụ đã commit trong PostgreSQL.
 
 ## 12. Bảo mật và vận hành
 
@@ -892,6 +1362,21 @@ Khi Worker gọi trực tiếp giao diện module trong cùng ứng dụng, ph�
 - Tách môi trường phát triển, kiểm thử và triển khai.
 - Dữ liệu seed là dữ liệu giả.
 - Không ghi token hoặc raw thông tin thanh toán nhạy cảm vào log.
+#### Quy tắc quản lý cấu hình trong repository
+
+Repository cần có:
+
+- .gitignore loại trừ .env, .env.*, secrets, private keys và file dữ liệu cục bộ.
+- Ngoại lệ cho .env.example chỉ chứa tên biến và giá trị minh họa không bí mật.
+- .dockerignore ngăn đưa secret vào image.
+
+Secret được cấp lúc chạy; không hardcode trong Dockerfile, Compose hoặc source code.
+
+Khóa mã hóa, khóa tra cứu HMAC, khóa JWT và credential provider được tách mục đích.
+
+Khi có nghi ngờ lộ secret, phải kiểm tra cả file đang theo dõi và lịch sử Git.
+
+Thêm .gitignore không xóa bí mật đã commit trước đó.
 
 ### 12.3. Audit và quan sát hệ thống
 
@@ -911,11 +1396,41 @@ Audit nghiệp vụ cần được lưu bền vững. Log kỹ thuật không th
 
 ### 12.4. Healthcheck
 
-- Liveness: tiến trình còn hoạt động.
-- Readiness: có thể phục vụ yêu cầu cần thiết, đặc biệt là kết nối dữ liệu chính.
-- Worker health: có xử lý công việc và có backlog bất thường hay không.
+| Endpoint qua Gateway | Quyền | Kết quả |
+|---|---|---|
+| GET /health | Không cần đăng nhập; nội dung tối thiểu | 200 khi tiến trình Gateway còn hoạt động |
+| GET /ready | Không cần đăng nhập; nội dung tối thiểu | 200 khi các thành phần bắt buộc sẵn sàng; 503 khi chưa sẵn sàng |
+| GET /health/services | OPERATOR | Danh sách thành phần và healthy/degraded/unavailable; 503 nếu thành phần bắt buộc không sẵn sàng |
 
-Nhà cung cấp thanh toán tạm ngừng không nên khiến toàn bộ API tài khoản hoặc xem chuyến bị coi là hỏng. Phải thể hiện lỗi tại chức năng bị ảnh hưởng.
+Danh sách kiểm tra gồm:
+
+- CAB Core API.
+- CAB Core Worker.
+- Rating Service.
+- Notification Service.
+- PostgreSQL.
+- Redis.
+- RabbitMQ.
+
+Mỗi dịch vụ có liveness và readiness nội bộ.
+
+Gateway tổng hợp với timeout hữu hạn; không chờ vô hạn khi một thành phần lỗi.
+
+Worker có heartbeat và thời điểm tiến triển gần nhất. Tiến trình tồn tại nhưng không xử lý công việc không đủ để kết luận khỏe.
+
+Readiness thất bại không khiến mọi handler tự động trả lỗi. Các chức năng độc lập vẫn có thể được phục vụ nếu còn đủ phụ thuộc.
+
+Ví dụ, xem Trip có thể hoạt động khi Notification đang lỗi.
+
+Tình trạng provider thanh toán được báo riêng. Provider lỗi không làm API xem hồ sơ hoặc xem chuyến bị coi là mất dữ liệu.
+
+Health response không chứa:
+
+- Mật khẩu.
+- Connection string.
+- Khóa.
+- Token.
+- Stack trace.
 
 ### 12.5. Sao lưu và phục hồi
 
@@ -930,7 +1445,101 @@ Sau phục hồi:
 - Không phát sinh lần thu tiền mới chỉ vì dữ liệu tiến trình bị gián đoạn.
 
 Mục tiêu sao lưu và kiểm thử phục hồi thực hiện theo SRS. Chưa có kết quả phục hồi thực tế ở giai đoạn thiết kế.
+### 12.6. Bảo vệ dữ liệu lưu trữ
 
+Mật khẩu được băm bằng Argon2id với salt riêng; không mã hóa theo cách có thể giải ngược.
+
+Email, số điện thoại và số giấy phép được mã hóa ở tầng ứng dụng bằng thuật toán mã hóa có xác thực, đề xuất AES-256-GCM với thư viện chuẩn.
+
+Mỗi lần mã hóa dùng nonce phù hợp. Dữ liệu lưu gồm:
+
+- Ciphertext.
+- Nonce.
+- Authentication tag.
+- keyVersion.
+
+Khóa không nằm trong database chứa ciphertext.
+
+Môi trường local dùng secret file nằm ngoài Git, chỉ cấp cho dịch vụ cần thiết.
+
+Phải có cách xoay khóa, lưu keyVersion và kiểm thử đọc dữ liệu cũ sau xoay khóa.
+
+Giá trị tra cứu dùng HMAC với khóa riêng; không tạo cột plaintext phụ để phục vụ tìm kiếm.
+
+Audit, log, event và outbox không được sao chép dữ liệu nhạy cảm dạng rõ một cách không cần thiết.
+
+Kịch bản chấm:
+
+1. Đọc trực tiếp bảng bằng tài khoản database không có khóa ứng dụng.
+2. Xác nhận không nhìn thấy password, email, phone hoặc giấy phép dạng rõ.
+3. Chứng minh API có quyền vẫn hoạt động.
+
+Bảo vệ này không có nghĩa mọi trường trong database đều đã được mã hóa hoặc hệ thống vẫn an toàn khi cả database và khóa ứng dụng cùng bị lộ.
+
+### 12.7. Chống SQL injection
+
+- Dùng truy vấn tham số hóa.
+- Không ghép input trực tiếp vào SQL.
+- Các trường sort hoặc tên cột động phải qua danh sách cho phép.
+- ORM không thay thế quy tắc an toàn khi viết raw query.
+- Database role của dịch vụ chỉ có quyền cần thiết.
+
+Payload email "' OR 1=1 --" không đăng nhập được và không làm lộ lỗi SQL.
+
+Phản hồi 400 hoặc 401 theo bước kiểm tra.
+
+### 12.8. Chống XSS
+
+Tên, ghi chú và nhận xét được xử lý như văn bản; MVP không cho phép người dùng soạn HTML.
+
+API trả JSON với Content-Type phù hợp.
+
+Khi hiển thị lên giao diện:
+
+- Encode dữ liệu theo ngữ cảnh.
+- Không đưa nội dung người dùng vào innerHTML.
+- Không coi JSON escaping là bằng chứng đủ để ngăn XSS trên giao diện.
+
+Kịch bản kiểm tra gửi chuỗi <script>alert('hack')</script> qua API và xác minh nơi hiển thị không thực thi script.
+
+Postman kiểm tra hợp đồng API. Kiểm tra thực thi cần bổ sung trình duyệt hoặc kiểm thử giao diện.
+
+### 12.9. JWT và truy cập trái phép
+
+- Kiểm tra chữ ký bằng thuật toán nằm trong danh sách cho phép.
+- Kiểm tra issuer, audience, thời hạn và Session.
+- Không chấp nhận token chỉ vì có thể decode payload.
+- Token bị sửa sub/role nhưng không có chữ ký hợp lệ trả 401.
+- Token hợp lệ nhưng sai role của chức năng trả 403.
+- Kiểm tra quyền sở hữu dữ liệu sau kiểm tra role.
+- User token không thay service token.
+- Account bị khóa hoặc Session bị thu hồi không tiếp tục dùng được chỉ vì access token chưa hết hạn.
+
+### 12.10. Rate limiting
+
+Giới hạn được áp dụng tại Gateway và có kiểm soát nghiệp vụ tại dịch vụ đích.
+
+Cấu hình khởi đầu đề xuất:
+
+- Login: giới hạn theo IP và định danh đăng nhập.
+- OTP: giới hạn theo IP, số điện thoại và challenge.
+- Tạo Booking: tối đa 10 request/phút/tài khoản.
+- Có giới hạn tổng thể theo IP, kích thước body và số kết nối.
+
+Ngưỡng cụ thể được cấu hình và điều chỉnh sau đo kiểm.
+
+Vượt ngưỡng trả 429 và Retry-After.
+
+Kịch bản hơn 1.000 request/giây trong rubric là tải kiểm chứng. Cần đo:
+
+- Số phản hồi 429.
+- Độ trễ.
+- Tài nguyên sử dụng.
+- Khả năng phục vụ sau đợt tải.
+
+Chưa có kết quả đo thì không tuyên bố hệ thống đã chịu được mức tải này.
+
+Các header xác định IP từ proxy chỉ được tin khi đến từ proxy được cấu hình tin cậy.
 ## 13. Báo cáo và dữ liệu tổng hợp
 
 Báo cáo cơ bản dùng định nghĩa:
@@ -954,47 +1563,45 @@ Nếu tách dịch vụ và dùng projection:
 - Chỉ công bố snapshotAt mà nguồn dữ liệu đã được tổng hợp đầy đủ.
 - Chưa đủ dữ liệu thì không dùng số 0 thay cho dữ liệu thiếu.
 
-## 14. Định hướng tách microservices
+## 14. Lộ trình phát triển kiến trúc
 
-Tách dịch vụ là một bước thay đổi kiến trúc, không chỉ đưa tám thư mục vào tám container.
+### 14.1. Kiến trúc của bản nộp
 
-### 14.1. Nguyên tắc
+Bản nộp triển khai:
 
-Sau khi tách:
+- CAB Core.
+- Rating Service.
+- Notification Service.
 
-- Mỗi dịch vụ sở hữu dữ liệu và quyền ghi riêng.
-- Không ghi trực tiếp database của dịch vụ khác.
-- Giao tiếp đồng bộ có timeout.
-- Sự kiện có chống trùng và quản lý phiên bản.
-- Read model có thể chậm hơn dữ liệu nguồn.
-- Quyết định quan trọng không dựa duy nhất vào projection có thể cũ.
+Các dịch vụ giao tiếp qua HTTP nội bộ và RabbitMQ. Truy cập từ ngoài đi qua Gateway.
 
-### 14.2. Thứ tự đề xuất
+Notification và Rating đã thuộc phạm vi tách dịch vụ của thiết kế này, không còn là bước tùy chọn sau MVP.
 
-1. Hoàn thiện các module và test nghiệp vụ trong bản đầu.
-2. Tách Notification vì lỗi của nó không được đảo ngược nghiệp vụ nguồn.
-3. Xem xét tách Rating và báo cáo khi nguồn dữ liệu đã có sự kiện bền vững.
-4. Xem xét tách xử lý thanh toán sau khi hợp đồng provider và đối soát ổn định.
-5. Chỉ tách Booking, Dispatch, Trip và Fleet khi cơ chế phối hợp phân tán đã được thiết kế và kiểm thử.
+### 14.2. Các bước thiết kế và xây dựng
 
-### 14.3. Điều kiện trước khi tách luồng nhận chuyến
+1. Đồng bộ SRS, API và test case theo rubric.
+2. Chốt hợp đồng OTP, hồ sơ tài xế, dữ liệu tính cước và payment sandbox.
+3. Tạo cấu trúc source, cấu hình môi trường và migration.
+4. Xây các module CAB Core và kiểm thử các transaction quan trọng.
+5. Xây Rating, Notification, IPC và xử lý lỗi.
+6. Bổ sung Gateway, Compose, healthcheck và bảo mật.
+7. Chuẩn bị dữ liệu demo, Postman collection và bằng chứng theo 30 tiêu chí.
 
-Phải có phương án được duyệt cho:
+### 14.3. Tách thêm dịch vụ trong tương lai
 
+Chỉ tách Booking, Dispatch, Trip, Fleet hoặc Billing khi đã thiết kế:
+
+- Quyền sở hữu dữ liệu sau tách.
 - Giữ chỗ Customer/Driver/Vehicle.
-- Tranh chấp accept và cancel.
-- Coordinator lỗi giữa các bước.
-- Mất phản hồi sau khi một bên đã ghi thành công.
-- Giữ chỗ quá hạn và cơ chế thu hồi an toàn.
-- Gửi lại lệnh mà không tạo thêm Trip.
-- Bên thứ ba đọc dữ liệu trong lúc quy trình chưa hoàn tất.
-- Khóa Account đồng thời với phân công.
-- Khôi phục sau sự cố.
+- Tranh chấp accept/cancel.
+- Điều phối nhiều bước và thao tác bù.
+- Phục hồi khi mất phản hồi hoặc coordinator lỗi.
+- Chống xử lý lặp.
+- Cách thể hiện trạng thái trung gian trên API.
 
-Saga có thể điều phối nhiều bước và thao tác bù, nhưng không tự biến nhiều database thành một transaction nguyên tử.
+Saga không tạo transaction nguyên tử trên nhiều database.
 
-Nếu phương án phân tán yêu cầu trả 202 hoặc bổ sung trạng thái chờ, phải cập nhật API và test case để duyệt trước. Không được âm thầm làm yếu cam kết hiện tại của API accept.
-
+Nếu việc tách làm thay đổi phản hồi 200 thành 202 hoặc cần thêm trạng thái chờ, phải sửa SRS, API và test case trước.
 ## 15. Đối chiếu kiểm thử và các điểm cần chốt
 
 ### 15.1. Các kiểm thử bảo vệ kiến trúc
@@ -1019,22 +1626,87 @@ Nếu phương án phân tán yêu cầu trả 202 hoặc bổ sung trạng thá
 
 Các test case hiện đều NOT_RUN. Tài liệu không khẳng định hệ thống đã vượt qua các kiểm thử này.
 
-### 15.2. Các quyết định còn mở
+### 15.2. Ma trận bằng chứng theo rubric
 
-1. Đề bài có bắt buộc các microservice độc lập ngay trong lần triển khai đầu không?
-2. Có duyệt phương án PostgreSQL chính và tám module trong cùng backend không?
-3. Giới hạn đăng nhập sai: ngưỡng, cửa sổ thời gian, cách phản hồi.
-4. Quy tắc Booking có điểm đón/đến trùng tọa độ.
-5. Quy tắc ký tự trong fullName.
-6. Có đưa điểm đánh giá trung bình vào MVP không?
-7. Có bổ sung tìm khách hàng theo keyword không?
-8. Nhà cung cấp thanh toán sandbox và hợp đồng webhook/đối soát.
-9. Phương pháp xác nhận quãng đường thực tế và xử lý hành trình thiếu dữ liệu.
-10. Cách xác định GPS còn mới, bao gồm vai trò của recordedAt và receivedAt.
-11. Cấu hình retry, thời gian lưu dữ liệu kỹ thuật và quy trình vận hành tương ứng.
+| Tiêu chí | Nội dung cần chứng minh |
+|---|---|
+| 1 | Cấu trúc source, trách nhiệm từng dịch vụ/module |
+| 2 | .gitignore, .env.example; không có secret trong file được commit |
+| 3 | Định tuyến, xác thực và rate limit tại Gateway |
+| 4 | Rating gọi CAB Core qua HTTP; Core phát sự kiện cho Notification qua RabbitMQ |
+| 5 | Compose chạy đủ container và liệt kê được tình trạng |
+| 6 | /health, /ready, /health/services phản ánh tình trạng thực |
+| 7 | RabbitMQ có publish/consume, retry và xử lý message lặp |
+| 8 | Client gọi được qua Gateway; không có cổng backend công khai |
+| 9 | Đăng ký Customer thành công, sau đó đăng nhập được |
+| 10 | Login cấp token hợp lệ |
+| 11 | Tra cứu Customer theo mã, có token và kiểm tra quyền |
+| 12 | Tra cứu Driver theo mã, có token và kiểm tra quyền |
+| 13 | Tìm tài xế trong 1 km, giới hạn và phân trang; loại tài xế không đủ điều kiện |
+| 14 | Có ít nhất năm Booking của Customer để kiểm tra danh sách và phân trang |
+| 15 | Tạo Booking, chuyển tìm tài xế, phát offer |
+| 16 | Driver nhận offer, accept tạo Trip và khách nhận thông tin tài xế |
+| 17 | Chuyển trạng thái đúng thứ tự, cập nhật vị trí, hoàn thành |
+| 18 | Hủy chuyến hợp lệ có lý do, trạng thái và thông báo đúng |
+| 19 | Thanh toán online qua sandbox, callback xác minh, Payment SUCCESS |
+| 20 | Rating lưu đúng Trip/Customer/Driver |
+| 21 | OTP, gửi hồ sơ tài xế và trạng thái chờ duyệt |
+| 22 | Xem hồ sơ, duyệt/từ chối và tài xế nhận kết quả |
+| 23 | Driver bật/tắt nhận chuyến đúng điều kiện |
+| 24 | Password hash, dữ liệu nhạy cảm mã hóa, có quản lý khóa |
+| 25 | SQL injection không vượt đăng nhập hoặc lộ dữ liệu |
+| 26 | Nội dung XSS không thực thi tại nơi hiển thị |
+| 27 | JWT bị sửa bị từ chối 401 |
+| 28 | Customer gọi chức năng riêng của Driver bị từ chối 403 |
+| 29 | Vượt giới hạn trả 429; ghi nhận kết quả kiểm thử tải |
+| 30 | Replay payment trả kết quả cũ, không thêm giao dịch hoặc thu trùng |
 
-Các điểm này cần được giải quyết trước khi triển khai phần backend phụ thuộc vào chúng. Không tự đánh dấu test đạt hoặc thêm API chỉ để che lấp quyết định còn thiếu.
+Ma trận trên mô tả bằng chứng cần chuẩn bị, không phải kết quả kiểm thử đã đạt.
+### 15.3. Dữ liệu demo
 
+Chuẩn bị tối thiểu:
+
+- Customer A và B để kiểm tra quyền sở hữu.
+- Driver đã duyệt và Driver đang chờ duyệt.
+- Một OPERATOR.
+- Ít nhất năm Driver có trạng thái/điều kiện khác nhau.
+- Trong tập Driver, có ít nhất hai người đủ điều kiện trong 1 km để kiểm tra phân trang.
+- Có Driver ngoài 1 km, Driver OFFLINE/BUSY và Driver có GPS cũ để kiểm tra bộ lọc.
+- Ít nhất năm Booking thuộc Customer A.
+- Thêm Booking của Customer B để kiểm tra không lộ dữ liệu.
+- Trip tại các trạng thái cần cho accept, hủy, hoàn tất và đánh giá.
+- Payment có SUCCESS, FAILED hoặc UNKNOWN phục vụ các tình huống liên quan.
+
+Dữ liệu là dữ liệu giả.
+
+Timestamp GPS được làm mới khi bắt đầu demo. Không dùng vị trí cũ rồi tự bỏ điều kiện freshness để cho kiểm thử đạt.
+
+Postman collection tổ chức thành ba nhóm theo ba phần rubric.
+
+Các biến môi trường gồm:
+
+- Gateway URL.
+- Token.
+- ID đối tượng.
+- Idempotency-Key.
+
+Không commit token thật.
+### 15.4. Quyết định cần chốt trước khi triển khai
+
+1. Phê duyệt kiến trúc ba dịch vụ nghiệp vụ và Gateway của bản 1.2.
+2. Nhà cung cấp OTP; cách dùng sandbox hoặc giả lập trong từng môi trường.
+3. Nhà cung cấp thanh toán sandbox, chữ ký callback và API đối soát.
+4. Phương pháp xác nhận quãng đường thực tế và xử lý GPS thiếu/bất thường.
+5. Cách xác định GPS còn mới.
+6. Quy tắc tọa độ đón/đến trùng nhau.
+7. Quy tắc fullName.
+8. Phạm vi điểm đánh giá trung bình và tìm kiếm tài khoản.
+9. Chính sách retry, retention, xoay khóa và phục hồi.
+10. Xác nhận cách đối chiếu thuật ngữ trạng thái với yêu cầu trình diễn của giảng viên.
+
+Bộ 280 test case hiện tại chưa tự động bao phủ toàn bộ phần bổ sung của rubric.
+
+Cần cập nhật test case tương ứng. Không đánh dấu PASS khi mới bổ sung mô tả thiết kế.
 ## 16. Tài liệu kỹ thuật tham khảo
 
 - [PostgreSQL — Transactions](https://www.postgresql.org/docs/current/tutorial-transactions.html): nguyên tắc cập nhật toàn bộ hoặc không cập nhật trong transaction.
