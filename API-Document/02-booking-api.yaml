@@ -2,21 +2,24 @@ openapi: 3.0.3
 
 info:
   title: CAB System - Booking API
-  version: "1.1.0"
+  version: "1.2.0"
   description: |
-    Đặc tả quản lý yêu cầu đặt xe theo SRS CAB System phiên bản 1.1.
+    Đặc tả Booking theo SRS CAB System phiên bản 1.2,
+    đối chiếu rubric và Micro_Service_Design phiên bản 1.2.
 
     Truy xuất yêu cầu:
     - BR01, BR04, BR11.
-    - FR02, FR03, FR19.
-    - BRu04, BRu09, BRu16, BRu20, BRu22.
-    - UC02, UC12.
-    - AC02, AC10, AC12.
+    - FR02, FR03, FR19, FR25.
+    - BRu04, BRu09, BRu16, BRu20, BRu22, BRu28.
+    - UC02, UC12, UC19.
+    - AC02, AC10, AC12, AC17, AC20.
+    - NFR03, NFR04, NFR05, NFR11, NFR15, NFR16, NFR17.
 
-    Phân biệt các đối tượng:
+    Phân biệt đối tượng:
     - BookingRequest: yêu cầu đặt xe của khách hàng.
-    - TripRequest: lời mời gửi đến một tài xế, thuộc Dispatch API.
-    - Trip: chuyến đi được tạo sau khi phân công thành công.
+    - TripRequest: lời mời gửi đến tài xế, thuộc Dispatch API.
+    - Trip: chuyến được tạo sau khi phân công thành công.
+    - Fare/Payment: cước và thanh toán, thuộc Payment API.
 
     Trạng thái Booking:
     - PENDING.
@@ -25,33 +28,172 @@ info:
     - NO_DRIVER_FOUND.
     - CANCELLED.
 
-    Quy tắc chung:
-    - Khách hàng chỉ truy cập Booking của mình.
-    - OPERATOR được xem và hủy theo phạm vi vận hành.
-    - DRIVER không truy cập trực tiếp các endpoint trong tài liệu này.
-    - Tài xế xem thông tin cần thiết qua Dispatch API hoặc Trip API.
-    - Máy chủ kiểm tra Account, Session, vai trò và quyền dữ liệu.
-    - Không cho client tự gán customerId, trạng thái, tài xế hoặc giá.
-    - Phản hồi chứa dữ liệu đặt xe sử dụng Cache-Control: no-store.
+    Phạm vi quyền:
+    - CUSTOMER tạo Booking và xem danh sách Booking của mình.
+    - CUSTOMER xem chi tiết, trạng thái và hủy Booking của mình.
+    - OPERATOR xem chi tiết, trạng thái và hủy theo quyền vận hành.
+    - GET /bookings không phải API liệt kê toàn hệ thống cho OPERATOR.
+    - DRIVER không gọi trực tiếp các endpoint trong tài liệu này.
+    - Tài xế xem dữ liệu cần thiết qua Dispatch API và Trip API.
+
+    Kiến trúc:
+    - Client truy cập qua API Gateway.
+    - Booking được xử lý trong CAB Core.
+    - Các thay đổi Booking, điều phối và quyền hoạt động của Customer
+      cần nhất quán được thực hiện trong transaction của cab_core.
+    - Sự kiện thông báo được ghi outbox cùng transaction nghiệp vụ.
+    - Worker phát sự kiện qua RabbitMQ sau commit.
+    - Không yêu cầu Notification Service xử lý xong trước khi trả thành công.
+
+    Bảo mật:
+    - Xác minh chữ ký JWT, issuer, audience, thời hạn, Account và Session.
+    - Kiểm tra role và quyền trên từng Booking.
+    - Không nhận customerId, trạng thái, tài xế hoặc giá do client tự gán.
+    - Sai role trả 403.
+    - Booking không tồn tại hoặc ngoài phạm vi người gọi trả 404.
+    - Phản hồi dùng Cache-Control: no-store.
+    - Không ghi token, địa chỉ hoặc tọa độ đầy đủ vào log nếu không cần thiết.
+    - Truy vấn dùng tham số hóa.
+    - Địa chỉ, ghi chú và lý do hủy là văn bản, không phải HTML được phép thực thi.
+    - Giao diện hiển thị phải encode theo ngữ cảnh.
+    - Sử dụng HTTPS ngoài môi trường phát triển cục bộ.
+
+    Rate limiting:
+    - Áp dụng tại Gateway theo IP, tài khoản và chức năng.
+    - Đề xuất tạo Booking tối đa 10 request/phút/tài khoản.
+    - Vượt giới hạn trả 429 và Retry-After.
+    - Khi không áp dụng được kiểm soát bắt buộc an toàn cho tạo Booking,
+      trả 503, không âm thầm bỏ giới hạn.
+    - Rate limit có thể từ chối cả request gửi lại;
+      điều đó không làm mất kết quả idempotency đã lưu.
 
     Booking DRIVER_ASSIGNED giữ kết quả phân công kể cả khi Trip
-    bị hủy về sau. Trạng thái hủy sau phân công thuộc Trip.
+    hoàn thành, bị hủy hoặc đóng bất thường về sau.
+    Không dùng riêng trạng thái Booking để kết luận khách còn đang đi xe.
 
-    Đây là đặc tả thiết kế, không xác nhận dịch vụ đã được triển khai.
+    Đây là tài liệu thiết kế, không xác nhận dịch vụ đã được triển khai
+    hoặc kiểm thử thành công.
 
 servers:
   - url: /v1
-    description: Đường dẫn cơ sở dự kiến của CAB API.
+    description: |
+      Đường dẫn cơ sở trên API Gateway.
+      Không cấu hình client gọi trực tiếp cổng của CAB Core.
 
 tags:
   - name: Booking
-    description: Tạo, tra cứu và hủy yêu cầu đặt xe.
+    description: Tạo, liệt kê, tra cứu và hủy yêu cầu đặt xe.
 
 security:
   - bearerAuth: []
 
 paths:
   /bookings:
+    get:
+      tags: [Booking]
+      operationId: listMyBookings
+      summary: Liệt kê Booking của khách hàng đang đăng nhập
+      description: |
+        FR25, UC19, BRu28, AC17.
+        Đáp ứng tiêu chí 14 của rubric.
+
+        Quyền: CUSTOMER có Account ACTIVE và Session hợp lệ.
+        OPERATOR và DRIVER trả 403 tại endpoint danh sách này.
+
+        customerId được xác định từ Account đăng nhập.
+        Không nhận customerId hoặc accountId để chọn người khác.
+        Query parameter ngoài danh sách được định nghĩa bị từ chối.
+
+        Danh sách gồm:
+        - Booking đang chờ hoặc đang tìm tài xế.
+        - Booking đã phân công.
+        - Booking không tìm được tài xế.
+        - Booking đã hủy trước phân công.
+
+        Không yêu cầu Booking phải có Trip mới được xuất hiện.
+
+        Nếu có bookingStatus, chỉ trả Booking đang có trạng thái đó
+        tại thời điểm truy vấn trang.
+
+        Sắp xếp cố định:
+        - createdAt giảm dần.
+        - bookingId giảm dần khi createdAt bằng nhau.
+
+        Phân trang:
+        - Dùng cursor, không dùng offset hoặc page number.
+        - Trang đầu không gửi cursor.
+        - Các trang tiếp theo gửi nguyên nextCursor đã nhận.
+        - Giữ nguyên bookingStatus và limit khi dùng cursor.
+        - Cursor gắn với Account/Customer, bộ lọc, limit và thứ tự sắp xếp.
+        - Cursor giả mạo, sai phạm vi hoặc không khớp tham số trả 400 INVALID_CURSOR.
+        - Cursor hết hạn trả 400 CURSOR_EXPIRED; client bắt đầu lại từ trang đầu.
+        - Không đưa token đăng nhập hoặc dữ liệu vị trí vào cursor.
+
+        Cursor sử dụng ranh giới createdAt/bookingId của trang trước.
+        Booking mới không được chèn vào các trang tiếp theo
+        của một lượt duyệt đã bắt đầu.
+
+        Mỗi trang phản ánh dữ liệu đã commit khi truy vấn trang đó.
+        Đây không phải snapshot bất biến của toàn bộ trạng thái Booking:
+        khi lọc bookingStatus, Booking đổi trạng thái giữa hai lần gọi
+        có thể không còn thuộc tập kết quả.
+        Muốn làm mới toàn bộ danh sách thì bỏ cursor.
+
+        hasMore được xác định bằng dữ liệu còn lại tại thời điểm truy vấn,
+        không suy ra chỉ từ việc số bản ghi bằng limit.
+        Trang cuối hasMore=false và không có nextCursor.
+        Trang rỗng trả 200 với items=[].
+
+        items là bản tóm tắt.
+        Dùng GET /bookings/{bookingId} để xem giá áp dụng,
+        ghi chú và thông tin hủy đầy đủ.
+
+        Chuẩn bị ít nhất năm Booking của một Customer khi kiểm thử rubric,
+        bao gồm Booking chưa từng tạo Trip.
+      parameters:
+        - $ref: "#/components/parameters/BookingStatusFilter"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Một trang Booking thuộc Customer đang đăng nhập.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BookingListResponse"
+              examples:
+                empty:
+                  summary: Không có Booking phù hợp
+                  value:
+                    items: []
+                    limit: 20
+                    hasMore: false
+        "400":
+          description: |
+            VALIDATION_ERROR, INVALID_CURSOR hoặc CURSOR_EXPIRED.
+            Có thể do trạng thái không hợp lệ, limit ngoài phạm vi,
+            query parameter không được phép hoặc cursor không sử dụng được.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
     post:
       tags: [Booking]
       operationId: createBooking
@@ -61,54 +203,74 @@ paths:
 
         Quyền: CUSTOMER có Account ACTIVE và Session hợp lệ.
 
-        customerId được xác định từ tài khoản đăng nhập.
+        customerId được xác định từ Account đăng nhập.
         Không nhận customerId từ request.
 
-        Điều kiện:
+        Điều kiện cho yêu cầu mới:
         - Điểm đón và điểm đến hợp lệ.
         - Hai điểm không có cùng cặp tọa độ.
-        - Tuyến yêu cầu thuộc phạm vi phục vụ đã cấu hình.
+        - Tuyến thuộc phạm vi phục vụ đã cấu hình.
         - Loại dịch vụ được hỗ trợ.
-        - Có biểu giá hiệu lực cho loại dịch vụ.
+        - Có biểu giá hiệu lực.
         - Khách không có yêu cầu hoặc chuyến khác đang hoạt động.
 
-        Khách được xem là có hoạt động đang diễn ra khi:
+        Khách có hoạt động đang diễn ra khi:
         - Có Booking PENDING hoặc FINDING_DRIVER; hoặc
         - Có Trip DRIVER_ASSIGNED, ARRIVED_PICKUP, PICKED_UP,
           IN_PROGRESS; hoặc
-        - Có Trip ERROR chưa được vận hành xác nhận kết thúc.
+        - Có Trip ERROR chưa đóng.
 
-        Trip COMPLETED hoặc CANCELLED không chặn đặt mới.
-        Payment chưa hoàn tất của chuyến đã kết thúc không được
-        nhầm là một Trip đang hoạt động.
+        Trip COMPLETED, CANCELLED hoặc ERROR đã được đóng hợp lệ
+        không chặn đặt mới.
 
-        Khi tiếp nhận thành công:
+        Payment chưa hoàn tất của chuyến đã đóng không được
+        nhầm thành một Trip đang hoạt động.
+
+        Không chỉ kiểm tra Booking DRIVER_ASSIGNED để xác định
+        khách còn đang có hoạt động, vì Booking giữ trạng thái này
+        sau khi Trip đã kết thúc.
+
+        Khi tiếp nhận thành công, trong cùng transaction:
+        - Giành quyền hoạt động của Customer.
         - Cấp bookingId.
-        - Ghi nhận Booking ở trạng thái PENDING.
-        - Lưu phiên bản và các đơn giá đang áp dụng.
-        - Ghi nhận công việc điều phối để hệ thống xử lý.
-        - Trả 201 mà không chờ tài xế chấp nhận.
+        - Tạo Booking PENDING.
+        - Chọn và lưu phiên bản biểu giá cùng các đơn giá áp dụng.
+        - Ghi công việc điều phối bền vững.
+        - Ghi outbox BOOKING_RECEIVED.
+        - Lưu kết quả idempotency.
 
-        Sau đó hệ thống chuyển Booking sang FINDING_DRIVER
+        Chỉ trả 201 sau commit, không chờ tài xế chấp nhận.
+
+        Sau đó Worker chuyển Booking sang FINDING_DRIVER
         và thực hiện điều phối.
-
-        Không yêu cầu client gọi thêm API khởi tạo điều phối.
+        Client không cần gọi thêm API khởi tạo điều phối.
 
         Chống gửi trùng:
-        - Bắt buộc có Idempotency-Key.
-        - Phạm vi khóa là tài khoản hiện tại và thao tác tạo Booking.
-        - Cùng khóa và cùng dữ liệu hợp lệ trả lại kết quả tạo đã lưu.
-        - Cùng khóa nhưng khác dữ liệu trả 409 IDEMPOTENCY_CONFLICT.
-        - Khi cùng khóa đang được xử lý, trả 409 REQUEST_IN_PROGRESS.
-        - Kiểm tra gửi lại trước khi áp dụng giới hạn Booking đang hoạt động,
-          để chính lần thử lại không bị nhầm là yêu cầu đặt xe mới.
-        - Khóa đã gắn với Booking không được tái sử dụng
-          khi Booking và bản ghi chống lặp vẫn còn được lưu.
+        - Bắt buộc Idempotency-Key.
+        - Phạm vi khóa là Account và thao tác tạo Booking.
+        - Xác thực và kiểm tra cấu trúc request trước khi dùng kết quả đã lưu.
+        - Cùng khóa/cùng nội dung trả HTTP status, body và Location
+          của lần tạo thành công trước.
+        - Cùng khóa/khác nội dung trả 409 IDEMPOTENCY_CONFLICT.
+        - Cùng khóa đang xử lý trả 409 REQUEST_IN_PROGRESS.
+        - Nhận diện replay trước khi kiểm tra các điều kiện nghiệp vụ
+          có thể thay đổi như Booking đang hoạt động hoặc biểu giá mới.
+        - Không tạo công việc, outbox hoặc quyền hoạt động mới khi replay.
         - Hai khóa khác nhau gửi đồng thời vẫn phải tuân thủ
           giới hạn một yêu cầu/chuyến đang hoạt động.
+        - Bản ghi chống lặp được lưu bền vững, không chỉ đặt trong Redis.
+        - Khóa đã gắn với Booking không được tái sử dụng
+          khi Booking và bản ghi chống lặp vẫn được lưu.
 
-        Nếu nhận 503 hoặc mất phản hồi, client gửi lại cùng khóa
-        và cùng dữ liệu, không tự tạo khóa mới.
+        So sánh nội dung theo biểu diễn JSON chuẩn hóa của các trường hợp lệ.
+        Thứ tự thuộc tính JSON không tạo một ý định đặt xe khác.
+        Không bỏ qua khác biệt nội dung pickup, destination, vehicleType hoặc note.
+
+        Nếu nhận lỗi tạm thời hoặc mất phản hồi,
+        gửi lại cùng khóa và cùng nội dung.
+        Không tự tạo khóa mới cho cùng ý định đặt xe.
+
+        Khi nhận 429, chờ Retry-After rồi dùng lại khóa cũ.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
@@ -131,16 +293,15 @@ paths:
       responses:
         "201":
           description: |
-            Booking đã được ghi nhận.
+            Booking và công việc điều phối đã được ghi nhận bền vững.
 
-            Phản hồi của lần tạo được lưu phục vụ gửi lại an toàn.
-            Khi gửi lại cùng Idempotency-Key, có thể nhận lại
-            trạng thái PENDING của phản hồi ban đầu.
+            Body là kết quả tạo ở trạng thái PENDING.
+            Replay trả lại kết quả này dù Booking hiện đã đổi trạng thái.
 
             Dùng GET theo Location để xem trạng thái mới nhất.
           headers:
             Location:
-              description: Đường dẫn xem Booking vừa tạo.
+              description: Đường dẫn xem Booking qua Gateway.
               schema:
                 type: string
                 example: "/v1/bookings/BK0001"
@@ -149,15 +310,19 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Booking"
+                $ref: "#/components/schemas/CreatedBooking"
         "400":
           description: |
             VALIDATION_ERROR, INVALID_ROUTE hoặc OUTSIDE_SERVICE_AREA.
 
-            Thiếu Idempotency-Key, dữ liệu sai, tọa độ không hợp lệ,
-            điểm đón và điểm đến trùng tọa độ hoặc ngoài phạm vi phục vụ.
+            Thiếu/sai Idempotency-Key, dữ liệu sai,
+            tọa độ không hợp lệ, điểm đón/đến trùng tọa độ
+            hoặc ngoài phạm vi phục vụ.
 
-            Không tạo Booking.
+            Không tạo Booking mới.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
@@ -174,12 +339,18 @@ paths:
             - REQUEST_IN_PROGRESS.
             - SERVICE_UNAVAILABLE_FOR_BOOKING.
 
-            SERVICE_UNAVAILABLE_FOR_BOOKING được dùng khi
-            loại dịch vụ chưa hoạt động hoặc chưa có biểu giá hiệu lực.
+            SERVICE_UNAVAILABLE_FOR_BOOKING dùng khi loại dịch vụ
+            chưa hoạt động hoặc chưa có biểu giá hiệu lực.
+            Mã này khác lỗi hạ tầng tạm thời HTTP 503.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
         default:
@@ -191,23 +362,31 @@ paths:
       operationId: getBooking
       summary: Xem chi tiết yêu cầu đặt xe
       description: |
-        FR03, UC02.
+        FR03, FR25, UC02, UC19.
 
         Quyền:
         - CUSTOMER sở hữu Booking.
-        - OPERATOR được phép tra cứu vận hành.
+        - OPERATOR có quyền tra cứu vận hành.
 
-        Trả thông tin điểm đón, điểm đến, loại dịch vụ,
-        trạng thái, biểu giá đã áp dụng và liên kết Trip nếu có.
+        DRIVER trả 403.
+        CUSTOMER yêu cầu Booking không thuộc mình trả 404.
+        Booking không tồn tại cũng trả 404 với cùng thông báo.
 
-        pricingSnapshot là đơn giá đã ghi nhận khi đặt xe,
-        không phải tổng cước thực tế.
+        Trả điểm đón, điểm đến, loại dịch vụ, trạng thái,
+        biểu giá đã áp dụng, ghi chú và liên kết Trip nếu có.
 
-        Không trả danh sách ứng viên, lời mời hoặc thông tin
-        vị trí của các tài xế chưa được phân công.
+        pricingSnapshot là đơn giá ghi nhận khi đặt xe,
+        không phải tổng cước dự kiến hoặc thực tế.
 
-        Khi Booking DRIVER_ASSIGNED, dùng tripId để theo dõi
+        Không trả danh sách ứng viên, lời mời hoặc vị trí
+        của các tài xế chưa được phân công.
+
+        Khi DRIVER_ASSIGNED, dùng tripId để theo dõi
         quá trình thực hiện chuyến trong Trip API.
+
+        Booking vẫn DRIVER_ASSIGNED sau khi Trip kết thúc.
+        Muốn biết chuyến hoàn thành, hủy hoặc thanh toán ra sao,
+        phải truy vấn API tương ứng.
       parameters:
         - $ref: "#/components/parameters/BookingId"
       responses:
@@ -228,6 +407,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/BookingNotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
         default:
@@ -243,18 +424,23 @@ paths:
 
         Quyền:
         - CUSTOMER sở hữu Booking.
-        - OPERATOR được phép tra cứu vận hành.
+        - OPERATOR có quyền tra cứu vận hành.
+
+        DRIVER trả 403.
+        Booking không tồn tại hoặc ngoài phạm vi CUSTOMER trả 404.
 
         Đây là truy vấn trạng thái tại thời điểm máy chủ xử lý,
         không tự tạo kết nối cập nhật liên tục.
 
         Khi DRIVER_ASSIGNED, response có tripId.
-        Client chuyển sang Trip API để xem tài xế,
-        vị trí và trạng thái thực hiện chuyến.
+        Client chuyển sang Trip API để xem tài xế, vị trí
+        và trạng thái thực hiện chuyến.
 
         Booking NO_DRIVER_FOUND hoặc CANCELLED không tự quay lại
-        FINDING_DRIVER. Khách muốn đặt lại phải tạo Booking mới
-        với Idempotency-Key mới.
+        FINDING_DRIVER.
+
+        Khách muốn đặt lại phải tạo Booking mới với Idempotency-Key mới,
+        sau khi đáp ứng điều kiện tạo Booking.
       parameters:
         - $ref: "#/components/parameters/BookingId"
       responses:
@@ -280,6 +466,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/BookingNotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
         default:
@@ -295,45 +483,57 @@ paths:
 
         Quyền:
         - CUSTOMER sở hữu Booking.
-        - OPERATOR được phép xử lý vận hành.
+        - OPERATOR có quyền xử lý vận hành.
 
-        Chỉ cho phép hủy khi Booking:
-        - PENDING; hoặc
-        - FINDING_DRIVER.
+        DRIVER trả 403.
+        Booking không tồn tại hoặc ngoài phạm vi CUSTOMER trả 404.
 
-        Khi thành công:
-        - Booking chuyển CANCELLED.
-        - Lưu lý do, người hủy và thời điểm.
-        - Kết thúc điều phối.
-        - Thu hồi hiệu lực các lời mời còn PENDING.
-        - Giải phóng việc giữ chỗ tài xế nếu có.
-        - Ghi nhận thông báo cho các bên liên quan.
-        - Ghi nhật ký thao tác.
+        Chỉ hủy mới khi Booking PENDING hoặc FINDING_DRIVER.
+
+        Trong cùng transaction của CAB Core:
+        - Khóa dữ liệu điều phối liên quan.
+        - Kiểm tra lại trạng thái.
+        - Chuyển Booking thành CANCELLED.
+        - Lưu lý do, accountId người hủy và thời điểm.
+        - Kết thúc DispatchProcess nếu đã được tạo.
+        - Thu hồi TripRequest còn PENDING.
+        - Giải phóng CustomerActivityGuard nếu vẫn trỏ đúng Booking này.
+        - Ghi audit và outbox thông báo.
+
+        Nếu Worker chưa bắt đầu điều phối,
+        công việc đến muộn phải nhận ra Booking đã CANCELLED
+        và không tạo thêm lời mời.
+
+        Lời mời PENDING không tự đồng nghĩa Driver đang BUSY.
+        Không chuyển trạng thái tài xế hoặc giải phóng tài nguyên
+        thuộc một Booking/Trip khác.
 
         Không tính phí hủy trong MVP.
 
-        Nếu Booking đã CANCELLED:
-        - Trả 200 với kết quả hủy đã lưu.
+        Chống lặp theo bookingId:
+        - Endpoint không yêu cầu Idempotency-Key.
+        - Vẫn phải xác thực quyền và kiểm tra cấu trúc body.
+        - Nếu Booking đã CANCELLED, trả 200 với kết quả hủy đã lưu.
         - Không ghi đè lý do, người hủy hoặc thời điểm ban đầu.
-        - Không tạo thông báo hoặc nhật ký nghiệp vụ trùng.
+        - Không tạo audit nghiệp vụ, outbox hoặc thông báo trùng.
+        - Body hợp lệ có lý do khác không sửa kết quả hủy trước đó.
 
-        Nếu Booking đã DRIVER_ASSIGNED:
+        Nếu Booking DRIVER_ASSIGNED:
         - Trả 409 BOOKING_ALREADY_ASSIGNED.
         - Không hủy Trip tại endpoint này.
-        - Client lấy tripId và sử dụng chức năng hủy Trip.
+        - Client lấy tripId và dùng chức năng hủy Trip.
 
         Nếu Booking NO_DRIVER_FOUND:
         - Trả 409 BOOKING_NOT_CANCELLABLE.
-        - Không đổi kết quả điều phối đã kết thúc thành CANCELLED.
+        - Không đổi kết quả điều phối thành CANCELLED.
 
-        Tranh chấp giữa nhận chuyến và hủy Booking:
-        - Nếu hủy thắng, lời mời mất hiệu lực và không được tạo Trip.
-        - Nếu phân công thắng, hủy Booking bị từ chối.
-        - Không trả hủy thành công khi đồng thời tồn tại
-          một Trip được phân công hợp lệ cho Booking đó.
+        Hủy Booking và accept phải phối hợp trên cùng dữ liệu có thẩm quyền:
+        - Hủy thắng: lời mời mất hiệu lực, không được tạo Trip.
+        - Accept thắng: Booking đã phân công, thao tác hủy bị từ chối.
+        - Không có hai kết quả thành công mâu thuẫn.
 
-        Thất bại khi gửi thông báo không đảo ngược việc hủy
-        đã được xác nhận.
+        Chỉ trả 200 sau commit.
+        Lỗi gửi thông báo sau đó không đảo ngược kết quả hủy.
       parameters:
         - $ref: "#/components/parameters/BookingId"
       requestBody:
@@ -348,7 +548,7 @@ paths:
         "200":
           description: |
             Booking đã CANCELLED.
-            Có thể là kết quả hủy mới hoặc kết quả của lần hủy trước.
+            Có thể là kết quả hủy mới hoặc kết quả đã lưu từ lần trước.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
@@ -368,15 +568,18 @@ paths:
           description: |
             BOOKING_ALREADY_ASSIGNED hoặc BOOKING_NOT_CANCELLABLE.
             Trạng thái hiện tại không cho phép hủy Booking.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
               example:
                 errorCode: BOOKING_ALREADY_ASSIGNED
-                message: |
-                  Yêu cầu đã được phân công.
-                  Vui lòng xem chuyến để thực hiện thao tác phù hợp.
+                message: "Yêu cầu đã được phân công. Vui lòng xem chuyến để thực hiện thao tác phù hợp."
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
         default:
@@ -389,16 +592,23 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: |
-        Access token được cấp bởi Authentication API.
-        Máy chủ xác minh token, Session, Account,
-        vai trò và quyền đối với Booking.
+        Access token do Authentication API cấp, gắn với Account và Session.
+
+        Xác minh chữ ký bằng thuật toán được cho phép,
+        issuer, audience, thời hạn, Account và Session.
+
+        Decode được payload không có nghĩa token hợp lệ.
+        Phiên đã thu hồi không truy cập được dù JWT chưa hết hạn.
+
+        Dịch vụ vẫn kiểm tra role và quyền đối với Booking.
+        Verification token đăng ký tài xế không dùng thay access token.
 
   parameters:
     BookingId:
       name: bookingId
       in: path
       required: true
-      description: Mã yêu cầu đặt xe do hệ thống cấp.
+      description: Mã Booking do hệ thống cấp, không phải tripId.
       schema:
         $ref: "#/components/schemas/Identifier"
       example: "BK0001"
@@ -408,12 +618,12 @@ components:
       in: header
       required: true
       description: |
-        Mã duy nhất do client tạo cho một ý định đặt xe.
+        Mã do client tạo cho một ý định đặt xe.
 
-        Dùng lại cùng mã khi gửi lại cùng yêu cầu do mất mạng.
+        Dùng cùng mã khi gửi lại cùng yêu cầu do mất phản hồi.
         Dùng mã mới khi người dùng thực sự tạo yêu cầu đặt xe mới.
 
-        Khuyến nghị dùng UUID ngẫu nhiên.
+        Khuyến nghị UUID ngẫu nhiên.
         Không đưa thông tin cá nhân hoặc token vào khóa.
       schema:
         type: string
@@ -422,12 +632,60 @@ components:
         pattern: '^[A-Za-z0-9._:-]+$'
       example: "550e8400-e29b-41d4-a716-446655440000"
 
+    BookingStatusFilter:
+      name: bookingStatus
+      in: query
+      required: false
+      description: |
+        Lọc theo một trạng thái Booking.
+        Bỏ tham số để lấy tất cả trạng thái trong phạm vi của Customer.
+        Không gửi giá trị rỗng.
+      schema:
+        $ref: "#/components/schemas/BookingStatus"
+
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: |
+        Số bản ghi tối đa mỗi trang.
+        Khi dùng cursor phải giữ nguyên limit của lượt duyệt.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      example: 20
+
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: |
+        Giá trị nextCursor của trang trước.
+        Không gửi ở trang đầu và không gửi chuỗi rỗng.
+
+        Cursor phải được bảo vệ chống sửa và gắn với người gọi,
+        bộ lọc, limit, ranh giới phân trang và thời hạn.
+
+        Client không phân tích hoặc tự tạo cursor.
+      schema:
+        type: string
+        minLength: 1
+
   headers:
     NoStore:
       description: Không lưu phản hồi vào bộ nhớ đệm.
       schema:
         type: string
         enum: [no-store]
+
+    RetryAfter:
+      description: Số giây tối thiểu cần chờ trước khi thử lại.
+      schema:
+        type: integer
+        minimum: 1
+      example: 60
 
   schemas:
     Identifier:
@@ -440,16 +698,15 @@ components:
     Location:
       type: object
       additionalProperties: false
-      required:
-        - address
-        - latitude
-        - longitude
+      required: [address, latitude, longitude]
       properties:
         address:
           type: string
           minLength: 1
           pattern: '\S'
-          description: Địa chỉ hiển thị, không được chỉ gồm khoảng trắng.
+          description: |
+            Địa chỉ hiển thị, không chỉ gồm khoảng trắng.
+            Là văn bản, không phải HTML được phép thực thi.
         latitude:
           type: number
           format: double
@@ -461,17 +718,13 @@ components:
           minimum: -180
           maximum: 180
       description: |
-        Một điểm địa lý gồm địa chỉ và tọa độ.
-        Tọa độ hợp lệ về định dạng chưa đồng nghĩa
-        thuộc vùng phục vụ hoặc là vị trí có thể đón/trả.
+        Điểm địa lý gồm địa chỉ và tọa độ.
+        Tọa độ đúng định dạng chưa chứng minh thuộc vùng phục vụ
+        hoặc là vị trí có thể đón/trả.
 
     VehicleType:
       type: string
-      enum:
-        - STANDARD
-        - PREMIUM
-        - MOTORBIKE
-        - VAN
+      enum: [STANDARD, PREMIUM, MOTORBIKE, VAN]
       description: Mã loại dịch vụ thống nhất với SRS.
 
     BookingStatus:
@@ -486,16 +739,13 @@ components:
         PENDING: đã tiếp nhận.
         FINDING_DRIVER: đang tìm tài xế.
         DRIVER_ASSIGNED: đã phân công và có Trip.
-        NO_DRIVER_FOUND: kết thúc tìm nhưng không phân công được.
+        NO_DRIVER_FOUND: tìm kết thúc nhưng không phân công được.
         CANCELLED: đã hủy trước phân công.
 
     CreateBookingRequest:
       type: object
       additionalProperties: false
-      required:
-        - pickup
-        - destination
-        - vehicleType
+      required: [pickup, destination, vehicleType]
       properties:
         pickup:
           $ref: "#/components/schemas/Location"
@@ -506,23 +756,20 @@ components:
         note:
           type: string
           description: |
-            Ghi chú tùy chọn phục vụ việc đón khách.
-            Không gửi thông tin thanh toán hoặc token trong ghi chú.
+            Ghi chú tùy chọn phục vụ đón khách.
+            Là văn bản, không phải HTML được phép thực thi.
+            Không gửi thông tin thanh toán hoặc token.
       description: |
         Không nhận customerId, bookingStatus, driverId, tripId,
         pricingVersionId hoặc giá do client tự gán.
 
-        Không có ghi chú thì bỏ trường note.
+        Không có ghi chú thì bỏ note.
         Không gửi null cho các trường.
 
     PricingSnapshot:
       type: object
       additionalProperties: false
-      required:
-        - currency
-        - baseFare
-        - pricePerKm
-        - pricePerMinute
+      required: [currency, baseFare, pricePerKm, pricePerMinute]
       properties:
         currency:
           type: string
@@ -530,7 +777,7 @@ components:
         baseFare:
           type: number
           minimum: 0
-          description: Giá mở cửa áp dụng tại thời điểm tạo Booking.
+          description: Giá mở cửa áp dụng khi tạo Booking.
         pricePerKm:
           type: number
           minimum: 0
@@ -540,35 +787,32 @@ components:
           minimum: 0
           description: Đơn giá cho mỗi phút hành trình tính cước.
       description: |
-        Bản ghi các đơn giá của phiên bản biểu giá đã áp dụng.
-        Không thay đổi khi có biểu giá mới.
+        Bản ghi bất biến của các đơn giá đã áp dụng.
+        Biểu giá mới không cập nhật đè dữ liệu này.
 
-        Đây không phải cước dự kiến hoặc cước thực tế của chuyến.
-        Dữ liệu tiền phải được xử lý bằng số thập phân chính xác
-        hoặc biểu diễn tương đương, không dùng sai số float
+        Không phải cước dự kiến hoặc cước thực tế.
+        Máy chủ xử lý tiền bằng số thập phân chính xác
+        hoặc biểu diễn tương đương; không dùng sai số float
         để quyết định số tiền thu.
 
     CancelBookingRequest:
       type: object
       additionalProperties: false
-      required:
-        - reason
+      required: [reason]
       properties:
         reason:
           type: string
           minLength: 1
           pattern: '\S'
           description: |
-            Lý do hủy, bắt buộc với CUSTOMER và OPERATOR.
-            Người hủy được lấy từ phiên, không gửi trong body.
+            Lý do hủy bắt buộc với CUSTOMER và OPERATOR.
+            Là văn bản, không phải HTML được phép thực thi.
+            Người hủy được lấy từ Session, không gửi trong body.
 
     BookingCancellation:
       type: object
       additionalProperties: false
-      required:
-        - reason
-        - cancelledBy
-        - cancelledAt
+      required: [reason, cancelledBy, cancelledAt]
       properties:
         reason:
           type: string
@@ -581,7 +825,8 @@ components:
           format: date-time
       description: |
         cancelledBy là accountId của người thực hiện.
-        Không bị ghi đè khi gửi lại yêu cầu hủy.
+        Timestamp do máy chủ ghi.
+        Không bị ghi đè khi gửi lại thao tác hủy.
 
     Booking:
       type: object
@@ -632,26 +877,20 @@ components:
         - properties:
             bookingStatus:
               type: string
-              enum:
-                - PENDING
-                - FINDING_DRIVER
-                - NO_DRIVER_FOUND
+              enum: [PENDING, FINDING_DRIVER, NO_DRIVER_FOUND]
           not:
             anyOf:
               - required: [driverId]
               - required: [tripId]
               - required: [cancellation]
-        - required:
-            - driverId
-            - tripId
+        - required: [driverId, tripId]
           properties:
             bookingStatus:
               type: string
               enum: [DRIVER_ASSIGNED]
           not:
             required: [cancellation]
-        - required:
-            - cancellation
+        - required: [cancellation]
           properties:
             bookingStatus:
               type: string
@@ -663,29 +902,140 @@ components:
       description: |
         Chỉ DRIVER_ASSIGNED có driverId và tripId.
         Chỉ CANCELLED có cancellation.
-        Các trường chưa áp dụng được bỏ khỏi response, không gửi null.
+        Trường chưa áp dụng được bỏ, không gửi null.
 
-        Không có trường tổng cước thực tế ở Booking.
+        Không có tổng cước thực tế trong Booking.
         Cước thực tế thuộc Fare sau khi Trip hoàn thành.
 
-    CancelledBooking:
+    CreatedBooking:
+      description: |
+        Kết quả được lưu tại thời điểm tạo thành công.
+        Replay trả lại trạng thái PENDING ban đầu,
+        không dựng lại response từ trạng thái Booking hiện tại.
       allOf:
         - $ref: "#/components/schemas/Booking"
         - type: object
           properties:
             bookingStatus:
               type: string
-              enum: [CANCELLED]
-          required:
-            - cancellation
+              enum: [PENDING]
 
-    BookingStatusResponse:
+    CancelledBooking:
+      allOf:
+        - $ref: "#/components/schemas/Booking"
+        - type: object
+          required: [cancellation]
+          properties:
+            bookingStatus:
+              type: string
+              enum: [CANCELLED]
+
+    BookingSummary:
       type: object
       additionalProperties: false
       required:
         - bookingId
+        - pickup
+        - destination
+        - vehicleType
         - bookingStatus
+        - createdAt
         - updatedAt
+      properties:
+        bookingId:
+          $ref: "#/components/schemas/Identifier"
+        pickup:
+          $ref: "#/components/schemas/Location"
+        destination:
+          $ref: "#/components/schemas/Location"
+        vehicleType:
+          $ref: "#/components/schemas/VehicleType"
+        bookingStatus:
+          $ref: "#/components/schemas/BookingStatus"
+        driverId:
+          $ref: "#/components/schemas/Identifier"
+        tripId:
+          $ref: "#/components/schemas/Identifier"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      oneOf:
+        - required: [driverId, tripId]
+          properties:
+            bookingStatus:
+              type: string
+              enum: [DRIVER_ASSIGNED]
+        - properties:
+            bookingStatus:
+              type: string
+              enum: [PENDING, FINDING_DRIVER, NO_DRIVER_FOUND, CANCELLED]
+          not:
+            anyOf:
+              - required: [driverId]
+              - required: [tripId]
+      description: |
+        Tóm tắt Booking trong danh sách của Customer.
+        Chi tiết giá, ghi chú và hủy được lấy từ API chi tiết.
+
+        Booking đã phân công vẫn có tripId/driverId lịch sử
+        khi Trip đã hoàn thành hoặc bị hủy.
+        Đây không phải quyền theo dõi vị trí tài xế vô thời hạn.
+
+    BookingListResponse:
+      type: object
+      additionalProperties: false
+      required: [items, limit, hasMore]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/BookingSummary"
+          description: |
+            Không vượt limit đã áp dụng.
+            Chỉ chứa Booking của Customer đăng nhập.
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: Giới hạn đã áp dụng cho trang này.
+        hasMore:
+          type: boolean
+          description: Có dữ liệu tiếp theo tại thời điểm truy vấn.
+        nextCursor:
+          type: string
+          minLength: 1
+          description: |
+            Chỉ xuất hiện khi hasMore=true.
+            Client gửi nguyên giá trị này cho trang tiếp theo.
+      oneOf:
+        - required: [nextCursor]
+          properties:
+            hasMore:
+              type: boolean
+              enum: [true]
+            items:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/BookingSummary"
+        - properties:
+            hasMore:
+              type: boolean
+              enum: [false]
+          not:
+            required: [nextCursor]
+      description: |
+        Không trả totalCount giả hoặc suy ra từ số phần tử của một trang.
+        Trang cuối không có nextCursor, kể cả khi có đủ limit bản ghi.
+
+    BookingStatusResponse:
+      type: object
+      additionalProperties: false
+      required: [bookingId, bookingStatus, updatedAt]
       properties:
         bookingId:
           $ref: "#/components/schemas/Identifier"
@@ -705,20 +1055,14 @@ components:
         - properties:
             bookingStatus:
               type: string
-              enum:
-                - PENDING
-                - FINDING_DRIVER
-                - NO_DRIVER_FOUND
-                - CANCELLED
+              enum: [PENDING, FINDING_DRIVER, NO_DRIVER_FOUND, CANCELLED]
           not:
             required: [tripId]
 
     FieldError:
       type: object
       additionalProperties: false
-      required:
-        - field
-        - message
+      required: [field, message]
       properties:
         field:
           type: string
@@ -730,9 +1074,7 @@ components:
     ErrorResponse:
       type: object
       additionalProperties: false
-      required:
-        - errorCode
-        - message
+      required: [errorCode, message]
       properties:
         errorCode:
           type: string
@@ -740,10 +1082,14 @@ components:
         message:
           type: string
           description: |
-            Thông báo an toàn cho người dùng.
-            Không chứa token, stack trace hoặc dữ liệu của người khác.
+            Thông báo an toàn.
+            Không chứa token, stack trace, chi tiết database
+            hoặc dữ liệu Booking của người khác.
         details:
           type: array
+          description: |
+            Chi tiết lỗi theo trường khi phù hợp.
+            Không lặp lại dữ liệu nhạy cảm trong thông báo.
           items:
             $ref: "#/components/schemas/FieldError"
         correlationId:
@@ -752,7 +1098,12 @@ components:
 
   responses:
     BadRequest:
-      description: VALIDATION_ERROR. Tham số hoặc dữ liệu không hợp lệ.
+      description: |
+        VALIDATION_ERROR.
+        Tham số hoặc dữ liệu không hợp lệ.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
           schema:
@@ -761,8 +1112,11 @@ components:
     Unauthenticated:
       description: |
         UNAUTHENTICATED.
-        Thiếu token, token sai/hết hạn,
-        hoặc Session không tồn tại, hết hạn hay bị thu hồi.
+        Thiếu token, token sai/hết hạn/bị sửa,
+        sai issuer/audience hoặc Session không hợp lệ/đã thu hồi.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
           schema:
@@ -775,17 +1129,36 @@ components:
       description: |
         FORBIDDEN hoặc ACCOUNT_NOT_ACTIVE.
 
-        Vai trò không được phép, không có quyền với Booking,
-        hoặc tài khoản không ở trạng thái ACTIVE.
+        Đã xác minh danh tính nhưng role không được gọi chức năng,
+        hoặc Account của người gọi không ACTIVE.
 
-        Không trả chi tiết Booking của người khác trong phản hồi lỗi.
+        CUSTOMER truy cập Booking ngoài phạm vi dùng 404,
+        không trả dữ liệu của chủ Booking trong lỗi.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            wrongRole:
+              value:
+                errorCode: FORBIDDEN
+                message: "Bạn không có quyền sử dụng chức năng này."
+            inactiveAccount:
+              value:
+                errorCode: ACCOUNT_NOT_ACTIVE
+                message: "Tài khoản hiện không được phép sử dụng chức năng này."
 
     BookingNotFound:
-      description: BOOKING_NOT_FOUND. Không tìm thấy Booking.
+      description: |
+        BOOKING_NOT_FOUND.
+        Booking không tồn tại hoặc ngoài phạm vi người gọi.
+        Không phân biệt hai trường hợp trong thông báo.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
           schema:
@@ -794,25 +1167,65 @@ components:
             errorCode: BOOKING_NOT_FOUND
             message: "Không tìm thấy yêu cầu đặt xe."
 
+    TooManyRequests:
+      description: |
+        RATE_LIMIT_EXCEEDED.
+        Vượt giới hạn theo IP, tài khoản hoặc chức năng.
+
+        Chờ Retry-After trước khi thử lại.
+        Khi tạo Booking, tiếp tục dùng Idempotency-Key và nội dung cũ
+        nếu vẫn là cùng ý định đặt xe.
+
+        Request bị chặn tại bước giới hạn không tiếp tục thay đổi nghiệp vụ.
+        Kết quả của request trước đã commit vẫn được giữ.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            errorCode: RATE_LIMIT_EXCEEDED
+            message: "Bạn gửi yêu cầu quá thường xuyên. Vui lòng thử lại sau."
+
     ServiceUnavailable:
       description: |
         SERVICE_UNAVAILABLE.
         Phụ thuộc cần thiết không sẵn sàng để xử lý an toàn.
 
-        Không được coi việc nhận 503 là bằng chứng chắc chắn
-        rằng lệnh ghi trước đó chưa thực hiện.
+        Không bỏ qua xác thực, quyền dữ liệu, kiểm soát đồng thời
+        hoặc giới hạn bắt buộc để tiếp tục tạo Booking.
+
+        Nếu outbox và công việc đã được lưu bền vững,
+        RabbitMQ tạm ngừng không tự làm mất kết quả tạo/hủy đã commit.
+
+        Nhận 503 không chứng minh chắc chắn thao tác ghi trước đó chưa thực hiện.
 
         Khi tạo Booking, gửi lại cùng Idempotency-Key và cùng body.
-        Khi hủy, có thể tra cứu trạng thái rồi gửi lại thao tác hủy.
+        Khi hủy, tra cứu trạng thái hoặc gửi lại thao tác hủy hợp lệ.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+          example:
+            errorCode: SERVICE_UNAVAILABLE
+            message: "Dịch vụ tạm thời không khả dụng. Vui lòng thử lại sau."
 
     UnexpectedError:
       description: |
-        Lỗi ngoài dự kiến; sử dụng HTTP 5xx phù hợp.
+        Lỗi ngoài dự kiến; dùng HTTP 5xx phù hợp.
         Không trả chi tiết nội bộ hoặc dữ liệu nhạy cảm.
+        Mất phản hồi không đồng nghĩa thao tác chưa commit.
+        Client áp dụng quy tắc gửi lại của từng endpoint.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
           schema:
