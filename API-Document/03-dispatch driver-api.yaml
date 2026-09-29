@@ -2,63 +2,110 @@ openapi: 3.0.3
 
 info:
   title: CAB System - Dispatch & Driver Trip Requests API
-  version: "1.1.0"
+  version: "1.2.0"
   description: |
-    Đặc tả điều phối và phản hồi lời mời nhận chuyến
-    theo SRS CAB System phiên bản 1.1.
+    Đặc tả điều phối, tra cứu tài xế gần vị trí và phản hồi lời mời
+    theo SRS CAB System phiên bản 1.2,
+    đối chiếu rubric và Micro_Service_Design phiên bản 1.2.
 
     Truy xuất yêu cầu:
-    - BR02, BR09.
-    - FR04, FR05, FR06, FR07.
-    - BRu01 đến BRu04, BRu09, BRu19, BRu20.
-    - UC03, UC05.
-    - AC03, AC09, AC10.
-    - NFR02, NFR03, NFR04.
+    - BR01, BR02, BR09.
+    - FR04, FR05, FR06, FR07, FR24.
+    - BRu01 đến BRu04, BRu09, BRu19, BRu20, BRu27.
+    - UC03, UC05, UC18.
+    - AC03, AC09, AC10, AC16, AC20.
+    - NFR02, NFR03, NFR04, NFR11, NFR12, NFR17.
 
     Phân biệt:
+    - Nearby search: tra cứu tài xế tại thời điểm tìm kiếm.
     - DispatchProcess: tiến trình điều phối của một Booking.
     - TripRequest: lời mời gửi đến một tài xế.
     - Trip: chuyến thực tế sau khi phân công thành công.
 
-    Quy tắc điều phối:
+    Quy tắc:
+    - Tra cứu nearby không tạo Booking, lời mời hoặc giữ chỗ tài xế.
     - Một Booking có tối đa một DispatchProcess.
-    - Một Booking có tối đa một TripRequest PENDING.
-    - Một Booking có tối đa một kết quả phân công thành công.
+    - Một Booking có tối đa một TripRequest PENDING tại một thời điểm.
+    - Một Booking có tối đa một Trip.
     - Một tài xế có tối đa một Trip đang hoạt động.
     - Không gửi lại cùng tài xế trong cùng DispatchProcess.
+    - Một tài xế có thể nhận lời mời từ nhiều Booking khi còn AVAILABLE,
+      nhưng chỉ được nhận thành công một Trip đang hoạt động.
 
     Điều kiện ứng viên:
     - Account ACTIVE.
-    - Hồ sơ được phép hoạt động.
-    - Phương tiện hợp lệ và đúng loại dịch vụ.
-    - Driver AVAILABLE.
-    - Vị trí còn mới và nằm trong bán kính cấu hình.
+    - Driver.approvalStatus APPROVED.
+    - Driver.driverStatus AVAILABLE.
+    - Có VehicleAssignment hiện hành hợp lệ.
+    - Vehicle ACTIVE.
+    - Loại xe phù hợp với Booking khi điều phối.
+    - Không có Trip đang hoạt động, bao gồm ERROR chưa đóng.
+    - Vị trí hợp lệ, còn mới và nằm trong bán kính yêu cầu.
 
-    Thứ tự chọn:
-    - Khoảng cách đến điểm đón tăng dần.
-    - Nếu bằng khoảng cách, dùng driverId làm thứ tự phụ ổn định.
+    Tài xế chưa được duyệt có thể đăng nhập theo Authentication API,
+    nhưng không được trở thành ứng viên hoặc nhận chuyến.
 
-    Thông số được lấy từ cấu hình và chụp lại khi bắt đầu:
+    Khoảng cách:
+    - Dùng khoảng cách địa lý giữa tọa độ tìm kiếm/điểm đón và vị trí tài xế.
+    - Đây không phải quãng đường tuyến xe chạy hoặc quãng đường tính cước.
+    - Xếp theo khoảng cách chưa làm tròn tăng dần.
+    - Khi bằng nhau, dùng driverId làm thứ tự phụ ổn định.
+
+    Hai phạm vi khác nhau:
+    - Nearby: mặc định 1 km để đáp ứng tiêu chí 13.
+    - Điều phối Booking: đề xuất 5 km.
+    - Thay radiusKm của nearby không thay đổi cấu hình DispatchProcess.
+
+    Thông số điều phối được chụp lại khi bắt đầu:
     - Bán kính: 5 km.
     - Thời hạn lời mời: 30 giây.
     - Tối đa 5 lời mời, gồm lời mời đầu tiên.
     - Tổng thời gian tìm: tối đa 180 giây.
-    - Tuổi vị trí tối đa để xét ứng viên: 30 giây.
+    - Tuổi vị trí tối đa: 30 giây.
 
-    Các giá trị trên là thông số đề xuất trong SRS.
-    Client không được gửi để thay đổi cấu hình điều phối.
+    Các giá trị trên là cấu hình đề xuất.
+    Client không được tự gửi cấu hình điều phối.
 
-    Tất cả thời hạn được kiểm tra bằng thời gian phía máy chủ.
-    Không chỉ dựa vào đồng hồ đếm ngược trên giao diện
-    hoặc việc dữ liệu đã bị xóa theo TTL hay chưa.
+    Thời hạn do máy chủ kiểm tra.
+    Không dựa vào đồng hồ giao diện hoặc việc Redis đã xóa key TTL hay chưa.
+    Nhận lại GPS cũ không được làm vị trí đó trở thành vị trí mới.
+    Quy tắc kiểm tra timestamp GPS phải thống nhất với Trip API.
 
-    Đây là tài liệu thiết kế, chưa xác nhận dịch vụ đã triển khai.
+    Kiến trúc:
+    - Dispatch, Booking, Trip và Fleet nằm trong CAB Core.
+    - Luồng accept cập nhật nguyên tử trong cab_core.
+    - Công việc nền, kết quả lời mời và deadline được lưu bền vững.
+    - Outbox được ghi cùng transaction nghiệp vụ.
+    - Worker phát sự kiện qua RabbitMQ sau commit.
+    - Lỗi Notification không đảo ngược phân công đã thành công.
+    - HTTP request từ client đi qua Gateway.
+    - POST khởi tạo điều phối là endpoint nội bộ, không mở tại Gateway.
+    - Worker cùng dịch vụ có thể gọi ca sử dụng trực tiếp thay vì HTTP.
+    - Việc Worker gọi CAB Core không được mô tả thành hai microservice độc lập.
+
+    Bảo mật:
+    - Kiểm tra chữ ký JWT, issuer, audience, thời hạn, Account và Session.
+    - Kiểm tra role và quyền trên từng đối tượng.
+    - Sai role trả 403.
+    - Đối tượng không tồn tại hoặc ngoài phạm vi người gọi trả 404.
+    - Service token và user token không thay thế nhau.
+    - Phản hồi dùng Cache-Control: no-store.
+    - Không ghi token hoặc vị trí đầy đủ vào log nếu không cần thiết.
+    - Giới hạn request tại Gateway; vượt giới hạn trả 429.
+    - Sử dụng HTTPS ngoài môi trường phát triển cục bộ.
+
+    Đây là tài liệu thiết kế, chưa xác nhận dịch vụ đã triển khai
+    hoặc vượt qua kiểm thử.
 
 servers:
   - url: /v1
-    description: Đường dẫn cơ sở dự kiến của CAB API.
+    description: |
+      Đường dẫn cơ sở trên API Gateway cho endpoint người dùng.
+      Endpoint nội bộ khởi tạo điều phối có server riêng.
 
 tags:
+  - name: DriverDiscovery
+    description: Tra cứu tài xế gần vị trí.
   - name: Dispatch
     description: Tiến trình tìm và phân công tài xế.
   - name: DriverTripRequest
@@ -68,61 +115,228 @@ security:
   - bearerAuth: []
 
 paths:
+  /drivers/nearby:
+    get:
+      tags: [DriverDiscovery]
+      operationId: searchNearbyDrivers
+      summary: Tra cứu tài xế đủ điều kiện gần một tọa độ
+      description: |
+        FR24, UC18, BRu27, AC16.
+        Đáp ứng tiêu chí 13 của rubric.
+
+        Quyền:
+        - CUSTOMER có Account ACTIVE và Session hợp lệ.
+        - OPERATOR có quyền tra cứu vận hành.
+        - DRIVER không dùng endpoint này để xem tài xế khác.
+
+        Không nhận customerId, driverId hoặc danh sách ứng viên từ client.
+        Query parameter ngoài danh sách được định nghĩa bị từ chối.
+
+        radiusKm mặc định 1.
+        Phạm vi hỗ trợ đề xuất của API này là lớn hơn 0 và tối đa 5 km.
+        Đây là giới hạn tra cứu của bản API, không phải thông số do rubric quy định.
+
+        Trang đầu:
+        - Kiểm tra tọa độ, bán kính, limit và quyền.
+        - Đọc dữ liệu ứng viên nhất quán tại snapshotAt.
+        - Lọc theo điều kiện Account, hồ sơ, hoạt động, xe và GPS.
+        - Chỉ giữ ứng viên có khoảng cách chưa làm tròn không vượt radiusKm.
+        - Sắp xếp khoảng cách tăng dần, sau đó driverId.
+        - Lưu kết quả tìm kiếm có thời hạn để phục vụ phân trang.
+
+        Endpoint không nhận loại dịch vụ, nên có thể trả nhiều vehicleType.
+        Điều phối Booking sẽ lọc thêm loại xe theo Booking.
+
+        Bảo vệ dữ liệu:
+        - Chỉ trả driverId, vehicleType và khoảng cách gần đúng.
+        - Không trả email, phone, giấy phép, biển số hoặc tọa độ chính xác.
+        - distanceMeters được làm tròn xuống theo bước 10 mét để hiển thị.
+        - Kiểm tra bán kính và sắp xếp dùng khoảng cách nội bộ chưa làm tròn.
+
+        Phân trang:
+        - Trang đầu không gửi cursor.
+        - Trang sau gửi nguyên nextCursor.
+        - Giữ nguyên latitude, longitude, radiusKm và limit.
+        - Cursor gắn với Account, bộ tham số và kết quả tìm kiếm.
+        - Cursor không được dùng để truy cập kết quả của Account khác.
+        - Cursor sai hoặc tham số không khớp trả 400 INVALID_CURSOR.
+        - Cursor hết hạn trả 400 CURSOR_EXPIRED.
+        - Kết quả tìm kiếm không được thay nội dung hoặc sắp xếp lại giữa các trang.
+        - hasMore=false thì không trả nextCursor.
+
+        Đề xuất kết quả tìm kiếm hiệu lực tối đa 30 giây từ snapshotAt.
+        Thời hạn thực tế được trả bằng expiresAt.
+        Mất dữ liệu snapshot không được âm thầm tạo kết quả mới dưới cursor cũ;
+        client phải bắt đầu lại từ trang đầu.
+
+        Mọi trang thể hiện điều kiện tài xế tại snapshotAt, không phải
+        cam kết tài xế vẫn AVAILABLE hoặc GPS vẫn mới ở thời điểm đọc trang sau.
+        Giao diện phải dùng snapshotAt để thể hiện thời điểm tra cứu.
+
+        Muốn có tình trạng mới nhất thì bắt đầu tìm kiếm mới, không dùng cursor cũ.
+        Khi phát hành lời mời và accept vẫn phải kiểm tra lại điều kiện hiện tại.
+
+        Không có ứng viên trả 200 với items=[].
+        Không trả khoảng cách giả bằng 0 khi không có dữ liệu.
+
+        Dữ liệu demo:
+        - Ít nhất năm tài xế có trạng thái/điều kiện khác nhau.
+        - Ít nhất hai người đủ điều kiện trong 1 km để thử phân trang.
+        - Có người ngoài bán kính, OFFLINE/BUSY, chưa duyệt hoặc GPS cũ.
+      parameters:
+        - name: latitude
+          in: query
+          required: true
+          description: Vĩ độ điểm tìm kiếm.
+          schema:
+            type: number
+            format: double
+            minimum: -90
+            maximum: 90
+        - name: longitude
+          in: query
+          required: true
+          description: Kinh độ điểm tìm kiếm.
+          schema:
+            type: number
+            format: double
+            minimum: -180
+            maximum: 180
+        - name: radiusKm
+          in: query
+          required: false
+          description: |
+            Bán kính tra cứu theo km.
+            Mặc định 1 km; không thay đổi bán kính điều phối Booking.
+          schema:
+            type: number
+            minimum: 0
+            exclusiveMinimum: true
+            maximum: 5
+            default: 1
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: |
+            Một trang của kết quả tìm kiếm tại snapshotAt.
+            Không tạo hoặc giữ chỗ tài xế.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NearbyDriverPage"
+        "400":
+          description: |
+            VALIDATION_ERROR, INVALID_CURSOR hoặc CURSOR_EXPIRED.
+            Có thể do tọa độ, bán kính, limit, tham số không được phép,
+            cursor không hợp lệ hoặc kết quả tìm kiếm không còn sử dụng được.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
   /bookings/{bookingId}/dispatch:
     post:
       tags: [Dispatch]
       operationId: startDispatch
-      summary: Khởi tạo điều phối cho Booking bằng lời gọi nội bộ
+      summary: Khởi tạo điều phối bằng lời gọi nội bộ
+      x-internal: true
+      servers:
+        - url: "http://{coreHost}:{corePort}/v1"
+          description: |
+            Địa chỉ nội bộ dự kiến trong Docker network.
+            Giá trị host/port phải khớp Compose khi triển khai.
+            Không công bố cổng này cho client.
+          variables:
+            coreHost:
+              default: cab-core-api
+            corePort:
+              default: "3000"
       security:
         - serviceBearerAuth: []
       description: |
         FR04, FR06, UC03.
 
-        Chỉ dịch vụ nội bộ được cấp quyền khởi tạo điều phối.
-        CUSTOMER, DRIVER và OPERATOR không gọi endpoint này
-        bằng access token người dùng.
+        Chỉ danh tính dịch vụ có quyền dispatch:start.
 
-        Không nhận điểm đón, loại xe, customerId hoặc danh sách
-        tài xế từ body. Đọc dữ liệu Booking từ nguồn tin cậy.
+        Gateway không định tuyến endpoint này cho client.
+        x-internal chỉ là chú thích tài liệu, không tự thực thi bảo vệ;
+        cấu hình mạng, route và xác thực phải thực hiện việc chặn.
+
+        CUSTOMER, DRIVER và OPERATOR không dùng user token để gọi.
+
+        Không có request body.
+        Điểm đón, loại xe và dữ liệu Booking được đọc từ cab_core.
 
         Khi chưa có DispatchProcess:
         - Booking phải tồn tại và đang FINDING_DRIVER.
-        - Ghi nhận DispatchProcess và cấu hình áp dụng.
-        - Khởi động việc tìm ứng viên.
-        - Trả 202; không chờ tài xế phản hồi.
+        - Đọc thời điểm Booking bắt đầu FINDING_DRIVER.
+        - Tạo tiến trình, configSnapshot và công việc bền vững.
+        - Trả 202 sau commit, không chờ tài xế phản hồi.
 
         startedAt là thời điểm Booking bắt đầu FINDING_DRIVER.
         deadlineAt = startedAt + maxSearchSeconds.
-        Việc giao lại lệnh hoặc khởi động lại dịch vụ
-        không được đặt lại đồng hồ tìm tài xế.
+
+        Nếu lệnh đến khi đã quá deadlineAt, không phát hành lời mời mới;
+        chốt kết quả hết thời gian theo trạng thái có thẩm quyền.
 
         bookingId là khóa chống tạo trùng tiến trình.
-        Nếu tiến trình đã tồn tại, trả 200 với tiến trình hiện có,
-        kể cả khi tiến trình đã kết thúc.
+        Khi tiến trình đã tồn tại, trả 200 với dữ liệu hiện tại,
+        kể cả tiến trình đã kết thúc.
 
-        Không tạo lại tiến trình hoặc đặt attemptCount về 0
-        khi cùng lời gọi được gửi lại.
+        Nhận diện tiến trình đã tồn tại trước điều kiện
+        FINDING_DRIVER dành cho khởi tạo mới.
 
-        Khi từ chối hoặc hết hạn:
-        - Đóng lời mời hiện tại.
-        - Kiểm tra giới hạn và chọn ứng viên khác.
-        - Không gửi lại tài xế đã được mời trong tiến trình này.
+        Gửi lại lệnh hoặc khởi động lại Worker không được:
+        - Tạo tiến trình thứ hai.
+        - Đặt lại startedAt/deadlineAt.
+        - Đặt attemptCount về 0.
+        - Quên các tài xế đã được mời.
 
-        Tiến trình kết thúc khi:
-        - Phân công thành công.
-        - Booking bị hủy.
-        - Không còn ứng viên hợp lệ.
-        - Đạt giới hạn lời mời.
-        - Đạt deadlineAt.
+        Mỗi lần phát hành lời mời:
+        - Kiểm tra lại ứng viên hiện tại.
+        - Bảo đảm không có lời mời PENDING khác của Booking.
+        - Ghi TripRequest, tăng attemptCount và ghi outbox nhất quán.
+        - expiresAt không vượt deadlineAt.
 
-        Lỗi kỹ thuật tạm thời không được tự coi là
-        không có tài xế. Giữ dữ liệu để khôi phục xử lý;
-        thời hạn điều phối vẫn tính từ startedAt ban đầu.
+        Từ chối/hết hạn:
+        - Chốt lời mời cũ.
+        - Tiếp tục ứng viên chưa được mời nếu còn giới hạn.
+        - Không tạo hai lượt điều phối do công việc được giao lặp.
+
+        Kết thúc khi phân công thành công, Booking bị hủy,
+        hết ứng viên hợp lệ, hết số lời mời hoặc hết thời gian.
+
+        Kết thúc không phân công phải cập nhật DispatchProcess,
+        Booking NO_DRIVER_FOUND, lời mời còn hiệu lực,
+        CustomerActivityGuard và outbox nhất quán.
+
+        Lỗi kỹ thuật không đồng nghĩa không có tài xế.
+        Giữ dữ liệu để phục hồi; không đặt lại thời hạn tìm.
+        Sau khi phục hồi, kiểm tra deadline và trạng thái trước khi xử lý tiếp.
       parameters:
         - $ref: "#/components/parameters/BookingId"
       responses:
         "202":
-          description: Đã ghi nhận tiến trình để xử lý điều phối.
+          description: |
+            Đã ghi nhận tiến trình mới.
+            Có thể đã chốt hết hạn nếu lệnh đến sau deadline.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
@@ -131,9 +345,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/DispatchProcess"
         "200":
-          description: |
-            Tiến trình đã tồn tại.
-            Trả dữ liệu hiện tại, không khởi tạo lại.
+          description: Tiến trình đã tồn tại; trả hiện trạng, không khởi tạo lại.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
@@ -144,32 +356,18 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
-          description: |
-            UNAUTHENTICATED_SERVICE.
-            Thiếu hoặc sai thông tin xác thực dịch vụ.
-            Token người dùng không thay thế được token dịch vụ.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+          $ref: "#/components/responses/UnauthenticatedService"
         "403":
-          description: |
-            FORBIDDEN_SERVICE.
-            Dịch vụ đã được xác thực nhưng không có quyền khởi tạo điều phối.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+          $ref: "#/components/responses/ForbiddenService"
         "404":
-          description: BOOKING_NOT_FOUND.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+          $ref: "#/components/responses/BookingNotFound"
         "409":
           description: |
             BOOKING_NOT_DISPATCHABLE.
             Chưa có tiến trình và Booking không ở FINDING_DRIVER.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
@@ -189,22 +387,28 @@ paths:
 
         Quyền:
         - CUSTOMER sở hữu Booking.
-        - OPERATOR được phép tra cứu vận hành.
+        - OPERATOR có quyền tra cứu vận hành.
 
-        DRIVER không dùng endpoint này để xem Booking khác.
+        DRIVER trả 403.
 
-        Không trả danh sách tài xế ứng viên, vị trí ứng viên
-        hoặc thông tin cá nhân của tài xế chưa được phân công.
+        Kiểm tra quyền đối với Booking trước khi tiết lộ
+        việc DispatchProcess đã tồn tại hay chưa.
+
+        Booking không tồn tại hoặc ngoài phạm vi CUSTOMER
+        trả 404 BOOKING_NOT_FOUND.
+
+        Booking thuộc quyền nhưng chưa có tiến trình
+        trả 404 DISPATCH_NOT_FOUND.
+        Điều này không đồng nghĩa Booking không tồn tại.
+
+        Không trả danh sách ứng viên, vị trí hoặc thông tin cá nhân
+        của tài xế chưa được phân công.
 
         DRIVER_FOUND có driverId và tripId.
-        Sau đó theo dõi chuyến qua Trip API.
+        Sau đó theo dõi qua Trip API.
 
-        Nếu Trip bị hủy sau khi phân công, tiến trình vẫn
-        giữ DRIVER_FOUND vì đó là kết quả điều phối đã hoàn tất.
-        Việc hủy sau phân công được quản lý ở Trip.
-
-        Khi Booking chưa có DispatchProcess, trả 404.
-        Điều này không đồng nghĩa Booking không tồn tại.
+        Tiến trình giữ DRIVER_FOUND sau khi Trip hoàn thành hoặc bị hủy.
+        Trạng thái thực hiện chuyến không được ghi đè vào kết quả điều phối.
       parameters:
         - $ref: "#/components/parameters/BookingId"
       responses:
@@ -226,11 +430,16 @@ paths:
         "404":
           description: |
             BOOKING_NOT_FOUND hoặc DISPATCH_NOT_FOUND.
-            Không tìm thấy Booking hoặc chưa có tiến trình điều phối.
+            Chỉ trả DISPATCH_NOT_FOUND sau khi xác nhận quyền trên Booking.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
         default:
@@ -245,49 +454,46 @@ paths:
         FR05, UC05.
 
         Chỉ DRIVER có Account ACTIVE và Session hợp lệ.
+        CUSTOMER và OPERATOR trả 403.
 
-        driverId được xác định từ tài khoản đăng nhập.
-        Không nhận driverId của người khác trong query hoặc body.
+        driverId được xác định từ Account.
+        Không nhận driverId khác trong query.
+        Query parameter ngoài danh sách bị từ chối.
 
         Chỉ trả lời mời:
         - Gửi tới tài xế hiện tại.
-        - Đang PENDING.
-        - Chưa đến expiresAt.
-        - Thuộc Booking và tiến trình còn cho phép nhận chuyến.
-        - Tài xế còn đủ điều kiện phản hồi nhận chuyến.
+        - PENDING.
+        - Chưa đến expiresAt hoặc deadlineAt.
+        - Booking còn FINDING_DRIVER và tiến trình còn SEARCHING.
+        - Tài xế còn đủ điều kiện nhận chuyến.
 
-        Sắp xếp theo sentAt tăng dần, sau đó tripRequestId.
+        Tài xế chưa APPROVED hoặc không còn đủ điều kiện
+        nhận danh sách rỗng, không được cấp lời mời có thể nhận.
 
-        Kết quả danh sách không giữ chỗ hoặc bảo đảm tài xế
-        sẽ nhận thành công. Phải kiểm tra lại tại thời điểm accept.
+        Sắp xếp sentAt tăng dần, sau đó tripRequestId.
 
-        Nếu tài xế vừa trở thành BUSY, các lời mời khác phải mất
-        hiệu lực đối với tài xế đó và không tiếp tục xuất hiện
-        như lời mời có thể nhận.
+        Cursor gắn với tài xế, limit và thứ tự sắp xếp.
+        Giữ nguyên limit khi lấy trang sau.
+        Cursor sai trả 400 INVALID_CURSOR.
+        Cursor hết hạn trả 400 CURSOR_EXPIRED.
 
-        Mỗi trang là dữ liệu tại thời điểm truy vấn.
+        Danh sách này là dữ liệu tại thời điểm truy vấn từng trang,
+        không dùng snapshot cố định như nearby.
         Lời mời có thể hết hiệu lực giữa hai lần đọc.
+
+        Kết quả không giữ chỗ hoặc bảo đảm accept thành công.
+        Accept phải kiểm tra lại các điều kiện.
+
+        Khi tài xế trở thành BUSY, các lời mời khác phải mất hiệu lực
+        và không xuất hiện như lời mời có thể nhận.
       parameters:
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 20
-        - name: cursor
-          in: query
-          description: |
-            Mã phân trang do máy chủ trả.
-            Client không tự suy diễn hoặc chỉnh sửa nội dung.
-          schema:
-            type: string
-            minLength: 1
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
         "200":
           description: |
             Danh sách lời mời còn hiệu lực.
-            Không có lời mời thì items là mảng rỗng.
+            Không có lời mời thì items=[] và nextCursor=null.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
@@ -296,11 +502,20 @@ paths:
               schema:
                 $ref: "#/components/schemas/PendingTripRequestPage"
         "400":
-          $ref: "#/components/responses/BadRequest"
+          description: VALIDATION_ERROR, INVALID_CURSOR hoặc CURSOR_EXPIRED.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
         default:
@@ -310,24 +525,30 @@ paths:
     get:
       tags: [DriverTripRequest]
       operationId: getMyTripRequest
-      summary: Xem chi tiết hoặc kết quả xử lý một lời mời
+      summary: Xem chi tiết hoặc kết quả xử lý lời mời
       description: |
         FR05, UC05.
 
         Chỉ DRIVER được chỉ định trong TripRequest.
+        Sai role trả 403.
+        Lời mời không tồn tại hoặc thuộc tài xế khác trả 404.
 
-        Cho phép xem lời mời đã ACCEPTED, REJECTED,
-        EXPIRED hoặc CANCELLED để xác định kết quả sau
-        khi mất mạng hoặc mất phản hồi.
+        Cho phép xem ACCEPTED, REJECTED, EXPIRED hoặc CANCELLED
+        để xác định kết quả sau khi mất mạng/mất phản hồi.
 
-        Nếu ACCEPTED, trả tripId của lần phân công đã thành công.
+        Nếu ACCEPTED, trả tripId đã được tạo.
 
-        Không được trình bày lời mời đã quá expiresAt
-        như lời mời vẫn có thể nhận.
-        Máy chủ phải xác định trạng thái hiệu lực trước khi trả.
-
-        Không cần tài xế còn AVAILABLE để xem kết quả cũ,
+        Không yêu cầu Driver còn AVAILABLE hoặc APPROVED để xem kết quả cũ,
         nhưng Account và Session vẫn phải hợp lệ.
+
+        Không trả lời mời quá hạn hoặc đã mất điều kiện dưới dạng
+        PENDING có thể nhận.
+
+        Máy chủ xác định và chốt trạng thái kết thúc cần thiết
+        bằng kiểm tra điều kiện trước khi trả.
+        Không tạo sự kiện đóng lặp.
+        Nếu chưa thể xác định an toàn thì trả lỗi tạm thời,
+        không dựng một kết quả thành công không được lưu.
       parameters:
         - $ref: "#/components/parameters/TripRequestId"
       responses:
@@ -348,6 +569,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/TripRequestNotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
         default:
@@ -362,62 +585,73 @@ paths:
         FR05, BRu01 đến BRu04, UC05, AC03.
 
         Chỉ DRIVER được chỉ định trong TripRequest.
-        Không nhận driverId, customerId hoặc tripId từ body.
+        Sai role trả 403.
+        Lời mời không tồn tại hoặc của người khác trả 404.
 
-        Khi lời mời chưa được xử lý:
+        Endpoint không có request body.
+        Không nhận driverId, customerId, vehicleId hoặc tripId từ client.
+        Không yêu cầu Idempotency-Key; dùng tripRequestId làm khóa tự nhiên.
+
+        Xác thực và kiểm tra quyền trước khi xét replay.
+
+        Nếu đã ACCEPTED bởi tài xế này:
+        - Trả lại kết quả ACCEPTED đã lưu.
+        - Không yêu cầu Driver hiện còn AVAILABLE.
+        - Không tạo Trip, lịch sử hoặc outbox mới.
+        - Không đặt Driver về BUSY nếu Trip cũ đã kết thúc.
+        - Không thay đổi trạng thái của Trip mới mà tài xế đang thực hiện.
+
+        Khi nhận mới, trong transaction của cab_core:
+        - Khóa các dữ liệu điều phối và tài nguyên theo thứ tự thống nhất.
+        - Kiểm tra lại Account/Session và quyền.
         - TripRequest phải PENDING.
-        - Thời gian hiện tại phải nhỏ hơn expiresAt và deadlineAt.
-        - Booking vẫn FINDING_DRIVER.
-        - DispatchProcess vẫn SEARCHING.
-        - Tài xế và phương tiện còn đủ điều kiện.
-        - Tài xế không có Trip đang hoạt động.
+        - Thời gian máy chủ phải nhỏ hơn expiresAt và deadlineAt.
+        - Booking phải FINDING_DRIVER.
+        - DispatchProcess phải SEARCHING.
+        - Driver phải APPROVED và AVAILABLE.
+        - Xe ACTIVE, phân công hiện hành hợp lệ, đúng loại dịch vụ.
+        - GPS còn hợp lệ, mới và nằm trong bán kính điều phối.
+        - Driver và Vehicle không có Trip đang hoạt động.
+        - Trip ERROR chưa đóng vẫn được tính là đang hoạt động.
 
-        Kiểm tra lại vị trí và điều kiện hoạt động khi nhận.
-        Dữ liệu ứng viên lúc gửi lời mời không thay thế kiểm tra này.
-
-        Chỉ trả 200 sau khi xác nhận được kết quả nhất quán:
+        Khi thành công, cập nhật trong cùng transaction:
         - TripRequest ACCEPTED.
         - Booking DRIVER_ASSIGNED.
         - DispatchProcess DRIVER_FOUND.
-        - Có đúng một Trip với tài xế và phương tiện hợp lệ.
+        - Tạo đúng một Trip.
         - Driver BUSY.
+        - Gắn Trip vào CustomerActivityGuard của Booking.
+        - Thu hồi lời mời cạnh tranh gửi cùng Driver.
+        - Ghi công việc tiếp tục điều phối cho Booking khác khi phù hợp.
+        - Ghi lịch sử, audit, kết quả và outbox.
 
-        Khi phân công thành công:
-        - Ghi nhận thông báo cho khách hàng.
-        - Các lời mời khác gửi cùng tài xế mất hiệu lực.
-        - Các Booking khác tiếp tục tìm tài xế phù hợp
-          nếu còn điều kiện và thời gian.
+        Chỉ trả 200 sau commit.
 
-        Chống xử lý trùng:
-        - tripRequestId xác định một thao tác nhận lời mời.
-        - Nếu đã ACCEPTED bởi chính tài xế này, trả lại kết quả đã lưu.
-        - Không tạo Trip, thông báo hoặc lịch sử phân công lần nữa.
-        - Không đặt tài xế về BUSY khi gửi lại kết quả của
-          một chuyến đã kết thúc.
-        - Kiểm tra kết quả ACCEPTED đã lưu trước điều kiện
-          AVAILABLE dành cho thao tác nhận mới.
+        Khóa Account, chuyển OFFLINE, đổi xe, hủy Booking và accept
+        phải phối hợp trên dữ liệu có thẩm quyền.
+        Không chỉ kiểm tra snapshot nearby hoặc cache.
 
         Tranh chấp:
-        - Hai Booking không được cùng giành một tài xế.
-        - Hủy Booking và nhận lời mời không được cùng thành công.
-        - Nếu hủy thắng, accept bị từ chối.
-        - Nếu accept thắng, hủy Booking bị từ chối;
-          hủy tiếp theo phải thực hiện ở Trip API.
+        - Hai Booking không cùng giành được một tài xế.
+        - Hủy Booking và accept không cùng thành công.
+        - Hủy thắng thì accept bị từ chối.
+        - Accept thắng thì hủy Booking bị từ chối;
+          hủy sau đó phải qua Trip API.
 
-        Nếu phân công đang hoàn tất do một request khác,
-        trả 409 REQUEST_IN_PROGRESS, không khởi tạo lần phân công mới.
+        Nếu request khác đang xử lý cùng lời mời,
+        có thể trả 409 REQUEST_IN_PROGRESS.
+        Không tạo lần phân công thứ hai.
 
-        Nếu lỗi kỹ thuật khiến kết quả chưa rõ:
+        Nếu mất phản hồi hoặc lỗi tạm thời:
+        - Tra cứu hoặc gửi lại cùng tripRequestId.
+        - Không suy đoán thất bại chỉ vì chưa nhận response.
         - Không trả thành công giả.
-        - Cho phép tra cứu và gửi lại cùng tripRequestId.
-        - Hệ thống phải khôi phục hoặc hoàn tất kết quả nhất quán.
+        - Lỗi Notification sau commit không đảo ngược phân công.
       parameters:
         - $ref: "#/components/parameters/TripRequestId"
       responses:
         "200":
-          description: |
-            Đã phân công thành công hoặc trả lại kết quả
-            phân công trước đó của cùng lời mời.
+          description: Phân công thành công hoặc replay kết quả ACCEPTED đã lưu.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
@@ -444,11 +678,16 @@ paths:
             - DRIVER_NOT_ELIGIBLE.
             - REQUEST_IN_PROGRESS.
 
-            Không tạo thêm Trip khi xảy ra xung đột.
+            Không tạo thêm Trip khi có xung đột.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
         default:
@@ -463,24 +702,34 @@ paths:
         FR05, FR06, UC05.
 
         Chỉ DRIVER được chỉ định trong TripRequest.
+        Sai role trả 403.
+        Lời mời không tồn tại hoặc của tài xế khác trả 404.
+
+        Không yêu cầu Idempotency-Key; dùng tripRequestId làm khóa tự nhiên.
+
+        Sau xác thực quyền và kiểm tra cấu trúc request,
+        nếu lời mời đã REJECTED:
+        - Trả 200 với kết quả đã lưu.
+        - Không ghi đè lý do hoặc thời điểm phản hồi.
+        - Không tạo thêm công việc điều phối hoặc sự kiện.
+        - Không yêu cầu tài xế còn AVAILABLE để nhận lại kết quả cũ.
 
         Khi xử lý mới:
         - Lời mời phải PENDING và còn hiệu lực.
-        - Booking và tiến trình chưa kết thúc.
-        - Ghi nhận REJECTED và thời điểm phản hồi.
-        - Lưu lý do nếu tài xế cung cấp.
-        - Kích hoạt tìm ứng viên khác trong giới hạn còn lại.
+        - Booking còn FINDING_DRIVER.
+        - DispatchProcess còn SEARCHING.
+        - Lời mời chưa bị thu hồi do tài xế mất điều kiện.
+        - Ghi REJECTED, resolvedAt và lý do nếu có.
+        - Ghi công việc điều phối tiếp trong cùng transaction.
+        - Commit trước khi trả thành công.
 
-        Nếu đã REJECTED:
-        - Trả 200 với kết quả đã lưu.
-        - Không ghi đè lý do hoặc thời điểm phản hồi ban đầu.
-        - Không kích hoạt thêm vòng điều phối trùng.
+        Lý do là tùy chọn; bỏ body hoặc gửi object rỗng nếu không có lý do.
+        Không chấp nhận null hoặc chuỗi chỉ có khoảng trắng cho reason.
 
-        Nếu đã ACCEPTED, EXPIRED hoặc CANCELLED:
-        - Trả 409.
-        - Không chuyển ngược trạng thái.
+        Nếu đã ACCEPTED, EXPIRED hoặc CANCELLED thì trả 409.
+        Không chuyển ngược trạng thái.
 
-        Từ chối lời mời không đồng nghĩa hủy một Trip đã nhận.
+        Từ chối lời mời không hủy Trip đã nhận.
         Hủy Trip được thực hiện qua Trip API.
       parameters:
         - $ref: "#/components/parameters/TripRequestId"
@@ -494,7 +743,7 @@ paths:
               reason: "Tôi không thể đến điểm đón."
       responses:
         "200":
-          description: Đã từ chối hoặc trả lại kết quả từ chối trước đó.
+          description: Đã từ chối hoặc replay kết quả REJECTED đã lưu.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
@@ -515,10 +764,15 @@ paths:
             TRIP_REQUEST_ALREADY_ACCEPTED,
             TRIP_REQUEST_EXPIRED,
             TRIP_REQUEST_CANCELLED hoặc REQUEST_IN_PROGRESS.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
         "503":
           $ref: "#/components/responses/ServiceUnavailable"
         default:
@@ -531,28 +785,30 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: |
-        Token người dùng do Authentication API cấp.
-        Kiểm tra Account, Session, vai trò và quyền trên tài nguyên.
+        User access token do Authentication API cấp.
+        Kiểm tra chữ ký, thuật toán cho phép, issuer, audience,
+        thời hạn, Account, Session, role và quyền đối tượng.
+        Decode được payload không có nghĩa token hợp lệ.
+        Verification token đăng ký tài xế không dùng thay access token.
 
     serviceBearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
       description: |
-        Thông tin xác thực dịch vụ nội bộ.
-
-        Phải kiểm tra bên phát hành, bên nhận, thời hạn,
+        Token dịch vụ nội bộ.
+        Kiểm tra chữ ký, issuer, audience, thời hạn,
         danh tính dịch vụ và quyền dispatch:start.
-
-        Không chấp nhận JWT người dùng thay thế.
-        Phân biệt bằng nội dung và chính sách xác minh token,
-        không chỉ dựa vào tên security scheme trong tài liệu.
+        Không chấp nhận user JWT thay thế.
+        Phân biệt bằng chính sách xác minh và nội dung token,
+        không chỉ dựa vào tên security scheme.
 
   parameters:
     BookingId:
       name: bookingId
       in: path
       required: true
+      description: Mã Booking.
       schema:
         $ref: "#/components/schemas/Identifier"
       example: "BK0001"
@@ -561,9 +817,36 @@ components:
       name: tripRequestId
       in: path
       required: true
+      description: Mã lời mời, không phải bookingId hoặc tripId.
       schema:
         $ref: "#/components/schemas/Identifier"
       example: "TREQ0001"
+
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: |
+        Số bản ghi tối đa mỗi trang.
+        Giữ nguyên giá trị khi dùng cursor.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: |
+        nextCursor của trang trước.
+        Trang đầu bỏ tham số này.
+        Không gửi chuỗi rỗng, tự tạo hoặc chỉnh sửa cursor.
+        Cursor được bảo vệ chống sửa và gắn với người gọi.
+      schema:
+        type: string
+        minLength: 1
 
   headers:
     NoStore:
@@ -572,11 +855,18 @@ components:
         type: string
         enum: [no-store]
 
+    RetryAfter:
+      description: Số giây tối thiểu chờ trước khi thử lại.
+      schema:
+        type: integer
+        minimum: 1
+      example: 30
+
   schemas:
     Identifier:
       type: string
       minLength: 1
-      description: Mã định danh do hệ thống cấp.
+      description: Mã hệ thống cấp; không suy diễn quyền từ cấu trúc mã.
 
     VehicleType:
       type: string
@@ -591,6 +881,7 @@ components:
           type: string
           minLength: 1
           pattern: '\S'
+          description: Văn bản địa chỉ; không phải HTML được phép thực thi.
         latitude:
           type: number
           format: double
@@ -602,25 +893,107 @@ components:
           minimum: -180
           maximum: 180
 
+    NearbyDriver:
+      type: object
+      additionalProperties: false
+      required: [driverId, vehicleType, distanceMeters]
+      properties:
+        driverId:
+          $ref: "#/components/schemas/Identifier"
+        vehicleType:
+          $ref: "#/components/schemas/VehicleType"
+        distanceMeters:
+          type: integer
+          minimum: 0
+          multipleOf: 10
+          description: |
+            Khoảng cách địa lý tại snapshotAt, làm tròn xuống theo bước 10 mét.
+            Không phải quãng đường xe chạy hoặc dữ liệu tính cước.
+            Lọc bán kính và sắp xếp dùng khoảng cách chưa làm tròn.
+      description: |
+        Tài xế đủ điều kiện tại snapshotAt.
+        Không chứa vị trí chính xác, phone, email, giấy phép hoặc biển số.
+
+    NearbyDriverPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - radiusKm
+        - limit
+        - snapshotAt
+        - expiresAt
+        - hasMore
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/NearbyDriver"
+          description: Không vượt limit; các trang dùng cùng tập kết quả.
+        radiusKm:
+          type: number
+          minimum: 0
+          exclusiveMinimum: true
+          maximum: 5
+          description: Bán kính đã áp dụng.
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+        snapshotAt:
+          type: string
+          format: date-time
+          description: Thời điểm kiểm tra dữ liệu và tạo kết quả tìm kiếm.
+        expiresAt:
+          type: string
+          format: date-time
+          description: |
+            Thời điểm kết quả tìm kiếm hết hiệu lực.
+            Đề xuất tối đa 30 giây sau snapshotAt.
+        hasMore:
+          type: boolean
+        nextCursor:
+          type: string
+          minLength: 1
+          description: Chỉ có khi hasMore=true.
+      oneOf:
+        - required: [nextCursor]
+          properties:
+            hasMore:
+              type: boolean
+              enum: [true]
+            items:
+              type: array
+              minItems: 1
+              items:
+                $ref: "#/components/schemas/NearbyDriver"
+        - properties:
+            hasMore:
+              type: boolean
+              enum: [false]
+          not:
+            required: [nextCursor]
+      description: |
+        Không trả totalCount giả.
+        Trang cuối không có nextCursor.
+        Account và quyền người gọi vẫn được kiểm tra ở mỗi trang.
+
     DispatchStatus:
       type: string
-      enum:
-        - SEARCHING
-        - DRIVER_FOUND
-        - NO_DRIVER_AVAILABLE
-        - CANCELLED
+      enum: [SEARCHING, DRIVER_FOUND, NO_DRIVER_AVAILABLE, CANCELLED]
       description: |
         SEARCHING: đang điều phối.
         DRIVER_FOUND: đã phân công và tạo Trip.
-        NO_DRIVER_AVAILABLE: kết thúc tìm mà không phân công được.
-        CANCELLED: kết thúc do Booking bị hủy trước phân công.
+        NO_DRIVER_AVAILABLE: kết thúc không phân công được.
+        CANCELLED: kết thúc do Booking hủy trước phân công.
 
-        Ánh xạ kết quả:
+        Ánh xạ:
         - DRIVER_FOUND tương ứng Booking DRIVER_ASSIGNED.
         - NO_DRIVER_AVAILABLE tương ứng Booking NO_DRIVER_FOUND.
         - CANCELLED tương ứng Booking CANCELLED.
 
-        DispatchStatus không thay thế BookingStatus hoặc TripStatus.
+        Không thay thế BookingStatus hoặc TripStatus.
 
     DispatchConfigSnapshot:
       type: object
@@ -654,9 +1027,9 @@ components:
           minimum: 1
           example: 30
       description: |
-        Cấu hình được giữ nguyên trong suốt tiến trình.
-        Các ví dụ bám theo thông số đề xuất trong SRS.
-        Không nhận cấu hình này từ client tạo Booking.
+        Cấu hình không đổi trong suốt tiến trình.
+        Client không được tự gán.
+        Nearby radiusKm không thay đổi cấu hình này.
 
     DispatchProcess:
       type: object
@@ -678,12 +1051,13 @@ components:
           type: integer
           minimum: 0
           description: |
-            Số TripRequest đã phát hành, bao gồm lời mời đầu tiên.
-            Không tăng do gửi lại cùng một thông báo/lời mời.
-            Không vượt maxOffers của configSnapshot.
+            Số TripRequest đã phát hành, gồm lời mời đầu tiên.
+            Không tăng vì gửi lại message của cùng lời mời.
+            Không vượt maxOffers.
         startedAt:
           type: string
           format: date-time
+          description: Thời điểm Booking bắt đầu FINDING_DRIVER.
         deadlineAt:
           type: string
           format: date-time
@@ -699,9 +1073,7 @@ components:
             - NO_ELIGIBLE_DRIVER
             - OFFER_LIMIT_REACHED
             - SEARCH_TIMEOUT
-          description: |
-            Lý do kết thúc không phân công được.
-            Không dùng cho lỗi phụ thuộc kỹ thuật tạm thời.
+          description: Không dùng để che lỗi phụ thuộc kỹ thuật.
         endedAt:
           type: string
           format: date-time
@@ -745,15 +1117,14 @@ components:
               - required: [driverId]
               - required: [tripId]
               - required: [failureReason]
+      description: |
+        Kết quả và cấu hình được lưu bền vững.
+        Trường chưa áp dụng được bỏ, không gửi null.
+        Tiến trình kết thúc không được mở lại bằng replay.
 
     TripRequestStatus:
       type: string
-      enum:
-        - PENDING
-        - ACCEPTED
-        - REJECTED
-        - EXPIRED
-        - CANCELLED
+      enum: [PENDING, ACCEPTED, REJECTED, EXPIRED, CANCELLED]
 
     TripRequest:
       type: object
@@ -783,36 +1154,35 @@ components:
           $ref: "#/components/schemas/VehicleType"
         note:
           type: string
-          description: Ghi chú đón khách từ Booking nếu có.
+          description: Ghi chú đón khách; xử lý như văn bản.
         status:
           $ref: "#/components/schemas/TripRequestStatus"
         sentAt:
           type: string
           format: date-time
-          description: Thời điểm máy chủ phát hành lời mời.
+          description: |
+            Thời điểm máy chủ phát hành lời mời.
+            Không phải thời điểm Notification được đọc hoặc SMS được giao.
         expiresAt:
           type: string
           format: date-time
           description: |
-            Giá trị nhỏ hơn hoặc bằng:
-            - sentAt + offerTimeoutSeconds; và
-            - deadlineAt của DispatchProcess.
+            Không vượt sentAt + offerTimeoutSeconds hoặc deadlineAt.
 
             Khi thời gian hiện tại bằng hoặc vượt expiresAt,
             lời mời không còn được nhận.
 
-            Đọc lại hoặc gửi lại thông báo không gia hạn thời điểm này.
+            Đọc lại/gửi lại thông báo không gia hạn.
         resolvedAt:
           type: string
           format: date-time
-          description: Thời điểm lời mời chuyển sang trạng thái kết thúc.
+          description: Thời điểm máy chủ ghi nhận trạng thái kết thúc.
         tripId:
           $ref: "#/components/schemas/Identifier"
         rejectReason:
           type: string
           minLength: 1
           pattern: '\S'
-          description: Lý do từ chối nếu tài xế đã cung cấp.
         closureReason:
           type: string
           enum:
@@ -821,10 +1191,6 @@ components:
             - BOOKING_CANCELLED
             - DRIVER_UNAVAILABLE
             - DISPATCH_FINISHED
-          description: |
-            RESPONSE_TIMEOUT hoặc SEARCH_TIMEOUT dùng cho EXPIRED.
-            BOOKING_CANCELLED, DRIVER_UNAVAILABLE hoặc DISPATCH_FINISHED
-            dùng cho CANCELLED.
       oneOf:
         - properties:
             status:
@@ -882,11 +1248,12 @@ components:
               - required: [tripId]
               - required: [rejectReason]
       description: |
-        Dữ liệu lời mời chỉ được trả cho tài xế được chỉ định.
-        Không chứa danh sách tài xế cạnh tranh hoặc hồ sơ khách hàng đầy đủ.
+        Chỉ trả cho tài xế được chỉ định.
+        Không chứa hồ sơ khách hàng đầy đủ hoặc danh sách tài xế cạnh tranh.
 
-        Trường chưa áp dụng được bỏ khỏi response, không gửi null.
-        Lời mời đã kết thúc không quay lại PENDING.
+        Trường chưa áp dụng được bỏ, không gửi null.
+        Lời mời kết thúc không quay lại PENDING.
+        ACCEPTED giữ tripId lịch sử kể cả khi Trip đã kết thúc.
 
     PendingTripRequest:
       allOf:
@@ -922,14 +1289,20 @@ components:
       properties:
         items:
           type: array
+          maxItems: 100
           items:
             $ref: "#/components/schemas/PendingTripRequest"
+          description: Không vượt limit; chỉ chứa lời mời hiện còn hiệu lực.
         nextCursor:
           type: string
+          minLength: 1
           nullable: true
           description: |
-            Mã lấy trang tiếp theo.
-            null khi không còn trang tiếp theo tại thời điểm truy vấn.
+            Cursor trang tiếp theo.
+            null khi không còn kết quả tại thời điểm truy vấn.
+      description: |
+        Giữ cấu trúc phân trang lời mời của phiên bản 1.1.
+        Lời mời có thể hết hạn trước khi client đọc trang kế tiếp.
 
     RejectTripRequestRequest:
       type: object
@@ -940,8 +1313,8 @@ components:
           minLength: 1
           pattern: '\S'
           description: |
-            Lý do tùy chọn.
-            Nếu không cung cấp, bỏ trường hoặc bỏ body.
+            Lý do tùy chọn, xử lý như văn bản.
+            Nếu không có, bỏ trường hoặc bỏ body.
 
     FieldError:
       type: object
@@ -963,18 +1336,24 @@ components:
         message:
           type: string
           description: |
-            Thông báo an toàn, không chứa token, stack trace
-            hoặc dữ liệu của người không liên quan.
+            Không chứa token, stack trace, chi tiết database,
+            tọa độ hoặc dữ liệu của người không liên quan.
         details:
           type: array
           items:
             $ref: "#/components/schemas/FieldError"
         correlationId:
           type: string
+          description: Mã tham chiếu để kiểm tra lỗi phía máy chủ.
 
   responses:
     BadRequest:
-      description: VALIDATION_ERROR. Tham số hoặc dữ liệu không hợp lệ.
+      description: |
+        VALIDATION_ERROR.
+        Tham số/body không hợp lệ hoặc chứa trường không được phép.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
           schema:
@@ -983,49 +1362,159 @@ components:
     Unauthenticated:
       description: |
         UNAUTHENTICATED.
-        Token thiếu/sai/hết hạn hoặc Session không hợp lệ.
+        Token thiếu/sai/hết hạn/bị sửa hoặc Session không hợp lệ.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+          example:
+            errorCode: UNAUTHENTICATED
+            message: "Phiên đăng nhập không hợp lệ. Vui lòng đăng nhập lại."
 
     Forbidden:
       description: |
         FORBIDDEN hoặc ACCOUNT_NOT_ACTIVE.
-        Không đúng vai trò, không có quyền với tài nguyên,
-        hoặc tài khoản không ACTIVE.
+        Đúng danh tính nhưng role không được gọi chức năng
+        hoặc Account của người gọi không ACTIVE.
+
+        Đối tượng ngoài phạm vi người gọi dùng 404,
+        không trả thông tin chủ sở hữu trong lỗi.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            wrongRole:
+              value:
+                errorCode: FORBIDDEN
+                message: "Bạn không có quyền sử dụng chức năng này."
+            inactiveAccount:
+              value:
+                errorCode: ACCOUNT_NOT_ACTIVE
+                message: "Tài khoản hiện không được phép sử dụng chức năng này."
+
+    UnauthenticatedService:
+      description: |
+        UNAUTHENTICATED_SERVICE.
+        Thiếu/sai token dịch vụ.
+        User token không thay thế được service token.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
 
-    TripRequestNotFound:
-      description: TRIP_REQUEST_NOT_FOUND. Không tìm thấy lời mời.
+    ForbiddenService:
+      description: |
+        FORBIDDEN_SERVICE.
+        Danh tính dịch vụ hợp lệ nhưng không có quyền dispatch:start.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+
+    BookingNotFound:
+      description: |
+        BOOKING_NOT_FOUND.
+        Không tìm thấy Booking trong phạm vi được phép.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            errorCode: BOOKING_NOT_FOUND
+            message: "Không tìm thấy yêu cầu đặt xe."
+
+    TripRequestNotFound:
+      description: |
+        TRIP_REQUEST_NOT_FOUND.
+        Lời mời không tồn tại hoặc không thuộc tài xế đang đăng nhập.
+        Không phân biệt hai trường hợp trong thông báo.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            errorCode: TRIP_REQUEST_NOT_FOUND
+            message: "Không tìm thấy lời mời nhận chuyến."
+
+    TooManyRequests:
+      description: |
+        RATE_LIMIT_EXCEEDED.
+        Vượt giới hạn theo IP, tài khoản hoặc chức năng.
+
+        Chờ Retry-After trước khi thử lại.
+        Accept/reject tiếp tục dùng đúng tripRequestId cũ.
+
+        Chờ rate limit không gia hạn lời mời.
+        Kết quả trước đã commit không bị mất khi request mới nhận 429.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            errorCode: RATE_LIMIT_EXCEEDED
+            message: "Bạn gửi yêu cầu quá thường xuyên. Vui lòng thử lại sau."
 
     ServiceUnavailable:
       description: |
         SERVICE_UNAVAILABLE.
-        Phụ thuộc cần thiết không sẵn sàng để xử lý an toàn.
+        Không đủ phụ thuộc để xử lý an toàn.
 
-        Khi accept/reject gặp lỗi hoặc mất phản hồi:
-        - Tra cứu cùng tripRequestId để xác định kết quả.
+        Không dùng cache cũ để bỏ qua kiểm tra Account,
+        Session, trạng thái chuyến hoặc điều kiện phân công.
+
+        Nếu outbox đã lưu bền vững, RabbitMQ/Notification tạm ngừng
+        không tự làm mất kết quả nghiệp vụ đã commit.
+
+        Khi accept/reject mất phản hồi:
+        - Tra cứu cùng tripRequestId.
         - Có thể gửi lại cùng thao tác.
-        - Không tạo một lần nhận chuyến mới với mã khác.
+        - Không tạo ý định nhận chuyến khác để thay thế kết quả chưa rõ.
 
-        503 không chứng minh thao tác trước đó chắc chắn chưa thực hiện.
+        503 không chứng minh thao tác trước chưa thực hiện.
+        Lỗi kỹ thuật không đồng nghĩa không có tài xế phù hợp.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+          example:
+            errorCode: SERVICE_UNAVAILABLE
+            message: "Dịch vụ tạm thời không khả dụng. Vui lòng thử lại sau."
 
     UnexpectedError:
       description: |
-        Lỗi ngoài dự kiến; sử dụng HTTP 5xx phù hợp.
-        Không trả chi tiết nội bộ cho client.
+        Lỗi ngoài dự kiến; dùng HTTP 5xx phù hợp.
+        Không trả chi tiết nội bộ.
+        Mất phản hồi không đồng nghĩa transaction chưa commit.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
           schema:
