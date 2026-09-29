@@ -135,7 +135,7 @@ Trạng thái Account, trạng thái xét duyệt hồ sơ và trạng thái ho�
 - Khách hàng, tài xế và nhân viên vận hành đăng nhập.
 - Xem hồ sơ, cập nhật thông tin được phép, đổi mật khẩu, làm mới phiên và đăng xuất.
 - Tra cứu thông tin khách hàng và tài xế theo mã, có kiểm tra quyền trên đối tượng.
-- Nhân viên vận hành có thể cấp tài khoản tài xế qua nghiệp vụ quản trị; chức năng này không thay thế luồng đăng ký qua OTP.
+- Tài khoản tài xế được tạo qua luồng xác minh OTP và gửi hồ sơ đăng ký. Nhân viên vận hành xét duyệt hồ sơ; không tạo trực tiếp tài khoản tài xế qua một chức năng quản trị riêng trong phiên bản hiện tại.
 - Quản lý hồ sơ tài xế, phương tiện và phân công xe.
 - Tài xế chuyển trực tuyến/ngoại tuyến và cung cấp vị trí.
 - Tra cứu tài xế đủ điều kiện trong bán kính 1 km, hỗ trợ giới hạn kết quả và phân trang.
@@ -358,7 +358,6 @@ Nhân viên vận hành xem chuyến đang hoạt động, ghi nhận sự cố,
 
 Khách hàng của chuyến hoàn thành được gửi một đánh giá gồm điểm nguyên từ 1 đến 5 và nhận xét tùy chọn.
 
-## FR17 – Quản lý hồ sơ tài xế và phương tiện
 
 ## FR17 – Quản lý hồ sơ tài xế và phương tiện
 
@@ -368,13 +367,17 @@ Khách hàng của chuyến hoàn thành được gửi một đánh giá gồm 
 - FR17.4: Kết quả xét duyệt được lưu cùng người thực hiện, thời điểm và phiên bản dữ liệu.
 - FR17.5: Kết quả xét duyệt được thông báo cho tài xế.
 - FR17.6: OPERATOR quản lý phương tiện, phân công xe và ngừng cho phép nhận chuyến mới theo quyền.
-- FR17.7: OPERATOR có thể cấp tài khoản tài xế qua nghiệp vụ quản trị riêng.
+- FR17.7 — Ngừng áp dụng: Chức năng OPERATOR cấp trực tiếp tài khoản tài xế không thuộc phạm vi phiên bản hiện tại. Việc tạo tài khoản tài xế thực hiện theo FR23 và UC17.
+
+Mọi quyết định duyệt hoặc từ chối phải đi qua cùng nghiệp vụ xét duyệt hồ sơ. Không cho phép sửa trực tiếp approvalStatus bằng một chức năng chỉnh sửa Driver để bỏ qua kiểm tra hồ sơ.
 
 Duyệt hồ sơ không tự chuyển Driver sang AVAILABLE.
 
 Hồ sơ chưa được duyệt hoặc bị từ chối không được nhận chuyến.
 
-Các cách tạo tài khoản tài xế phải dùng chung quy tắc duy nhất của email, số điện thoại và giấy phép; không tạo hai bộ dữ liệu tài xế độc lập.
+Luồng đăng ký tài xế phải bảo đảm tính duy nhất của email, số điện thoại và giấy phép. Account DRIVER, Driver và DriverApplication phải được tạo nhất quán theo quy tắc tại FR23.
+
+Thông tin xe khai báo trong hồ sơ chưa tạo ra phân công xe chính thức. Khi duyệt, hệ thống mới tạo hoặc liên kết Vehicle và VehicleAssignment hợp lệ.
 
 ## FR18 – Trạng thái hoạt động và vị trí tài xế
 
@@ -772,7 +775,7 @@ Khi khách muốn đặt lại sau hủy, tạo Booking mới. MVP không tự t
 | TripStatusHistory | tripId, previousStatus, newStatus, changedBy, changedAt, reason | Lịch sử chuyển trạng thái |
 | PricingConfig | pricingVersionId, vehicleType, baseFare, pricePerKm, pricePerMinute, effectiveFrom, effectiveTo | Phiên bản biểu giá |
 | Fare | fareId, tripId, pricingVersionId, distanceKm, durationMinutes, baseAmount, distanceAmount, timeAmount, totalAmount, currency | Cước đã tính của chuyến |
-| Payment | paymentId, fareId, customerId, method, paymentStatus, amount, paidAt, confirmedBy | Nghĩa vụ và kết quả thanh toán |
+| Payment | paymentId, fareId, customerId, method, paymentStatus, amount, paidAt, confirmedByAccountId | Nghĩa vụ và kết quả thanh toán |
 | PaymentAttempt | attemptId, paymentId, idempotencyKey, providerTransactionId, status, createdAt, resolvedAt | Từng lần xử lý thanh toán |
 | Rating | ratingId, tripId, customerId, driverId, score, comment, createdAt | Đánh giá sau chuyến |
 | Notification | notificationId, eventId, recipientAccountId, eventType, referenceId, deliveryStatus, isRead, createdAt | Thông báo tới tài khoản |
@@ -782,6 +785,17 @@ Khi khách muốn đặt lại sau hủy, tạo Booking mới. MVP không tự t
 | PhoneVerification | verificationId, challengeId, phoneReference, tokenDigest, expiresAt, consumedAt | Quyền gửi hồ sơ sau xác minh, có thời hạn và dùng một lần |
 | DriverApplication | applicationId, driverId, submittedVehicleDetails, status, version, submittedAt, reviewedAt, reviewedByAccountId, rejectionReason | Hồ sơ đăng ký và quyết định xét duyệt tài xế |
 | VehicleAssignment | assignmentId, driverId, vehicleId, startedAt, endedAt, assignedByAccountId | Phân công xe hiện hành và lịch sử |
+
+Quy ước xác nhận thanh toán tiền mặt:
+
+- confirmedByAccountId là accountId của DRIVER được phân công cho Trip và đã xác nhận nhận đủ tiền mặt.
+- Không dùng driverId hoặc accountId của OPERATOR thay cho trường này.
+- Người xác nhận được xác định từ danh tính đăng nhập đã kiểm tra; client không được tự cung cấp confirmedByAccountId.
+- Trường này chỉ có khi đã ghi nhận xác nhận tiền mặt hợp lệ.
+- PaymentAttempt tương ứng lưu cùng danh tính người xác nhận để truy vết theo thiết kế và API thanh toán.
+- paidAt chỉ có khi Payment SUCCESS.
+- Gửi lại yêu cầu xác nhận đã thành công không ghi lại paidAt hoặc tạo thêm lần thanh toán.
+  
 Các trường mật khẩu/token và dữ liệu thanh toán nhạy cảm không được đưa vào changedFields.
 Email, phone và licenseNumber trong bảng là thuộc tính nghiệp vụ ở mức khái niệm, không phải yêu cầu lưu plaintext.
 
@@ -1034,7 +1048,7 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
   6. Cập nhật hồ sơ và Driver.approvalStatus nhất quán.
   7. Khi duyệt, tạo hoặc liên kết Vehicle/VehicleAssignment hợp lệ.
   8. Ghi người thực hiện, thời điểm, audit và sự kiện thông báo.
-- Luồng quản trị khác: OPERATOR cấp Account DRIVER hoặc quản lý xe theo quyền; dùng chung các ràng buộc định danh và phân công.
+- Luồng quản lý xe: OPERATOR tạo hoặc cập nhật phương tiện và phân công xe theo quyền, tuân thủ các ràng buộc về tính duy nhất, trạng thái xe và chuyến đang hoạt động. UC10 không tạo trực tiếp Account DRIVER; tài khoản tài xế được tạo qua luồng đăng ký tại UC17.
 - Ngoại lệ: hồ sơ đã xử lý, version cũ, trùng giấy phép/biển số, xe đang gán cho tài xế khác hoặc đang có chuyến.
 - Hậu điều kiện:
   - Quyết định được lưu nhất quán.
@@ -1430,22 +1444,69 @@ Bảng này xác định phạm vi cần kiểm chứng, không phải bảng đ
 
 Mỗi tiêu chí khi nghiệm thu phải có dữ liệu kiểm thử, thao tác, kết quả thực tế và bằng chứng phù hợp.
 
-Bộ test case hiện tại cần được bổ sung theo SRS 1.2; không tự chuyển trạng thái NOT_RUN thành PASS khi cập nhật tài liệu.
+### Trạng thái bộ kiểm thử liên kết
+
+Bản CAB_Test_Cases_ver_1.xlsx cập nhật theo baseline thiết kế 1.2 gồm:
+
+- 16 sheet.
+- 398 ca kiểm thử.
+- 394 ca đang áp dụng.
+- 4 ca được giữ để truy vết và đánh dấu OUT_OF_SCOPE hoặc SUPERSEDED.
+- 11 ca NEEDS_DECISION trong các ca đang áp dụng.
+- Sheet Rubric Mapping đối chiếu đủ 30 tiêu chí chấm project.
+
+Tại thời điểm cập nhật tài liệu, toàn bộ ca kiểm thử có Execution Status=NOT_RUN; chưa có kết quả thực thi backend.
+
+Các ca NEEDS_DECISION gồm:
+
+- TC-PAYMENT-004, TC-PAYMENT-007, TC-PAYMENT-008, TC-PAYMENT-015, TC-PAYMENT-017, TC-PAYMENT-024, TC-PAYMENT-025, TC-PAYMENT-026 và TC-PAYMENT-037: cần nhà cung cấp thanh toán và hợp đồng tích hợp cụ thể.
+- TC-DREG-030: cần lựa chọn nhà cung cấp/kênh OTP và môi trường thử nghiệm.
+- TC-SEC-018: cần kiểm chứng chống thu tiền trùng xuyên suốt hệ thống CAB và nhà cung cấp thanh toán.
+
+Expected Result và Required Evidence mô tả kết quả mong đợi và minh chứng cần thu thập, không phải kết quả đã đạt.
+
+Sau khi hoàn tất quyết định thiết kế, cập nhật dữ liệu kiểm thử và chuyển Design Status sang DEFINED khi đủ đặc tả. Execution Status vẫn giữ NOT_RUN cho đến khi thực sự chạy.
+
+Việc có ca kiểm thử liên kết không tự chứng minh tiêu chí rubric đã đạt. Kết luận nghiệm thu phải dựa trên kết quả thực tế và bằng chứng.
+
+Danh sách NEEDS_DECISION trong workbook không thay thế danh sách quyết định thiết kế còn mở. Phương pháp xác nhận JourneyMetrics vẫn cần được đặc tả và bổ sung kiểm thử thuật toán trước khi triển khai tính cước.
+
 ## Điều kiện hoàn tất bản thiết kế
 
-- Các thông số đề xuất tại mục 4.5 và B10 đã được duyệt.
+Bản thiết kế được coi là hoàn tất khi đáp ứng các điều kiện sau:
+
+- Các thông số đề xuất tại mục 4.5 và B10 đã được duyệt và có cách kiểm chứng.
 - Không còn hai bộ trạng thái khác nhau cho cùng một đối tượng.
-- Mỗi chức năng trong phạm vi có FR, Use Case và AC tương ứng.
-- Mã BR trong ma trận khớp phần định nghĩa B5.
-- API, test case và thiết kế microservices được đồng bộ theo SRS đã chốt.
+- Mỗi chức năng đang áp dụng có FR, Use Case và tiêu chí chấp nhận tương ứng.
+- Mã BR trong ma trận truy xuất khớp phần định nghĩa B5.
+- Yêu cầu đã ngừng áp dụng được đánh dấu rõ để truy vết; không được triển khai như yêu cầu còn hiệu lực.
+- SRS, API Document, Micro_Service_Design và test case sử dụng thống nhất phạm vi, thuật ngữ và quy tắc nghiệp vụ.
 - Các hạng mục ngoài MVP không được đưa vào triển khai như yêu cầu mặc định.
-- Kết quả kiểm thử phải được ghi nhận riêng; không suy ra từ việc đã viết test case.
-- Không còn quy định tài xế tự đăng ký nằm ngoài MVP hoặc đăng ký công khai chỉ có CUSTOMER.
-- Đánh giá chuyến được xếp Must Have trong phạm vi bản nộp và ma trận truy xuất.
+- Đánh giá chuyến thuộc phạm vi Must Have của bản nộp.
 - Luồng OTP, đăng ký, xét duyệt và thông báo tài xế được mô tả nhất quán.
-- Chức năng tra cứu tài xế 1 km được phân biệt với bán kính điều phối Booking.
+- Không còn chức năng OPERATOR tạo trực tiếp tài khoản tài xế trong phạm vi hiện tại.
+- Việc xét duyệt chỉ thực hiện qua nghiệp vụ review; không có đường cập nhật approvalStatus để bỏ qua kiểm tra hồ sơ.
+- Chức năng tra cứu tài xế trong 1 km được phân biệt với bán kính điều phối Booking.
 - Danh sách Booking được phân biệt với lịch sử Trip.
-- Gateway, IPC, RabbitMQ, Compose và healthcheck có yêu cầu cùng tiêu chí kiểm chứng.
-- Nhà cung cấp OTP, payment sandbox và hợp đồng tích hợp được chốt trước khi xây phần phụ thuộc.
-- Có ánh xạ đủ 30 tiêu chí rubric sang yêu cầu và bằng chứng cần chuẩn bị.
-- Thuật ngữ trạng thái giữa rubric và CAB đã được đối chiếu; thay đổi tên nếu có phải đồng bộ toàn bộ tài liệu.
+- Gateway, giao tiếp giữa dịch vụ, RabbitMQ, Docker Compose và healthcheck có yêu cầu cùng tiêu chí kiểm chứng.
+- Thuật ngữ thanh toán và chuyến đi được phân biệt: Payment SUCCESS không đồng nghĩa Trip vừa hoàn thành, và Trip COMPLETED không chứng minh đã thanh toán.
+- Có ánh xạ đủ 30 tiêu chí rubric sang yêu cầu và minh chứng cần chuẩn bị.
+- Nhà cung cấp OTP, thanh toán sandbox và hợp đồng tích hợp được chốt trước khi triển khai các phần phụ thuộc.
+- Phương pháp xác nhận quãng đường, chất lượng dữ liệu GPS và xử lý JourneyMetrics cần rà soát được chốt trước khi triển khai tính cước.
+- Các chính sách vận hành còn mở được cụ thể hóa trong Micro_Service_Design trước khi triển khai phần liên quan.
+- Kết quả kiểm thử được ghi nhận riêng; không suy ra từ việc đã viết tài liệu hoặc đã commit.
+
+### Các quyết định còn mở
+
+| Hạng mục | Nội dung cần hoàn tất | Phần phụ thuộc |
+|---|---|---|
+| OTP | Nhà cung cấp/kênh gửi, môi trường thử nghiệm, hợp đồng gửi, timeout, retry và giới hạn | Xác minh số điện thoại khi đăng ký tài xế |
+| Thanh toán sandbox | Nhà cung cấp, phương thức hỗ trợ, tạo/tra cứu giao dịch, xác minh webhook, acknowledgement, idempotency và đối soát | Thanh toán online và chống thu tiền trùng |
+| JourneyMetrics | Phương pháp xác nhận quãng đường, tiêu chí chất lượng GPS, xử lý mất mẫu/sự cố và quy trình rà soát | Phát hành Fare và tạo Payment |
+| Vận hành | Hoàn thiện chính sách retry/backoff, lưu dữ liệu và bằng chứng chống trùng, xoay khóa, sao lưu và phục hồi | Công việc nền, bảo mật và khả năng phục hồi |
+
+Chi tiết các quyết định này được quản lý tại mục 15.4 của Micro_Service_Design. Khi có quyết định được duyệt, phải cập nhật các tài liệu và test case bị ảnh hưởng.
+
+Các ca NEEDS_DECISION chỉ được chuyển sang DEFINED khi đã đủ đặc tả; không chuyển sang PASS chỉ vì quyết định đã được chốt.
+
+Hoàn tất đồng bộ tài liệu chưa đồng nghĩa đã hoàn tất mọi quyết định thiết kế. Hoàn tất thiết kế cũng không đồng nghĩa hệ thống đã được triển khai hoặc đạt các tiêu chí nghiệm thu.
