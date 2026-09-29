@@ -2,114 +2,201 @@ openapi: 3.0.3
 
 info:
   title: CAB System - Rating API
-  version: 1.1.0
+  version: 1.2.0
   description: |
     API đánh giá chuyến đi của CAB System.
 
-    Quy tắc nghiệp vụ:
+    1. Phạm vi nghiệp vụ
+    - Đánh giá chuyến đi đáp ứng tiêu chí rating trong rubric.
     - Chỉ CUSTOMER sở hữu Trip được tạo đánh giá.
-    - Trip phải có tripStatus = COMPLETED.
+    - Trip phải có tripStatus=COMPLETED.
     - Không yêu cầu Payment SUCCESS.
-    - Trip CANCELLED hoặc ERROR không đủ điều kiện đánh giá,
-      kể cả ERROR đã có closedAt.
-    - Mỗi Trip chỉ có một Rating.
-    - Điểm đánh giá là số nguyên từ 1 đến 5.
-    - Nhận xét là tùy chọn.
-    - MVP không cung cấp API sửa hoặc xóa đánh giá.
+    - Trip CANCELLED hoặc ERROR không đủ điều kiện, kể cả ERROR đã đóng.
+    - Mỗi Trip có tối đa một Rating.
+    - score là số nguyên từ 1 đến 5.
+    - comment là tùy chọn.
+    - Không cung cấp API sửa hoặc xóa Rating trong phiên bản này.
+    - Không tự khóa tài xế hoặc thay đổi điều phối vì một đánh giá thấp.
+    - Chưa định nghĩa điểm trung bình, xếp hạng tài xế hoặc điểm thưởng.
 
-    Xác định chủ thể:
-    - customerId được xác định từ tài khoản đăng nhập và Trip.
-    - driverId được lấy từ tài xế đã thực hiện Trip.
-    - Không lấy tài xế từ phân công xe hiện tại.
-    - Không nhận customerId, driverId hoặc accountId trong body tạo đánh giá.
+    2. Kiến trúc
+    - Rating Service độc lập và sở hữu cab_rating.
+    - CAB Core sở hữu Account, Session, Customer, Driver và Trip.
+    - Rating Service không đọc trực tiếp cab_core.
+    - CAB Core không ghi trực tiếp cab_rating.
+    - Rating Service gọi HTTP nội bộ đến CAB Core để xác minh danh tính
+      và thông tin Trip cần cho việc đánh giá.
+    - Rating, kết quả idempotency và audit được ghi trong transaction cab_rating.
+    - Không giả định có transaction nguyên tử giữa hai cơ sở dữ liệu.
 
-    Phân quyền:
-    - Tài khoản phải ACTIVE và Session còn hiệu lực.
-    - Token chưa hết hạn không đủ nếu Session đã bị thu hồi.
-    - CUSTOMER chỉ xem hoặc tạo đánh giá cho Trip của mình.
-    - DRIVER chỉ xem đánh giá của Trip được gán cho mình.
-    - OPERATOR được tra cứu nhưng không tạo đánh giá thay khách hàng.
+    3. Định tuyến
+    - API công khai đi qua API Gateway đến Rating Service.
+    - /trips/{tripId}/rating phải được định tuyến đến Rating Service,
+      dù các API Trip khác thuộc CAB Core.
+    - /drivers/me/ratings và /operations/ratings cũng thuộc Rating Service.
+    - Gateway phải phân biệt các route cụ thể, không chỉ dựa vào tiền tố.
+    - Hai endpoint /internal/* trong tài liệu này do CAB Core triển khai.
+    - Gateway chặn các endpoint nội bộ từ bên ngoài.
+    - Không mở cổng CAB Core hoặc Rating Service trực tiếp ra ngoài
+      để bỏ qua Gateway.
 
-    Tính nhất quán:
-    - Ràng buộc duy nhất theo tripId phải được bảo đảm ở tầng lưu trữ.
-    - Kiểm tra trước khi ghi không thay thế ràng buộc duy nhất.
-    - Hai yêu cầu đồng thời không được tạo hai Rating cho cùng Trip.
-    - Lỗi hoặc gửi lại yêu cầu không được tạo thêm đánh giá.
+    4. Nguồn dữ liệu có thẩm quyền
+    - accountId và role lấy từ danh tính đã xác minh.
+    - customerId và driverId lấy từ CAB Core.
+    - driverId của Rating là tài xế đã thực hiện Trip.
+    - Không lấy tài xế từ VehicleAssignment hiện tại.
+    - Không nhận customerId, driverId, accountId, tripStatus hoặc createdAt
+      trong body tạo Rating.
+    - CAB Core kiểm tra quyền trước khi trả dữ liệu Trip.
+    - Thông tin không xác minh được không được thay bằng giá trị giả định.
 
-    Phạm vi:
-    - Rating không thay đổi Trip, Fare hoặc Payment.
-    - Không tự khóa tài xế chỉ dựa vào một đánh giá thấp.
-    - File này không định nghĩa thuật toán xếp hạng hoặc tính điểm thưởng.
+    5. Xác thực và phân quyền
+    - Tài khoản gọi API công khai phải ACTIVE và Session còn hiệu lực.
+    - JWT phải được kiểm tra chữ ký, thuật toán cho phép, issuer,
+      audience, thời hạn và trạng thái Session.
+    - JWT bị sửa, hết hạn hoặc Session bị thu hồi trả 401.
+    - CUSTOMER chỉ tạo hoặc đọc Rating của Trip thuộc mình.
+    - DRIVER chỉ đọc Rating của Trip được giao cho mình.
+    - OPERATOR được đọc và tra cứu, không tạo Rating thay khách hàng.
+    - DRIVER có hồ sơ chưa duyệt hoặc bị từ chối vẫn được đọc dữ liệu
+      thuộc phạm vi của mình nếu Account ACTIVE và Session hợp lệ.
+    - Sai vai trò trả 403.
+    - Đúng vai trò nhưng Trip ngoài phạm vi truy cập trả 404.
+    - Không tiết lộ Trip có Rating hay chưa cho người không có quyền.
 
-    Mọi phản hồi chứa dữ liệu đánh giá phải sử dụng Cache-Control: no-store.
+    6. Giao tiếp nội bộ
+    - Mỗi request nội bộ cần service JWT của Rating Service
+      và user access token gốc của request đang xử lý.
+    - Service JWT dùng để xác thực dịch vụ gọi.
+    - User token dùng để xác minh người dùng mà dịch vụ đang phục vụ.
+    - Không thay user token bằng accountId hoặc role do client tự khai báo.
+    - CAB Core xác minh cả hai danh tính và scope của dịch vụ.
+    - Token chỉ truyền qua kết nối nội bộ được bảo vệ.
+    - Không đưa token vào query string hoặc log.
+    - Không lưu user token trong Rating, audit hoặc kết quả idempotency.
+    - Context đã đọc chỉ dùng cho request hiện tại, không tái sử dụng
+      làm bằng chứng quyền truy cập lâu dài.
+
+    7. Nhất quán giữa CAB Core và Rating Service
+    - CAB Core trả snapshot Trip sau khi kiểm tra quyền.
+    - Rating Service chỉ tạo Rating khi snapshot xác nhận COMPLETED.
+    - Theo hợp đồng Trip hiện tại, COMPLETED là trạng thái kết thúc;
+      không mở lại hoặc đổi Customer/Driver của Trip đã hoàn tất.
+    - Tính bất biến này cho phép ghi Rating sau khi xác minh,
+      không cần giữ transaction xuyên service.
+    - Snapshot xác minh được lưu tối thiểu cho audit nội bộ,
+      gồm tripId, tripVersion, customerId, driverId và verifiedAt.
+    - Không giữ transaction cab_rating trong lúc chờ HTTP đến CAB Core.
+    - Nếu sau này cho phép mở lại hoặc chuyển chủ thể của Trip đã hoàn tất,
+      phải thiết kế lại cơ chế xác minh trước khi triển khai thay đổi đó.
+    - Quyền được đánh giá tại bước xác minh của request;
+      không tuyên bố kiểm tra Session và ghi Rating là một transaction xuyên service.
+
+    8. Chống trùng
+    - Unique constraint trên Rating.tripId là bắt buộc.
+    - Kiểm tra tồn tại trước khi ghi không thay thế unique constraint.
+    - POST tạo Rating yêu cầu Idempotency-Key.
+    - Phạm vi key gồm accountId, operation và tripId.
+    - Cùng key, cùng nội dung chuẩn hóa trả status code và body đã lưu.
+    - Cùng key, nội dung khác trả 409 IDEMPOTENCY_CONFLICT.
+    - Request cùng key đang xử lý trả 409 REQUEST_IN_PROGRESS.
+    - Kiểm tra quyền hiện tại trước khi replay.
+    - Replay hợp lệ được kiểm tra trước điều kiện Rating đã tồn tại.
+    - Key mới khi Trip đã có Rating trả 409 RATING_ALREADY_EXISTS.
+    - Ghi Rating, kết quả idempotency và audit trong cùng transaction.
+    - Không tạo thêm audit nghiệp vụ khi replay.
+    - Không chỉ dùng cache tạm thời để bảo vệ thao tác tạo Rating.
+
+    9. An toàn dữ liệu và hiển thị
+    - comment tối đa 1000 ký tự trước khi chuẩn hóa.
+    - Trim khoảng trắng đầu và cuối.
+    - Comment rỗng sau trim được coi như không có comment.
+    - Không nhận null thay cho comment; bỏ trường nếu không nhận xét.
+    - Comment được xử lý như văn bản thuần.
+    - Không ghép comment vào SQL hoặc thực thi như mã.
+    - Giao diện phải encode theo ngữ cảnh và hiển thị như text.
+    - Payload chứa thẻ HTML hoặc script không được thực thi khi hiển thị.
+    - Không tự đính kèm email, phone, giấy phép, vị trí GPS hoặc dữ liệu thanh toán.
+    - Không ghi toàn bộ comment hoặc token vào log truy cập thông thường.
+    - Không chấp nhận trường body hoặc query parameter ngoài hợp đồng.
+
+    10. Vận hành
+    - Mọi response sử dụng Cache-Control: no-store.
+    - API công khai có rate limit tại Gateway và trả 429 khi vượt hạn mức.
+    - HTTP nội bộ có timeout và giới hạn retry.
+    - Retry HTTP xác minh không tự tạo thêm Rating.
+    - CAB Core không sẵn sàng hoặc response nội bộ không hợp lệ thì trả 503.
+    - Không trả 404 giả, danh sách rỗng giả hoặc score=0 khi dependency lỗi.
+    - Lỗi xác thực service hoặc cấu hình liên dịch vụ được ánh xạ thành 503
+      ở API công khai, không báo sai rằng user JWT hết hạn.
+    - Lỗi danh tính người dùng thực sự được ánh xạ thành 401 hoặc 403 phù hợp.
+    - correlationId được chuyển qua Gateway, Rating Service và CAB Core.
+    - Định nghĩa API không thay thế kiểm thử IPC và bảo mật thực tế.
 
 servers:
   - url: /v1
-    description: API phiên bản 1
+    description: API công khai qua Gateway, được xử lý bởi Rating Service
 
 security:
   - bearerAuth: []
 
 tags:
   - name: Trip Ratings
-    description: Tạo và xem đánh giá của một chuyến
+    description: Khách hàng tạo và người có quyền đọc đánh giá chuyến
   - name: Driver Ratings
     description: Tài xế xem đánh giá dành cho mình
   - name: Operational Ratings
     description: Điều hành viên tra cứu đánh giá
+  - name: Internal Rating Context
+    description: API CAB Core phục vụ xác minh cho Rating Service
 
 paths:
   /trips/{tripId}/rating:
     post:
-      tags:
-        - Trip Ratings
-      summary: Khách hàng đánh giá chuyến đã hoàn tất
+      tags: [Trip Ratings]
       operationId: createTripRating
+      summary: Khách hàng đánh giá chuyến đã hoàn tất
+      x-service-owner: rating
       description: |
         Chỉ CUSTOMER sở hữu Trip.
 
-        Điều kiện:
-        - Tài khoản ACTIVE và Session hợp lệ.
+        Rating Service gọi endpoint rating-context của CAB Core
+        bằng service JWT và user token của request hiện tại.
+        CAB Core xác minh Account, Session, quyền sở hữu và trả snapshot Trip.
+
+        Điều kiện tạo mới:
+        - Người gọi là CUSTOMER.
         - Trip thuộc Customer đang đăng nhập.
-        - Trip có tripStatus = COMPLETED.
+        - Trip có tripStatus=COMPLETED.
         - Trip chưa có Rating.
 
-        Không kiểm tra Payment SUCCESS như điều kiện đánh giá.
-        Khách hàng vẫn được đánh giá khi Payment đang PENDING,
-        PROCESSING, FAILED hoặc UNKNOWN, hoặc Payment chưa được tạo.
+        Không kiểm tra Payment SUCCESS.
+        Vẫn cho phép đánh giá khi chưa có Payment hoặc Payment đang
+        PENDING, PROCESSING, FAILED hay UNKNOWN.
+        Không phụ thuộc việc Fare đã được tính xong hay chưa.
 
-        Request body chỉ gồm score và comment tùy chọn.
-        Các trường như customerId, driverId, tripStatus, createdAt
-        hoặc ratingId do client gửi thêm phải bị từ chối.
+        Request chỉ nhận score và comment tùy chọn.
+        Chuỗi "5", boolean hoặc số không nguyên không hợp lệ cho score.
+        Comment vượt 1000 ký tự trước khi trim trả 400.
+        Comment rỗng sau trim được bỏ khỏi dữ liệu lưu và response.
 
-        Chuẩn hóa comment:
-        - Nếu có, trim khoảng trắng đầu và cuối.
-        - Nếu sau trim là chuỗi rỗng, coi như không có comment.
-        - Lưu nội dung dưới dạng văn bản thuần.
-        - Giới hạn độ dài request là 1000 ký tự.
+        Quy trình:
+        - Kiểm tra cấu trúc request và thông tin xác thực.
+        - Xác minh quyền hiện tại qua CAB Core.
+        - Chuẩn hóa nội dung và kiểm tra idempotency.
+        - Replay hợp lệ trả lại response 201 đã lưu.
+        - Với thao tác mới, kiểm tra Trip COMPLETED.
+        - Ghi Rating, idempotency và audit trong transaction cab_rating.
+        - customerId và driverId lấy từ snapshot CAB Core.
 
-        Idempotency:
-        - Bắt buộc Idempotency-Key.
-        - Khóa được giới hạn theo accountId, phương thức và đường dẫn.
-        - Cùng khóa và cùng nội dung chuẩn hóa: trả lại phản hồi 201 đã lưu.
-        - Cùng khóa nhưng khác nội dung: trả 409 IDEMPOTENCY_KEY_REUSED.
-        - Cùng khóa đang xử lý: trả 409 REQUEST_IN_PROGRESS.
-        - Kiểm tra danh tính và quyền hiện tại trước khi trả kết quả đã lưu.
-        - Với phát lại hợp lệ, tra kết quả đã lưu trước kiểm tra Rating tồn tại.
-        - Khóa mới nhưng Trip đã có Rating: trả 409 RATING_ALREADY_EXISTS.
+        Hai key khác nhau cùng tạo đánh giá:
+        - Unique constraint tripId chỉ cho phép một bản ghi.
+        - Request còn lại trả 409 RATING_ALREADY_EXISTS.
+        - Không trả lỗi 500 chỉ vì tranh chấp unique constraint đã biết.
 
-        Ghi Rating và kết quả idempotency phải có cơ chế phục hồi nhất quán.
-        Nếu đã ghi Rating nhưng mất phản hồi, gửi lại cùng khóa phải lấy
-        được kết quả ban đầu thay vì tạo thêm hoặc báo nhầm là thao tác mới.
-
-        Hai khóa khác nhau cùng tạo Rating cho một Trip:
-        - Chỉ một yêu cầu được tạo thành công.
-        - Yêu cầu còn lại nhận 409 RATING_ALREADY_EXISTS.
-
-        Ghi audit cho lần tạo thực tế.
-        Không ghi thêm một lần tạo nghiệp vụ khi phát lại yêu cầu.
-
-        Không thay đổi trạng thái Trip, Driver, Fare hoặc Payment.
+        Nếu CAB Core không xác minh được, không tạo Rating.
+        Nếu đã commit nhưng mất response, gửi lại cùng key để lấy kết quả cũ.
+        Không đổi Trip, Driver, Fare hoặc Payment.
       parameters:
         - $ref: '#/components/parameters/TripId'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -124,16 +211,15 @@ paths:
               comment: Tài xế đến đúng điểm đón và lái xe cẩn thận.
       responses:
         '201':
-          description: |
-            Đã tạo đánh giá hoặc trả lại kết quả của cùng yêu cầu trước đó.
+          description: Đã tạo đánh giá hoặc replay kết quả 201 đã lưu
           headers:
-            Location:
-              description: Đường dẫn xem đánh giá vừa tạo
-              schema:
-                type: string
-              example: /v1/trips/trip_001/rating
             Cache-Control:
               $ref: '#/components/headers/NoStore'
+            Location:
+              description: Đường dẫn đọc Rating
+              schema:
+                type: string
+                example: /v1/trips/trip_001/rating
           content:
             application/json:
               schema:
@@ -148,48 +234,41 @@ paths:
           $ref: '#/components/responses/TripNotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
         default:
           $ref: '#/components/responses/UnexpectedError'
 
     get:
-      tags:
-        - Trip Ratings
-      summary: Xem đánh giá của một chuyến
+      tags: [Trip Ratings]
       operationId: getTripRating
+      summary: Xem đánh giá của một chuyến
+      x-service-owner: rating
       description: |
-        Cho phép:
-        - CUSTOMER sở hữu Trip.
-        - DRIVER được gán cho Trip.
-        - OPERATOR.
+        Cho phép CUSTOMER sở hữu Trip, DRIVER được giao Trip và OPERATOR.
 
-        Kiểm tra quyền truy cập Trip trước khi tra cứu hoặc trả Rating.
+        Rating Service gọi rating-context của CAB Core để xác minh
+        quyền truy cập Trip trước khi trả hoặc tiết lộ sự tồn tại của Rating.
 
-        Với CUSTOMER và DRIVER:
-        - Trip không tồn tại hoặc không thuộc phạm vi truy cập: trả 404.
-        - Không tiết lộ Trip có Rating hay chưa cho người không có quyền.
+        Trip không tồn tại hoặc ngoài phạm vi truy cập:
+        - Trả 404 TRIP_NOT_FOUND.
 
-        Với người có quyền truy cập Trip:
-        - Nếu Trip chưa có Rating, trả 404 RATING_NOT_FOUND.
-        - Không tạo Rating mặc định.
-        - Không trả score = 0 thay cho chưa có đánh giá.
+        Được phép xem Trip nhưng chưa có Rating:
+        - Trả 404 RATING_NOT_FOUND.
+        - Không tạo đánh giá mặc định.
+        - Không trả score=0 để biểu thị chưa có đánh giá.
 
-        Đây là API chỉ đọc.
-        Thay đổi phân công xe hoặc trạng thái tài xế sau chuyến
-        không làm thay đổi driverId đã được đánh giá.
+        GET chỉ đọc dữ liệu.
+        Thay xe hoặc thay trạng thái hoạt động của Driver sau chuyến
+        không thay driverId đã lưu trong Rating.
+        Không phụ thuộc Payment hiện tại.
       parameters:
         - $ref: '#/components/parameters/TripId'
       responses:
         '200':
-          description: Đánh giá của chuyến
-          headers:
-            Cache-Control:
-              $ref: '#/components/headers/NoStore'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Rating'
+          $ref: '#/components/responses/RatingRead'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -197,13 +276,9 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
-          description: |
-            TRIP_NOT_FOUND nếu Trip không tồn tại hoặc ngoài quyền truy cập.
-            RATING_NOT_FOUND nếu được xem Trip nhưng Trip chưa có đánh giá.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
+          $ref: '#/components/responses/TripRatingNotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
         default:
@@ -211,47 +286,46 @@ paths:
 
   /drivers/me/ratings:
     get:
-      tags:
-        - Driver Ratings
-      summary: Tài xế xem danh sách đánh giá dành cho mình
+      tags: [Driver Ratings]
       operationId: listMyDriverRatings
+      summary: Tài xế xem đánh giá dành cho mình
+      x-service-owner: rating
       description: |
-        Chỉ DRIVER.
+        Chỉ DRIVER có Account ACTIVE và Session hợp lệ.
 
-        driverId được lấy từ Account đang đăng nhập.
+        Rating Service gọi /internal/rating/identity để xác minh danh tính
+        và lấy driverId từ CAB Core.
+
         Không nhận driverId, customerId hoặc accountId từ query.
-
-        Chỉ trả Rating có driverId tương ứng với tài xế hiện tại.
-        Không trả email, số điện thoại hoặc thông tin đăng nhập của khách hàng.
+        Chỉ truy vấn Rating có driverId tương ứng với tài khoản hiện tại.
+        Không yêu cầu Driver đang AVAILABLE hoặc đang phục vụ Trip.
 
         Có thể lọc theo score.
         Sắp xếp createdAt giảm dần, sau đó ratingId giảm dần.
+        Cursor gắn với tài khoản, endpoint, score và limit.
 
-        Cursor gắn với tài khoản, endpoint và bộ lọc.
-        Cursor không hợp lệ hoặc không khớp truy vấn trả 400.
+        Phân trang keyset không phải snapshot bất biến.
+        Đánh giá mới có thể được tạo giữa các lần lấy trang.
+        Tải lại trang đầu để làm mới danh sách.
 
-        Chưa có đánh giá thì trả items rỗng và nextCursor = null.
-        Không dùng một đánh giá giả hoặc score = 0 để biểu thị chưa có dữ liệu.
+        Chưa có Rating thì trả items=[] và nextCursor=null.
+        Nếu không xác minh được danh tính do CAB Core lỗi, trả 503;
+        không dùng danh sách rỗng thay cho lỗi.
       parameters:
         - $ref: '#/components/parameters/ScoreFilter'
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
-          description: Danh sách đánh giá dành cho tài xế
-          headers:
-            Cache-Control:
-              $ref: '#/components/headers/NoStore'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RatingPage'
+          $ref: '#/components/responses/RatingListRead'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
         default:
@@ -259,30 +333,36 @@ paths:
 
   /operations/ratings:
     get:
-      tags:
-        - Operational Ratings
-      summary: Điều hành viên tra cứu đánh giá
+      tags: [Operational Ratings]
       operationId: listOperationalRatings
+      summary: Điều hành viên tra cứu đánh giá
+      x-service-owner: rating
       description: |
         Chỉ OPERATOR.
 
-        Cho phép lọc theo driverId, tripId hoặc score.
-        Các bộ lọc được kết hợp theo điều kiện AND.
+        Rating Service gọi /internal/rating/identity của CAB Core
+        để xác minh Account, Session và role hiện tại.
 
-        from và to lọc theo thời điểm tạo Rating:
-        - from được tính vào khoảng.
-        - to không được tính vào khoảng.
-        - Nếu có cả hai thì from phải nhỏ hơn to.
-        - Thời gian phải có thông tin múi giờ.
+        Truy vấn Rating từ cab_rating.
+        Không join trực tiếp cab_core để lấy dữ liệu tài khoản hoặc Trip.
+
+        Có thể lọc driverId, tripId và score.
+        Các bộ lọc kết hợp theo AND.
+
+        from/to lọc Rating.createdAt theo khoảng [from, to).
+        Nếu có cả hai thì from phải nhỏ hơn to.
+        Thời gian phải có thông tin múi giờ.
 
         Sắp xếp createdAt giảm dần, sau đó ratingId giảm dần.
-        Cursor gắn với endpoint và bộ lọc.
+        Cursor gắn với người gọi, endpoint, toàn bộ bộ lọc và limit.
+        Phân trang không đóng băng dữ liệu mới phát sinh.
 
-        Không có kết quả phù hợp thì trả items rỗng.
-        Endpoint chỉ phục vụ tra cứu, không cấp quyền sửa hoặc xóa Rating.
+        Không có kết quả phù hợp thì trả items=[] và nextCursor=null.
+        ID dùng làm bộ lọc không có kết quả không bắt buộc trả 404.
+        Endpoint không cho phép sửa hoặc xóa Rating.
 
-        Đường dẫn thuộc nhóm vận hành nhưng hợp đồng Rating được quản lý
-        trong tài liệu này, không định nghĩa lặp lại trong Operations API.
+        Route này thuộc Rating Service dù có tiền tố /operations.
+        Không định nghĩa một bản triển khai khác trong Operations của CAB Core.
       parameters:
         - name: driverId
           in: query
@@ -311,20 +391,158 @@ paths:
         - $ref: '#/components/parameters/Cursor'
       responses:
         '200':
-          description: Danh sách đánh giá phù hợp
-          headers:
-            Cache-Control:
-              $ref: '#/components/headers/NoStore'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RatingPage'
+          $ref: '#/components/responses/RatingListRead'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        default:
+          $ref: '#/components/responses/UnexpectedError'
+
+  /internal/rating/identity:
+    get:
+      tags: [Internal Rating Context]
+      operationId: verifyRatingUserIdentity
+      summary: CAB Core xác minh người dùng cho Rating Service
+      x-internal: true
+      x-service-owner: cab-core
+      servers:
+        - url: http://{coreHost}:{corePort}/v1
+          description: |
+            Địa chỉ nội bộ dự kiến của CAB Core.
+            Host và port phải khớp cấu hình Docker Compose.
+            Kết nối phải được bảo vệ theo môi trường triển khai.
+          variables:
+            coreHost:
+              default: cab-core-api
+            corePort:
+              default: '3000'
+      security:
+        - serviceBearer: []
+          delegatedUserToken: []
+      description: |
+        Do CAB Core triển khai, chỉ Rating Service được phép gọi
+        với scope rating:context:read.
+
+        Bắt buộc đồng thời:
+        - Authorization chứa service JWT.
+        - X-User-Authorization chứa user access token gốc dạng Bearer.
+
+        CAB Core:
+        - Xác minh service JWT, audience, scope và danh tính dịch vụ.
+        - Xác minh user JWT, Session và Account ACTIVE.
+        - Lấy role, customerId hoặc driverId từ dữ liệu có thẩm quyền.
+        - Trả thông tin định danh tối thiểu và verifiedAt.
+
+        Không nhận accountId, role, customerId hoặc driverId từ query.
+        Không có request body.
+        Không trả token, email, phone hoặc dữ liệu hồ sơ cá nhân.
+
+        Endpoint không tự cấp quyền cho API người dùng.
+        Rating Service vẫn kiểm tra role phù hợp với operation đang xử lý.
+
+        x-internal chỉ là mô tả; Gateway và cấu hình mạng phải thực sự
+        ngăn truy cập endpoint từ bên ngoài.
+      responses:
+        '200':
+          description: Danh tính người dùng đã được xác minh
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifiedRatingIdentity'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InternalUnauthorized'
+        '403':
+          $ref: '#/components/responses/InternalForbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        default:
+          $ref: '#/components/responses/UnexpectedError'
+
+  /internal/trips/{tripId}/rating-context:
+    get:
+      tags: [Internal Rating Context]
+      operationId: getTripRatingContext
+      summary: CAB Core xác minh quyền và cung cấp snapshot Trip cho Rating
+      x-internal: true
+      x-service-owner: cab-core
+      servers:
+        - url: http://{coreHost}:{corePort}/v1
+          description: |
+            Endpoint nội bộ do CAB Core triển khai.
+            Không công khai qua API Gateway.
+          variables:
+            coreHost:
+              default: cab-core-api
+            corePort:
+              default: '3000'
+      security:
+        - serviceBearer: []
+          delegatedUserToken: []
+      description: |
+        Chỉ Rating Service với scope rating:context:read.
+
+        CAB Core xác minh cả service JWT và user JWT.
+        Kiểm tra Account ACTIVE và Session hợp lệ.
+
+        Quyền đọc context:
+        - CUSTOMER sở hữu Trip.
+        - DRIVER được giao Trip.
+        - OPERATOR.
+
+        CUSTOMER hoặc DRIVER không có quan hệ phù hợp nhận 404 TRIP_NOT_FOUND.
+        Kiểm tra quyền trước khi trả thông tin Trip.
+
+        Trả snapshot nhất quán gồm:
+        - Danh tính người dùng đã xác minh.
+        - tripId, customerId, driverId, tripStatus và tripVersion.
+        - completedAt nếu Trip COMPLETED.
+        - verifiedAt từ server.
+
+        Endpoint không ghi Rating và không kiểm tra cab_rating.
+        Không gọi ngược Rating Service để xác định Rating đã tồn tại.
+
+        Trip chưa COMPLETED vẫn có thể trả context 200 cho người có quyền.
+        Rating Service quyết định trả 409 TRIP_NOT_COMPLETED khi tạo mới.
+        GET Rating dùng cùng context để phân biệt không có quyền
+        với có quyền nhưng chưa có Rating.
+
+        Context không chứa Payment, Fare, GPS, địa chỉ hoặc thông tin liên hệ.
+        Không kiểm tra thanh toán như điều kiện cấp context.
+
+        Đây là dữ liệu xác minh cho request hiện tại, không phải token
+        hoặc quyền truy cập có thể tái sử dụng về sau.
+      parameters:
+        - $ref: '#/components/parameters/TripId'
+      responses:
+        '200':
+          description: Danh tính và snapshot Trip đã được xác minh
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/NoStore'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TripRatingContext'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/InternalUnauthorized'
+        '403':
+          $ref: '#/components/responses/InternalForbidden'
+        '404':
+          $ref: '#/components/responses/TripNotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
         default:
@@ -337,25 +555,50 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: |
-        Access token của người dùng.
-        Kiểm tra Account ACTIVE, Session hợp lệ và quyền theo endpoint.
-        Kiểm tra quyền sở hữu Trip tại máy chủ.
-        Không tin customerId, driverId hoặc role do client tự khai báo.
+        User access token của API công khai.
+        Kiểm tra JWT và xác minh Account, Session qua CAB Core.
+        Không tin danh tính hoặc role do request body tự khai báo.
+
+    serviceBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Service JWT của Rating Service.
+        Audience dành cho CAB Core, scope rating:context:read.
+        User JWT không được thay service JWT.
+
+    delegatedUserToken:
+      type: apiKey
+      in: header
+      name: X-User-Authorization
+      description: |
+        User access token gốc theo định dạng Bearer <access-token>.
+        Đây là token người dùng được chuyển tiếp, không phải API key tĩnh.
+        CAB Core phải xác minh độc lập token và Session tương ứng.
+        Chỉ chấp nhận khi serviceBearer cũng hợp lệ.
+        Gateway không được tin header này do client tự đặt
+        như bằng chứng danh tính cho API công khai.
+        Rating Service tự tạo header từ request đã tiếp nhận.
 
   headers:
     NoStore:
-      description: Không lưu phản hồi vào bộ nhớ đệm
+      description: Không lưu response vào bộ nhớ đệm
       schema:
         type: string
-        enum:
-          - no-store
+        enum: [no-store]
+
+    RetryAfter:
+      description: Số giây tối thiểu nên chờ trước khi thử lại
+      schema:
+        type: integer
+        minimum: 1
 
   parameters:
     TripId:
       name: tripId
       in: path
       required: true
-      description: Định danh chuyến được đánh giá
       schema:
         $ref: '#/components/schemas/Identifier'
 
@@ -364,8 +607,10 @@ components:
       in: header
       required: true
       description: |
-        Khóa ổn định của yêu cầu tạo đánh giá.
-        Gửi lại cùng thao tác phải giữ nguyên khóa và nội dung.
+        Khóa ổn định của yêu cầu tạo Rating.
+        Phạm vi accountId, operation và tripId.
+        Gửi lại cùng thao tác phải giữ nguyên key và nội dung.
+        Không dùng lại key cho nhận xét hoặc score khác.
       schema:
         type: string
         minLength: 1
@@ -376,7 +621,7 @@ components:
       name: score
       in: query
       required: false
-      description: Chỉ lấy đánh giá có đúng số điểm này
+      description: Lọc đánh giá có đúng số điểm này
       schema:
         $ref: '#/components/schemas/RatingScore'
 
@@ -384,7 +629,6 @@ components:
       name: limit
       in: query
       required: false
-      description: Số đánh giá tối đa trong một trang
       schema:
         type: integer
         minimum: 1
@@ -396,8 +640,9 @@ components:
       in: query
       required: false
       description: |
-        Cursor opaque nhận từ nextCursor của trang trước.
-        Client không tự tạo hoặc chỉnh sửa.
+        Cursor opaque do server phát hành.
+        Gắn với người gọi, endpoint, toàn bộ bộ lọc và limit.
+        Không hợp lệ, khác phạm vi hoặc hết hạn trả 400.
       schema:
         type: string
         minLength: 1
@@ -408,13 +653,28 @@ components:
       type: string
       minLength: 1
       maxLength: 128
-      description: Định danh không rỗng do hệ thống quản lý
+
+    Version:
+      type: integer
+      format: int64
+      minimum: 1
 
     RatingScore:
       type: integer
       minimum: 1
       maximum: 5
-      description: Điểm đánh giá nguyên từ 1 đến 5
+      description: Điểm nguyên từ 1 đến 5; không tự ép chuỗi thành số
+
+    TripStatus:
+      type: string
+      enum:
+        - DRIVER_ASSIGNED
+        - ARRIVED_PICKUP
+        - PICKED_UP
+        - IN_PROGRESS
+        - COMPLETED
+        - CANCELLED
+        - ERROR
 
     CreateRatingRequest:
       type: object
@@ -428,10 +688,9 @@ components:
           type: string
           maxLength: 1000
           description: |
-            Nhận xét tùy chọn, dạng văn bản thuần.
-            Trim khoảng trắng đầu và cuối trước khi lưu.
-            Chuỗi rỗng sau trim được coi như không có nhận xét.
-            Không nhận null; bỏ qua trường nếu không muốn nhận xét.
+            Nhận xét tùy chọn, tối đa 1000 ký tự trước khi trim.
+            Văn bản thuần, không nhận null.
+            Trim đầu/cuối; rỗng sau trim được coi như không có comment.
 
     Rating:
       type: object
@@ -461,18 +720,17 @@ components:
           pattern: '\S'
           description: |
             Nhận xét đã chuẩn hóa.
-            Không xuất hiện nếu khách hàng không nhập nội dung.
-            Client hiển thị như văn bản thuần, không thực thi như HTML.
+            Bỏ khỏi response nếu không có nội dung.
+            Client hiển thị như text, không thực thi HTML/script.
         createdAt:
           type: string
           format: date-time
-          description: |
-            Thời điểm tạo Rating do máy chủ ghi nhận.
-            Không đổi khi phát lại yêu cầu.
+          description: Thời điểm server tạo Rating, không đổi khi replay
       description: |
-        Một Rating duy nhất cho một Trip.
-        customerId và driverId phản ánh các bên của Trip được đánh giá.
-        Không chứa email, số điện thoại, dữ liệu thẻ hoặc thông tin đăng nhập.
+        Một Rating duy nhất trên mỗi Trip.
+        customerId và driverId phản ánh chủ thể của Trip đã hoàn tất.
+        Không thay đổi theo phân công xe hiện tại.
+        Không chứa thông tin xác thực hoặc các trường liên hệ cá nhân.
 
     RatingPage:
       type: object
@@ -489,7 +747,118 @@ components:
         nextCursor:
           type: string
           nullable: true
-          description: Cursor trang tiếp theo; null nếu không còn kết quả
+          description: null khi không còn trang tiếp theo tại thời điểm truy vấn
+
+    VerifiedRatingIdentity:
+      type: object
+      additionalProperties: false
+      required:
+        - accountId
+        - role
+        - verifiedAt
+      properties:
+        accountId:
+          $ref: '#/components/schemas/Identifier'
+        role:
+          type: string
+          enum: [CUSTOMER, DRIVER, OPERATOR]
+        customerId:
+          $ref: '#/components/schemas/Identifier'
+        driverId:
+          $ref: '#/components/schemas/Identifier'
+        verifiedAt:
+          type: string
+          format: date-time
+          description: Thời điểm CAB Core xác minh Account và Session
+      oneOf:
+        - required:
+            - customerId
+          properties:
+            role:
+              type: string
+              enum: [CUSTOMER]
+          not:
+            required:
+              - driverId
+        - required:
+            - driverId
+          properties:
+            role:
+              type: string
+              enum: [DRIVER]
+          not:
+            required:
+              - customerId
+        - properties:
+            role:
+              type: string
+              enum: [OPERATOR]
+          not:
+            anyOf:
+              - required: [customerId]
+              - required: [driverId]
+      description: |
+        Chỉ dùng cho giao tiếp nội bộ.
+        Không chứa user token, Session secret, phone hoặc email.
+        Tài khoản không ACTIVE hoặc Session không hợp lệ không nhận schema này.
+
+    TripRatingContext:
+      type: object
+      additionalProperties: false
+      required:
+        - principal
+        - tripId
+        - customerId
+        - driverId
+        - tripStatus
+        - tripVersion
+        - verifiedAt
+      properties:
+        principal:
+          $ref: '#/components/schemas/VerifiedRatingIdentity'
+        tripId:
+          $ref: '#/components/schemas/Identifier'
+        customerId:
+          $ref: '#/components/schemas/Identifier'
+        driverId:
+          $ref: '#/components/schemas/Identifier'
+        tripStatus:
+          $ref: '#/components/schemas/TripStatus'
+        tripVersion:
+          $ref: '#/components/schemas/Version'
+        completedAt:
+          type: string
+          format: date-time
+        verifiedAt:
+          type: string
+          format: date-time
+          description: Thời điểm kiểm tra quyền và đọc snapshot Trip
+      oneOf:
+        - required:
+            - completedAt
+          properties:
+            tripStatus:
+              type: string
+              enum: [COMPLETED]
+        - properties:
+            tripStatus:
+              type: string
+              enum:
+                - DRIVER_ASSIGNED
+                - ARRIVED_PICKUP
+                - PICKED_UP
+                - IN_PROGRESS
+                - CANCELLED
+                - ERROR
+          not:
+            required:
+              - completedAt
+      description: |
+        Snapshot nội bộ từ CAB Core.
+        principal là người đang gọi API.
+        customerId và driverId bên ngoài principal là các bên của Trip.
+        CAB Core phải xác minh quan hệ tương ứng trước khi trả context.
+        Context không phải response công khai của Rating API.
 
     ErrorDetail:
       type: object
@@ -509,32 +878,58 @@ components:
       required:
         - errorCode
         - message
+        - correlationId
       properties:
         errorCode:
           type: string
           description: Mã lỗi ổn định để client xử lý
         message:
           type: string
-          description: Mô tả lỗi có thể hiển thị an toàn
+          description: Thông báo an toàn, không lộ stack trace hoặc bí mật
         details:
           type: array
           items:
             $ref: '#/components/schemas/ErrorDetail'
         correlationId:
           type: string
-          description: Định danh phục vụ tra cứu log nội bộ
+          description: Mã liên kết log giữa Gateway, Rating Service và CAB Core
 
   responses:
+    RatingRead:
+      description: Đánh giá của chuyến trong phạm vi được phép
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Rating'
+
+    RatingListRead:
+      description: Danh sách đánh giá phù hợp
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RatingPage'
+
     BadRequest:
       description: |
-        Dữ liệu hoặc tham số không hợp lệ.
-        Ví dụ: VALIDATION_ERROR, INVALID_CURSOR hoặc INVALID_TIME_RANGE.
+        VALIDATION_ERROR, INVALID_CURSOR, CURSOR_EXPIRED
+        hoặc INVALID_TIME_RANGE.
 
-        Các trường hợp gồm:
+        Bao gồm:
         - score không phải số nguyên trong khoảng 1..5.
-        - comment vượt giới hạn.
-        - Có trường không được phép trong request body.
+        - comment vượt giới hạn hoặc có giá trị null.
+        - Body có trường không được phép.
+        - Query có tham số ngoài hợp đồng.
         - Thiếu hoặc sai định dạng Idempotency-Key.
+        - Khoảng thời gian không hợp lệ.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
       content:
         application/json:
           schema:
@@ -542,7 +937,12 @@ components:
 
     Unauthorized:
       description: |
-        Thiếu token, token không hợp lệ, Session hết hạn hoặc đã bị thu hồi.
+        UNAUTHENTICATED.
+        Thiếu user token, token không hợp lệ, bị sửa, hết hạn
+        hoặc Session hết hiệu lực.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
       content:
         application/json:
           schema:
@@ -550,8 +950,44 @@ components:
 
     Forbidden:
       description: |
-        Tài khoản không ACTIVE hoặc role không được phép gọi endpoint.
-        Ví dụ: DRIVER hoặc OPERATOR gọi API tạo đánh giá.
+        FORBIDDEN hoặc ACCOUNT_INACTIVE.
+        Tài khoản không ACTIVE hoặc role không được phép gọi operation.
+        Ví dụ DRIVER hoặc OPERATOR gọi POST tạo Rating.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    InternalUnauthorized:
+      description: |
+        UNAUTHENTICATED_SERVICE nếu service JWT không hợp lệ.
+        UNAUTHENTICATED nếu user JWT hoặc Session không hợp lệ.
+
+        Rating Service phân biệt hai trường hợp:
+        - Lỗi service được ánh xạ thành 503 tại API công khai.
+        - Lỗi người dùng được ánh xạ thành 401 tại API công khai.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    InternalForbidden:
+      description: |
+        FORBIDDEN_SERVICE nếu dịch vụ không có danh tính hoặc scope phù hợp.
+        ACCOUNT_INACTIVE hoặc FORBIDDEN nếu người dùng không có quyền.
+
+        Lỗi quyền của dịch vụ được ánh xạ thành 503 tại API công khai.
+        Lỗi quyền của người dùng được ánh xạ thành 403.
+        Trip ngoài phạm vi của CUSTOMER hoặc DRIVER sử dụng 404.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
       content:
         application/json:
           schema:
@@ -560,8 +996,23 @@ components:
     TripNotFound:
       description: |
         TRIP_NOT_FOUND.
-        Trip không tồn tại hoặc không thuộc phạm vi truy cập của người gọi.
-        Không tiết lộ thông tin Trip cho tài khoản không có quyền.
+        Trip không tồn tại hoặc ngoài phạm vi truy cập.
+        Không tiết lộ Rating tồn tại hay chưa.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    TripRatingNotFound:
+      description: |
+        TRIP_NOT_FOUND nếu Trip không tồn tại hoặc ngoài phạm vi truy cập.
+        RATING_NOT_FOUND nếu được xem Trip nhưng chưa có Rating.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
       content:
         application/json:
           schema:
@@ -569,16 +1020,34 @@ components:
 
     Conflict:
       description: |
-        Xung đột nghiệp vụ hoặc yêu cầu trùng.
+        Xung đột nghiệp vụ hoặc idempotency.
 
         Mã lỗi:
-        - TRIP_NOT_COMPLETED: Trip chưa COMPLETED.
-        - RATING_ALREADY_EXISTS: Trip đã có đánh giá.
-        - IDEMPOTENCY_KEY_REUSED: khóa đã dùng cho nội dung khác.
-        - REQUEST_IN_PROGRESS: yêu cầu cùng khóa đang được xử lý.
+        - TRIP_NOT_COMPLETED.
+        - RATING_ALREADY_EXISTS.
+        - IDEMPOTENCY_CONFLICT.
+        - REQUEST_IN_PROGRESS.
 
-        Khi Trip đã có đánh giá, client có thể lấy dữ liệu hiện tại
-        qua GET /trips/{tripId}/rating.
+        Trip đã có Rating thì có thể đọc bằng GET /trips/{tripId}/rating.
+        Không tự ghi đè Rating hiện có khi nhận request mới.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    TooManyRequests:
+      description: |
+        RATE_LIMIT_EXCEEDED.
+        Vượt hạn mức tại API Gateway.
+        Khi thử lại POST, giữ nguyên Idempotency-Key và nội dung.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
       content:
         application/json:
           schema:
@@ -586,9 +1055,17 @@ components:
 
     ServiceUnavailable:
       description: |
-        Dịch vụ hoặc thành phần phụ thuộc tạm thời không sẵn sàng.
-        Không suy ra thao tác tạo chắc chắn thất bại chỉ vì mất phản hồi.
+        SERVICE_UNAVAILABLE.
+        Rating database, CAB Core hoặc thành phần cần thiết tạm thời không sẵn sàng.
+        Bao gồm timeout hoặc không xác minh được hợp đồng phản hồi nội bộ.
+
+        Không tạo Rating từ dữ liệu chưa được xác minh.
+        Không trả danh sách rỗng hoặc 404 thay cho lỗi dependency.
+        HTTP 503 không chứng minh thao tác ghi chắc chắn chưa commit.
         Client gửi lại cùng Idempotency-Key và nội dung để xác định kết quả.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
       content:
         application/json:
           schema:
@@ -596,8 +1073,12 @@ components:
 
     UnexpectedError:
       description: |
-        Lỗi máy chủ ngoài dự kiến.
-        Không trả stack trace, thông tin kết nối hoặc thông tin xác thực.
+        INTERNAL_ERROR.
+        Không trả stack trace, token, chuỗi kết nối hoặc thông tin xác thực.
+        Nếu mất kết quả POST, thử lại cùng Idempotency-Key và nội dung.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/NoStore'
       content:
         application/json:
           schema:
