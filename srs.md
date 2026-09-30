@@ -1,16 +1,18 @@
 # Software Requirements Specification — CAB System
 
-- Phiên bản tài liệu: 1.2 — Đồng bộ rubric chấm project
+- Phiên bản tài liệu: 1.3 — Chuyển đổi chọn lọc sang kiến trúc tám microservice
 - Phạm vi: MVP hệ thống đặt xe trực tuyến và các yêu cầu trình diễn theo rubric
 - Chủ dự án: Nguyễn Đại Long
 - Trạng thái: Đặc tả thiết kế; chưa xác nhận triển khai hoặc kiểm thử thành công
 
 Tài liệu này xác định yêu cầu nghiệp vụ và hành vi cần đạt của CAB System. Công nghệ triển khai, cấu trúc mã nguồn, cấu trúc cơ sở dữ liệu vật lý và giao tiếp chi tiết giữa các dịch vụ được mô tả trong tài liệu thiết kế riêng.
-Tài liệu được đối chiếu với PHIEU_CHAM_PROJECT.pdf gồm 30 tiêu chí và Micro_Service_Design phiên bản 1.2.
+Tài liệu được đối chiếu với PHIEU_CHAM_PROJECT.pdf gồm 30 tiêu chí và Micro_Service_Design phiên bản 1.3 về tám microservice. Bản này kế thừa SRS 1.2, giữ mã và nội dung nghiệp vụ còn phù hợp; chỉ điều chỉnh ranh giới dịch vụ, phối hợp phân tán và phạm vi đã được thống nhất.
 
 Rubric xác định các nội dung cần chứng minh khi chấm. Những lựa chọn như số lượng dịch vụ, cách chia database, ngưỡng OTP và giới hạn request là đề xuất thiết kế của CAB, không mặc nhiên là thông số do giảng viên quy định.
 
 API, test case và hướng dẫn demo phải được đồng bộ với các yêu cầu trong SRS này trước khi nghiệm thu.
+
+Các yêu cầu hành vi trong SRS không tự tạo thêm endpoint, mã HTTP hoặc enum trong API hiện tại. Những hợp đồng mới, đặc biệt phản hồi cho tiến trình chưa hoàn tất, phải được đặc tả và duyệt ở API Document trước khi triển khai. Không coi việc sửa SRS là đã cập nhật mã nguồn hoặc kết quả kiểm thử.
 ## Quy ước tài liệu
 
 | Tiền tố | Ý nghĩa |
@@ -165,9 +167,10 @@ OTP có thể dùng bộ giả lập trong kiểm thử nội bộ, nhưng phả
 
 - Tìm địa chỉ bằng dịch vụ bản đồ.
 - Ước tính giá trước khi đặt xe.
-- Báo cáo cơ bản về số chuyến, tỷ lệ hủy và số tiền đã thu.
 
-Các chức năng này được đặc tả để giữ thiết kế thống nhất, nhưng có thể triển khai sau luồng đặt xe đến thanh toán.
+Các chức năng bản đồ và ước tính trên được đặc tả để giữ thiết kế thống nhất, nhưng có thể triển khai sau luồng đặt xe đến thanh toán.
+
+Báo cáo cơ bản được chuyển sang ngoài MVP của kiến trúc tám MS. BP13, FR22, UC16, AC14 và RQM15 vẫn được giữ để truy vết và làm đặc tả mở rộng, không phải điều kiện nghiệm thu bắt buộc của bản nộp hiện tại.
 
 Đánh giá tài xế thuộc phạm vi bắt buộc của bản nộp vì được chấm tại tiêu chí 20; không còn được xếp là chức năng tùy chọn.
 
@@ -180,6 +183,9 @@ Các chức năng này được đặc tả để giữ thiết kế thống nh�
 - Tự động tính cước cho chuyến kết thúc bất thường giữa hành trình.
 - Quản lý lương và chia doanh thu cho tài xế.
 - Báo cáo phân tích nâng cao.
+
+- Analytics Service và báo cáo cơ bản trong bản nộp hiện tại; audit gốc vẫn bắt buộc ở từng dịch vụ.
+- Điểm trung bình tài xế, bảng xếp hạng, hạng thành viên và hóa đơn điện tử có tính pháp lý/VAT chưa thuộc MVP.
 - Khôi phục mật khẩu tự phục vụ qua email/SMS.
 - Thông báo nghiệp vụ qua email, SMS hoặc push ngoài chức năng OTP đăng ký tài xế.
 - Tích hợp nhiều nhà cung cấp OTP hoặc thanh toán trong cùng bản MVP.
@@ -226,6 +232,27 @@ Kịch bản kiểm tra danh sách tài xế phải chứng minh truy vấn 1 km
 Các ngưỡng OTP, phân trang và rate limit là đề xuất của CAB. Việc ghi thông số trong SRS không thay thế phê duyệt và kiểm thử thực tế.
 ---
 
+## 4.6. Phân công trách nhiệm trong kiến trúc tám MS
+
+| Dịch vụ | Trách nhiệm nghiệp vụ | Yêu cầu chính |
+|---|---|---|
+| Identity & Access | Account, thông tin liên hệ chung, xác thực, OTP, Session và điều phối cấp phát tài khoản/hồ sơ | FR01, phối hợp FR23, FR26 |
+| Customer | Hồ sơ Customer và quyền có tối đa một yêu cầu/chuyến đang hoạt động | FR26 và hỗ trợ FR02–FR03, FR19 |
+| Driver & Fleet | Driver, hồ sơ xét duyệt, xe, phân công xe, vị trí mới nhất, giữ chỗ Driver/Vehicle | FR17, FR18, FR23, FR26; hỗ trợ FR04–FR07, FR24 |
+| Booking | Booking và module Dispatch; chọn ứng viên, offer, điều phối phân công, lịch sử Booking | FR02–FR07, phần Booking của FR19, FR24, FR25 |
+| Trip | Vòng đời chuyến, hành trình, tracking, Incident và JourneyMetrics | FR08, FR09, FR15, phần Trip của FR19, FR20; cung cấp dữ liệu cho FR10 |
+| Payment | Biểu giá, Fare, Payment, PaymentAttempt và đối soát | FR10–FR12, FR21 |
+| Rating | Đánh giá chuyến đã hoàn tất | FR16 |
+| Notification | Hộp thư IN_APP, tiếp nhận sự kiện và công bố thông báo | FR13 |
+
+Gateway cung cấp cửa vào, định tuyến và health tổng hợp theo FR27. Gateway, PostgreSQL, Redis và RabbitMQ không được tính vào tám MS nghiệp vụ.
+
+Operations là nhóm quyền và chức năng, được phân về dịch vụ sở hữu dữ liệu, không tạo thêm Operations MS. Dispatch thuộc Booking; vị trí mới nhất thuộc Driver; điểm hành trình và metrics thuộc Trip. Analytics nằm ngoài MVP nhưng mỗi dịch vụ vẫn ghi audit nghiệp vụ.
+
+Việc chia dịch vụ không làm thay đổi các quyền, enum hoặc điều kiện nghiệp vụ đang được giữ trong SRS. Chi tiết database, RPC và schema sự kiện nằm trong Micro_Service_Design và các hợp đồng liên quan.
+
+---
+
 # B5. Yêu cầu nghiệp vụ
 
 | Mã | Yêu cầu |
@@ -251,20 +278,21 @@ BR06 luôn là quản lý và giám sát vận hành. BR07 luôn là đánh giá
 | Mã | Quy trình | Các bước chính |
 |---|---|---|
 | BP01 | Đặt xe | Đăng nhập → nhập điểm đón/đến → chọn dịch vụ → kiểm tra hợp lệ → tạo Booking |
-| BP02 | Tìm và phân công tài xế | Chọn ứng viên → tạo TripRequest → chờ phản hồi → nhận thành công hoặc thử ứng viên khác |
+| BP02 | Tìm và phân công tài xế | Chọn ứng viên → tạo TripRequest → phản hồi → giữ quyền Customer/Driver/Vehicle → chuẩn bị và kích hoạt Trip → xác nhận kết quả; lỗi được đối soát và phục hồi trước khi thử ứng viên khác |
 | BP03 | Thực hiện chuyến | Phân công → đến đón → đón khách → di chuyển → hoàn thành |
 | BP04 | Tính cước và thanh toán | Chốt dữ liệu chuyến → tính cước → chọn phương thức → xử lý → ghi nhận kết quả |
 | BP05 | Giám sát và xử lý sự cố | Phát hiện/tiếp nhận → ghi nhận → kiểm tra → xử lý theo quyền → lưu vết |
 | BP06 | Đánh giá | Chọn chuyến hoàn thành → nhập điểm/nhận xét → kiểm tra quyền → lưu đánh giá |
-| BP07 | Quản lý tài khoản | Đăng ký/cấp tài khoản → đăng nhập → quản lý hồ sơ và phiên → đăng xuất |
+| BP07 | Quản lý tài khoản | Tiếp nhận đăng ký/cấp tài khoản → tạo hồ sơ liên dịch vụ → xác nhận cấp phát hoàn tất → đăng nhập → quản lý hồ sơ và phiên → đăng xuất |
 | BP08 | Quản lý và xét duyệt tài xế, xe | Xem hồ sơ → kiểm tra → duyệt/từ chối → tạo hoặc liên kết xe hợp lệ khi duyệt → thông báo kết quả → tài xế chủ động yêu cầu trực tuyến |
-| BP09 | Hủy yêu cầu/chuyến | Yêu cầu hủy → kiểm tra trạng thái → hủy hợp lệ → kết thúc lời mời → giải phóng tài xế nếu có |
+| BP09 | Hủy yêu cầu/chuyến | Yêu cầu hủy → phân xử với phân công đang chạy → kiểm tra trạng thái → ghi quyết định hủy hợp lệ → kết thúc lời mời → giải phóng đúng quyền Customer/Driver/Vehicle và thông báo |
 | BP10 | Thông báo | Nhận sự kiện → xác định người nhận → tạo thông báo → gửi → ghi nhận trạng thái |
 | BP11 | Quản lý biểu giá | Tạo phiên bản → kiểm tra → đặt thời điểm hiệu lực → áp dụng cho Booking mới |
 | BP12 | Tra cứu lịch sử | Xác thực → xác định phạm vi dữ liệu → lọc/phân trang → xem chi tiết |
-| BP13 | Báo cáo cơ bản | Chọn khoảng thời gian → tổng hợp dữ liệu hợp lệ → hiển thị chỉ tiêu và cách tính |
-| BP14 | Đăng ký tài xế | Nhập số điện thoại → yêu cầu OTP → xác minh → nhập thông tin cá nhân/xe → gửi hồ sơ → chờ xét duyệt |
+| BP13 | Báo cáo cơ bản — ngoài MVP, giữ để truy vết | Khi được duyệt mở rộng: chọn khoảng thời gian → tổng hợp dữ liệu có nguồn/độ mới rõ → hiển thị chỉ tiêu và cách tính |
+| BP14 | Đăng ký tài xế | Nhập số điện thoại → yêu cầu OTP → xác minh → nhập thông tin cá nhân/xe → gửi hồ sơ → hoàn tất Account/Driver/DriverApplication qua tiến trình có chống trùng → chờ xét duyệt |
 | BP15 | Tra cứu tài xế gần vị trí | Nhập tọa độ và bán kính → kiểm tra quyền/dữ liệu → lọc tài xế đủ điều kiện → sắp xếp khoảng cách → trả danh sách phân trang |
+| BP16 | Theo dõi và phục hồi thao tác liên dịch vụ | Ghi mã tiến trình → thực hiện/tra cứu từng bước → trả trạng thái phù hợp → tiếp tục hoặc bù có điều kiện → xác nhận kết quả cuối và lưu vết |
 ---
 
 # B7. Yêu cầu chức năng
@@ -279,6 +307,10 @@ BR06 luôn là quản lý và giám sát vận hành. BR07 luôn là đánh giá
 - FR01.6: Người dùng đăng xuất và thu hồi phiên hiện tại.
 - FR01.7: Hệ thống kiểm tra trạng thái tài khoản, vai trò và quyền đối với tài nguyên.
 
+Identity sở hữu Account và Session; Customer sở hữu hồ sơ Customer. Đăng ký chỉ được xác nhận hoàn tất khi đã tạo và liên kết đủ Account và hồ sơ bắt buộc. Dữ liệu cấp phát nội bộ chưa hoàn tất không được sử dụng như tài khoản đã đăng ký thành công. Mất phản hồi phải cho phép tiếp tục cùng tiến trình, không tạo tài khoản hoặc hồ sơ thứ hai.
+
+Trường hồ sơ chung như fullName, email và phone có một nơi có thẩm quyền tại Identity; các dịch vụ khác không duy trì bản có thể sửa độc lập. Role OPERATOR và quy tắc thu hồi phiên vẫn giữ nguyên.
+
 ## FR02 – Tạo yêu cầu đặt xe
 
 Khách hàng nhập điểm đón, điểm đến và loại dịch vụ. Hệ thống kiểm tra dữ liệu và điều kiện tạo Booking.
@@ -289,6 +321,8 @@ Hệ thống cấp bookingId, ghi nhận yêu cầu, chuyển sang tìm tài x�
 
 Yêu cầu gửi lại do lỗi mạng không được tạo Booking trùng khi cùng mã chống lặp.
 
+Booking Service phối hợp Customer Service giữ quyền hoạt động của khách và Payment Service cung cấp snapshot giá. Chỉ xác nhận tạo Booking thành công khi các điều kiện bắt buộc đã được ghi nhận. Kết quả chưa rõ phải được tra cứu/phục hồi theo FR28; không giải phóng quyền khách hoặc tạo Booking mới chỉ vì timeout.
+
 ## FR04 – Tìm tài xế phù hợp
 
 Hệ thống tìm tài xế theo vị trí mới nhất, trạng thái sẵn sàng, hồ sơ hợp lệ, phương tiện và loại dịch vụ.
@@ -297,9 +331,13 @@ Hệ thống tìm tài xế theo vị trí mới nhất, trạng thái sẵn sà
 
 Hệ thống gửi TripRequest cho tài xế. Tài xế được chỉ định có thể nhận hoặc từ chối khi lời mời còn hiệu lực.
 
+Nhận chuyến được Booking điều phối qua Driver, Customer và Trip. Chỉ công bố nhận thành công khi một Trip hợp lệ đã được kích hoạt, quyền Customer/Driver/Vehicle đã gắn đúng chuyến và kết quả phân công được lưu. Trip chuẩn bị nội bộ không phải Trip hoạt động. Khi mất phản hồi, tiếp tục cùng tiến trình thay vì nhận thêm chuyến hoặc giải phóng tài nguyên chưa xác minh.
+
 ## FR06 – Tìm tài xế thay thế
 
 Hệ thống thử ứng viên khác khi lời mời bị từ chối, hết hạn hoặc tài xế không còn đủ điều kiện.
+
+Nếu một lần phân công đã bắt đầu và kết quả chưa rõ, phải xác minh Trip/reservation và hoàn tất hoặc bù an toàn trước khi phân công ứng viên khác cho cùng Booking. Không coi timeout gRPC là tài xế từ chối.
 
 ## FR07 – Thông báo kết quả điều phối
 
@@ -317,7 +355,7 @@ Vị trí cũ hoặc ETA không tính được phải được thể hiện rõ,
 
 ## FR10 – Tính cước thực tế
 
-Sau khi Trip hoàn thành, hệ thống tính cước từ quãng đường, thời gian thực tế và phiên bản biểu giá gắn với Booking.
+Trip COMPLETED kích hoạt quá trình xác nhận dữ liệu hành trình. Payment Service chỉ phát hành Fare khi Trip Service đã xác nhận JourneyMetrics đủ điều kiện CONFIRMED và có snapshot giá của Booking. Dữ liệu chưa đủ giữ Fare chưa sẵn sàng, không thay quãng đường/thời gian thiếu bằng 0 hoặc yêu cầu thanh toán.
 
 ## FR11 – Thanh toán
 
@@ -334,6 +372,8 @@ Callback/webhook đi qua Gateway nhưng dùng cơ chế xác thực của nhà c
 
 Client gửi lại cùng yêu cầu thanh toán với cùng Idempotency-Key phải nhận kết quả đã lưu mà không tạo lần thu tiền mới.
 
+Khi kết quả đã hoàn tất, replay trả kết quả cuối đã lưu. Nếu operation còn đang xử lý, chỉ phản hồi tình trạng đúng sự thật theo hợp đồng tiến trình đã được duyệt; không báo đã hoàn tất hoặc mở Attempt mới. Mã HTTP và cách tra cứu tình trạng phải được đặc tả đồng bộ tại API Document.
+
 Trip giữ COMPLETED sau khi thanh toán thành công. Trạng thái đã thanh toán được xác định từ Payment liên kết, không thêm trạng thái Trip PAID.
 ## FR13 – Thông báo
 
@@ -344,11 +384,15 @@ Thông báo được tạo từ kết quả nghiệp vụ đã ghi nhận thành
 
 Lỗi gửi thông báo không làm đảo ngược quyết định xét duyệt.
 
+Các dịch vụ sở hữu nghiệp vụ phát sự kiện đã commit từ outbox của mình; Notification xác minh nguồn, lưu inbox/công việc bền vững và chống xử lý trùng trước khi công bố thông báo. Không yêu cầu một nguồn CAB_CORE duy nhất trong kiến trúc tám MS.
+
 ## FR14 – Quản lý dữ liệu vận hành
 
 Nhân viên vận hành xem dữ liệu khách hàng, tài xế, xe, chuyến và thanh toán; cập nhật dữ liệu thuộc quyền được quy định.
 
 Thay đổi trạng thái tài khoản được xử lý bởi thành phần sở hữu tài khoản.
+
+Account thuộc Identity; hồ sơ Customer thuộc Customer; tài xế/xe/review thuộc Driver; chuyến và sự cố thuộc Trip; giá và thanh toán thuộc Payment. Tra cứu kết hợp qua hợp đồng dịch vụ hoặc projection được phép, không đọc chéo database. Audit được ghi tại dịch vụ thực hiện thao tác, không phụ thuộc Analytics.
 
 ## FR15 – Giám sát và xử lý sự cố
 
@@ -383,9 +427,13 @@ Thông tin xe khai báo trong hồ sơ chưa tạo ra phân công xe chính th�
 
 Tài xế yêu cầu trực tuyến/ngoại tuyến và gửi vị trí. Hệ thống tự quản lý trạng thái BUSY theo phân công chuyến.
 
+Driver Service quản lý trạng thái và vị trí mới nhất. Trip Service lưu mẫu hành trình đã xác minh thuộc đúng Driver/Trip và giai đoạn. Mẫu GPS bàn giao trễ hoặc lặp không được gắn vào chuyến mới hay làm mẫu cũ thành mới. Reservation nội bộ có thể chặn nhận thêm chuyến trước khi kết quả BUSY cuối cùng được công bố.
+
 ## FR19 – Hủy Booking hoặc Trip
 
 Khách hàng, tài xế hoặc vận hành thực hiện hủy theo điều kiện của từng đối tượng và trạng thái. Mọi lần hủy phải có lý do.
+
+Booking Service phân xử hủy Booking với accept; Trip Service quyết định hủy Trip. Sau khi ghi quyết định hợp lệ, hệ thống giải phóng đúng quyền hoạt động và thông báo qua công việc bền vững. Nếu kết quả phân công chưa rõ, không trả hủy thành công giả hoặc giải phóng Driver đang có Trip.
 
 ## FR20 – Lịch sử chuyến
 
@@ -397,7 +445,11 @@ Khách hàng và tài xế xem danh sách, chi tiết các chuyến thuộc ph�
 - FR21.2: Khách hàng có thể tìm địa chỉ và xem cước dự kiến khi chức năng bản đồ/ước tính được triển khai.
 - Cước dự kiến phải được phân biệt với cước thực tế.
 
+Payment Service là nguồn có thẩm quyền của PricingConfig; Booking lưu bản snapshot bất biến do Payment cung cấp cho yêu cầu được chấp nhận. Việc thay dịch vụ sở hữu biểu giá không làm đổi công thức, quy tắc hiệu lực hoặc quyền OPERATOR hiện có.
+
 ## FR22 – Báo cáo cơ bản
+
+**Trạng thái: ngoài MVP của baseline tám MS; giữ nguyên mã và nội dung để truy vết, chỉ triển khai khi được duyệt mở rộng.** Báo cáo không phải điều kiện hoàn tất bản nộp hiện tại. Audit và giám sát kỹ thuật vẫn bắt buộc.
 
 Nhân viên vận hành xem số chuyến, số chuyến hoàn thành/hủy và số tiền đã thu trong khoảng thời gian được chọn.
 ## FR23 – Đăng ký tài xế qua OTP
@@ -409,6 +461,8 @@ Nhân viên vận hành xem số chuyến, số chuyến hoàn thành/hủy và 
 - FR23.5: Người đăng ký nhập thông tin cá nhân, email, mật khẩu, giấy phép và thông tin phương tiện.
 - FR23.6: Hệ thống tạo Account DRIVER, Driver và hồ sơ đăng ký nhất quán.
 - FR23.7: Tài xế xem hồ sơ và kết quả xét duyệt của mình sau khi đăng nhập.
+
+Identity chịu trách nhiệm OTP, PhoneVerification, Account và tiến trình cấp phát; Driver chịu trách nhiệm Driver/DriverApplication. Tiêu thụ verification token và ghi tiến trình cấp phát phải được lưu nhất quán tại Identity; Driver tạo bộ hồ sơ nhất quán trong database của mình. Chỉ trả kết quả đăng ký hoàn tất sau khi đủ bộ dữ liệu liên kết; retry dùng cùng operationId và không tiêu thụ token lần thứ hai.
 
 Kết quả đăng ký ban đầu:
 
@@ -475,6 +529,19 @@ Hai endpoint /health và /ready chỉ trả thông tin tối thiểu.
 Danh sách chi tiết phải kiểm tra quyền và không chứa secret, connection string hoặc stack trace.
 
 Các endpoint này nằm tại gốc Gateway, không bắt buộc có tiền tố /v1.
+
+Danh sách health phải phản ánh Gateway, tám MS nghiệp vụ và hạ tầng PostgreSQL/Redis/RabbitMQ; có Worker riêng thì bổ sung thành phần đó. Phân biệt số MS với số container. Nội dung trạng thái giữ hợp đồng API 07: /health dùng UP; /ready dùng READY/NOT_READY; thành phần dùng UP/DOWN/UNKNOWN và tổng thể dùng UP/DEGRADED. Không thể xác minh quyền OPERATOR thì không trả chi tiết.
+
+## FR28 – Theo dõi kết quả và phục hồi thao tác liên dịch vụ
+
+- FR28.1: Thao tác có nhiều bước phải có định danh và trạng thái bền vững để tra cứu, gửi lại hoặc tiếp tục sau lỗi mà không tạo tác động trùng.
+- FR28.2: Hệ thống phân biệt đã hoàn tất, đang xử lý và chưa xác định kết quả; timeout không tự chứng minh thất bại hoặc đã rollback.
+- FR28.3: Chỉ trả kết quả cuối thành công khi thỏa hậu điều kiện của nghiệp vụ tương ứng.
+- FR28.4: Retry, thao tác bù và giải phóng quyền đối chiếu đúng đối tượng/phiên bản; không tác động lên công việc mới.
+- FR28.5: Người dùng chỉ xem tiến trình của mình; vận hành truy cập theo quyền. Đăng ký chưa có token cần bằng chứng truy cập riêng, không chỉ operationId hoặc Idempotency-Key.
+- FR28.6: Tiến trình không tự phục hồi được phải được theo dõi, cảnh báo và có quy trình vận hành an toàn; không cưỡng chế kết quả thanh toán/chuyến để che lỗi.
+
+Các yêu cầu trên quy định hành vi cần đạt. HTTP 202, endpoint tra cứu operation, thời hạn lưu giữ và bằng chứng truy cập khi đăng ký là hợp đồng đề xuất cần chốt tại API Document; chưa được coi là endpoint/mã phản hồi đã tồn tại. Trạng thái operation tách khỏi trạng thái Booking, Trip, Payment và Account.
 ---
 
 # B8. Quy tắc nghiệp vụ và ngoại lệ
@@ -483,10 +550,10 @@ Các endpoint này nằm tại gốc Gateway, không bắt buộc có tiền t�
 
 | Mã | Quy tắc |
 |---|---|
-| BRu01 | Chỉ chọn tài xế có Account ACTIVE, hồ sơ được phép hoạt động, xe hợp lệ đúng loại dịch vụ, trạng thái AVAILABLE và vị trí còn mới trong bán kính cấu hình |
-| BRu02 | Một tài xế chỉ có tối đa một Trip đang hoạt động. Không được tự chuyển BUSY thành AVAILABLE để nhận thêm chuyến |
+| BRu01 | Chỉ chọn tài xế có Account ACTIVE, hồ sơ APPROVED, xe hợp lệ đúng loại dịch vụ, trạng thái AVAILABLE, GPS còn mới trong bán kính cấu hình và không bị reservation/Trip khác chiếm Driver hoặc Vehicle |
+| BRu02 | Một Driver và một Vehicle chỉ có tối đa một quyền giữ chỗ/phục vụ chuyến đang hoạt động. Một tài xế không có hai Trip hoạt động và không tự chuyển BUSY thành AVAILABLE để nhận thêm chuyến |
 | BRu03 | Mỗi Booking có tối đa một lời mời PENDING. Thử lại theo giới hạn tại mục 4.5; dừng khi hết ứng viên, hết số lời mời hoặc hết tổng thời gian |
-| BRu04 | Mỗi Booking có tối đa một Trip. Chỉ tạo Trip sau khi chấp nhận lời mời hợp lệ và giành được quyền phân công |
+| BRu04 | Mỗi Booking có tối đa một Trip. Chỉ kích hoạt Trip sau khi lời mời được chấp nhận hợp lệ và giành đủ quyền phân công; dữ liệu chuẩn bị kỹ thuật không được công bố như Trip hoạt động |
 | BRu05 | Trip chỉ chuyển theo bảng trạng thái tại mục 8.2; mọi lần chuyển được lưu lịch sử |
 | BRu06 | Cước thực tế chỉ được chốt khi Trip COMPLETED và có đủ dữ liệu hợp lệ |
 | BRu07 | Không lưu số thẻ đầy đủ, mã bảo mật thẻ hoặc thông tin đăng nhập tài khoản thanh toán của khách |
@@ -504,13 +571,19 @@ Các endpoint này nằm tại gốc Gateway, không bắt buộc có tiền t�
 | BRu19 | Vị trí có thời điểm ghi nhận; dữ liệu quá cũ không dùng để ghép mới. Vị trí gửi bù cũ hơn không được ghi đè vị trí mới |
 | BRu20 | Account, Driver, Booking, TripRequest, Trip và Payment có các bộ trạng thái riêng; không dùng thay thế cho nhau |
 | BRu21 | Cùng một sự kiện không tạo thông báo trùng cho cùng người nhận và cùng kênh; thông báo thất bại không đảo ngược nghiệp vụ đã thành công |
-| BRu22 | Khách hàng có tối đa một Booking đang tìm hoặc một Trip đang hoạt động. Payment chưa hoàn tất của chuyến cũ không bị nhầm với trạng thái chuyến đang hoạt động |
+| BRu22 | Customer có tối đa một quyền hoạt động cho tiến trình tạo Booking, Booking đang tìm hoặc Trip chưa đóng. Quyền được chuyển tiếp từ Booking sang Trip, không tạo quyền thứ hai. Payment chưa hoàn tất của chuyến đã đóng không tự chặn chuyến mới |
 | BRu23 | OTP phải còn hiệu lực, đúng mục đích và chưa vượt số lần thử. Mã thay thế làm mã cũ mất hiệu lực; quyền xác minh số điện thoại chỉ được tiêu thụ một lần khi tạo hồ sơ |
-| BRu24 | Đăng ký tài xế tạo Account DRIVER, Driver PENDING_APPROVAL/OFFLINE và DriverApplication SUBMITTED nhất quán; không để API báo thành công khi chỉ tạo được một phần |
+| BRu24 | Đăng ký Driver hoàn tất khi đủ Account DRIVER, Driver PENDING_APPROVAL/OFFLINE và Application SUBMITTED. Dữ liệu cấp phát tạm thời phải có operation để phục hồi, không dùng như bộ hồ sơ hợp lệ hoặc báo thành công khi chỉ tạo một phần |
 | BRu25 | Duyệt/từ chối hồ sơ cập nhật DriverApplication và Driver.approvalStatus nhất quán. Từ chối phải có lý do; duyệt không tự bật AVAILABLE |
 | BRu26 | Thông tin phương tiện do tài xế khai báo chưa phải xe được phép hoạt động. Chỉ sau kiểm tra và duyệt mới tạo hoặc liên kết Vehicle/VehicleAssignment hợp lệ |
 | BRu27 | Danh sách tài xế gần vị trí chỉ trả ứng viên đủ điều kiện trong bán kính yêu cầu; phân trang không được làm trả tài xế ngoài phạm vi hoặc bỏ qua kiểm tra quyền |
 | BRu28 | Customer chỉ xem Booking của mình. Booking và Trip là hai loại lịch sử riêng; yêu cầu không tìm được tài xế vẫn có trong lịch sử Booking |
+| BRu29 | Dữ liệu có một dịch vụ sở hữu có thẩm quyền. Transaction chỉ bao phủ dịch vụ đó; tham chiếu liên dịch vụ được kiểm tra qua hợp đồng, không ghi chéo database |
+| BRu30 | Accept và hủy Booking được Booking phân xử trên cùng tiến trình; không công bố đồng thời hai kết quả cuối mâu thuẫn |
+| BRu31 | Mất phản hồi phải đối soát trước khi bù hoặc phân công lại. Trip đã hoạt động chỉ kết thúc qua quy tắc hủy/đóng hợp lệ, không xóa để giả lập rollback |
+| BRu32 | Lệnh giải phóng Customer/Driver/Vehicle phải khớp operation/Trip và phiên bản đang giữ quyền; lệnh cũ không giải phóng quyền mới |
+| BRu33 | Chỉ PricingConfig tại Payment là nguồn giá; Booking/Trip giữ snapshot bất biến và Fare lưu phiên bản metrics dùng khi tính |
+| BRu34 | Khóa Account/thu hồi Session ngăn các lần cấp quyền mới. Cách xử lý lệnh đã được cấp quyền nhưng chưa hoàn tất ở dịch vụ khác phải có chính sách phân xử và kiểm thử riêng, không suy ra atomic từ sự kiện |
 
 ### Quy tắc chọn ứng viên
 
@@ -581,6 +654,8 @@ Công thức cước:
 | SUSPENDED | Bị đình chỉ |
 
 Trạng thái tài khoản không đồng nghĩa trạng thái trực tuyến của tài xế.
+
+Trạng thái cấp phát hồ sơ nội bộ được kiểm tra riêng. Account có thể đã được lưu trong lúc đăng ký chưa hoàn tất, nhưng không được cấp quyền sử dụng như tài khoản đã hoàn tất đăng ký. Không bổ sung enum Account để biểu diễn Saga khi chưa có hợp đồng được duyệt.
 ### Driver approvalStatus
 
 | Trạng thái | Ý nghĩa |
@@ -626,6 +701,8 @@ Thông tin xe khai báo trong hồ sơ chưa đồng nghĩa có VehicleAssignmen
 | BUSY → OFFLINE | Trip kết thúc nhưng tài xế/xe không còn đáp ứng điều kiện |
 
 Nếu tài xế BUSY mất mạng, không tự giải phóng tài xế để nhận chuyến khác. Hệ thống đánh dấu mất kết nối và báo vận hành.
+
+Reservation là trạng thái điều phối nội bộ, không thêm trạng thái Driver công khai. Trong giai đoạn giữ chỗ, dù Driver còn hiển thị AVAILABLE thì cũng không được chọn cho công việc khác. Sau khi Trip đóng, chuyển BUSY về AVAILABLE/OFFLINE khi Driver Service đã xác minh và giải phóng đúng quyền; không yêu cầu các database đổi cùng một thời điểm.
 
 ### Booking
 
@@ -727,11 +804,13 @@ Tài liệu demo ghi rõ bảng tương ứng. Nếu yêu cầu nghiệm thu b�
 
 Khi khách muốn đặt lại sau hủy, tạo Booking mới. MVP không tự thay tài xế trong Trip cũ.
 
+Khi phân công đang chạy, yêu cầu hủy phải được Booking phối hợp với reservation và TripPreparation. Nếu Trip đã hoạt động thì áp dụng quy tắc hủy Trip. Sau khi ghi nhận hủy/đóng, việc giải phóng các quyền có thể cần phục hồi liên dịch vụ; đến khi có xác nhận hợp lệ, tài nguyên vẫn bị chặn nhận công việc mới. Hệ thống phải thể hiện tình trạng chờ phù hợp và theo dõi công việc giải phóng, không tự bỏ khóa vì timeout.
+
 ## 8.4. Ngoại lệ bắt buộc
 
 | Ngoại lệ | Hành vi yêu cầu |
 |---|---|
-| Thiếu dữ liệu hoặc dữ liệu sai | Từ chối, chỉ ra trường lỗi, không tạo dữ liệu nghiệp vụ dở dang |
+| Thiếu dữ liệu hoặc dữ liệu sai | Từ chối, chỉ ra trường lỗi, không tạo kết quả nghiệp vụ hợp lệ từ dữ liệu sai. Dữ liệu cấp phát nội bộ nếu có phải thuộc tiến trình có thể phục hồi/bù, không để thành dữ liệu mồ côi không được quản lý |
 | Không có tài xế phù hợp | Kết thúc NO_DRIVER_FOUND và thông báo khách |
 | Tài xế từ chối/hết hạn | Thu hồi hiệu lực lời mời cũ và thử ứng viên khác trong giới hạn |
 | Nhận chuyến khi lời mời hết hạn hoặc Booking đã hủy | Từ chối; không tạo Trip |
@@ -751,11 +830,17 @@ Khi khách muốn đặt lại sau hủy, tạo Booking mới. MVP không tự t
 | Redis phục vụ rate limit không khả dụng | Các endpoint nhạy cảm được quy định trả lỗi tạm thời 503; không âm thầm bỏ giới hạn |
 | Token bị sửa chữ ký hoặc payload | Từ chối 401, không cấp quyền từ payload chưa xác minh |
 | Đúng danh tính nhưng sai role của chức năng | Từ chối 403, không trả dữ liệu nghiệp vụ |
+| Account đã tạo nhưng dịch vụ hồ sơ chưa phản hồi | Giữ tiến trình cấp phát chưa hoàn tất, tra cứu hoặc retry cùng operationId; không cấp quyền đầy đủ hoặc tạo Account khác |
+| Giữ chỗ Driver/Vehicle thành công nhưng Trip chưa rõ kết quả | Tra cứu Trip theo assignmentId trước khi giải phóng hoặc thử ứng viên khác |
+| Trip kích hoạt nhưng Booking chưa nhận phản hồi | Phục hồi kết quả về phía trước; không tạo Trip thứ hai hoặc trả tài xế về AVAILABLE |
+| Lệnh chuẩn bị/kích hoạt đến sau khi đã bù | Kiểm tra generation/trạng thái hủy để từ chối lệnh cũ, không hồi sinh chuyến |
+| Trip đã đóng nhưng giải phóng tài nguyên chưa hoàn tất | Giữ công việc giải phóng bền vững, retry có kiểm tra chủ sở hữu và cảnh báo khi quá hạn |
+| Một dịch vụ đã commit, lời gọi kế tiếp timeout | Không tự suy luận toàn bộ thất bại; phản hồi theo tình trạng tiến trình và đối soát trước khi bù |
 ---
 
 # B9. Mô hình dữ liệu nghiệp vụ
 
-Đây là mô hình khái niệm. Việc chia bảng, collection, cache và khóa ngoại vật lý được quyết định ở tài liệu thiết kế.
+Đây là mô hình khái niệm được giữ từ SRS 1.2 và bổ sung quyền sở hữu cho tám MS. Chi tiết bảng, cache và khóa ngoại vật lý nằm trong Micro_Service_Design 1.3. Quan hệ nghiệp vụ giữa hai dịch vụ không phải khóa ngoại hoặc transaction dùng chung database.
 
 ## 9.1. Các thực thể
 
@@ -785,6 +870,17 @@ Khi khách muốn đặt lại sau hủy, tạo Booking mới. MVP không tự t
 | PhoneVerification | verificationId, challengeId, phoneReference, tokenDigest, expiresAt, consumedAt | Quyền gửi hồ sơ sau xác minh, có thời hạn và dùng một lần |
 | DriverApplication | applicationId, driverId, submittedVehicleDetails, status, version, submittedAt, reviewedAt, reviewedByAccountId, rejectionReason | Hồ sơ đăng ký và quyết định xét duyệt tài xế |
 | VehicleAssignment | assignmentId, driverId, vehicleId, startedAt, endedAt, assignedByAccountId | Phân công xe hiện hành và lịch sử |
+| CustomerActivityGuard | customerId, ownerOperationId, bookingId, tripId, version | Quyền hoạt động duy nhất của Customer, do Customer Service quản lý |
+| RegistrationOperation | operationId, accountId, loại hồ sơ, trạng thái, kết quả từng bước | Tiến trình cấp phát Account và hồ sơ, do Identity điều phối |
+| DriverReservation | reservationId, assignmentId, driverId, vehicleId, bookingId, tripId, generation, state | Giữ/xác nhận quyền phục vụ Driver và Vehicle tại Driver Service |
+| AssignmentSaga | assignmentId, bookingId, tripId, trạng thái, version, cancelRequested và kết quả từng bước | Phân xử và phục hồi phân công tại Booking Service |
+| TripPreparation | assignmentId, tripId, generation, trạng thái chuẩn bị/kích hoạt/hủy | Ngăn tạo/kích hoạt trùng hoặc hồi sinh bước đã hủy tại Trip |
+| TripRoutePoint | sampleId, tripId, driverId, latitude, longitude, recordedAt, receivedAt | Mẫu hành trình đã xác minh, thuộc Trip |
+| JourneyMetrics | tripId, metricsVersion, distanceKm, durationMinutes, qualityStatus, calculationMethodVersion, confirmedAt | Kết quả xác nhận dữ liệu tính cước, thuộc Trip |
+| ClosureOperation | operationId, tripId, closureVersion, kết quả giải phóng từng quyền | Tiếp tục giải phóng sau khi Trip đóng, thuộc Trip |
+| ProviderEvent | provider, providerEventId, attemptId, verifiedResult, processingStatus | Chống xử lý callback trùng và lưu kết quả xác minh tại Payment |
+| IdempotencyRecord | danh tính, operation, key, requestDigest, trạng thái, kết quả và thời điểm | Chống lặp tại dịch vụ thực hiện thao tác |
+| OutboxEvent / InboxReceipt | eventId, nguồn, phiên bản schema, nội dung tối thiểu/digest và trạng thái xử lý | Bàn giao bền vững, chống trùng và phục hồi sự kiện tại dịch vụ sở hữu |
 
 Quy ước xác nhận thanh toán tiền mặt:
 
@@ -838,29 +934,54 @@ Quy ước:
 
 ---
 
+## 9.3. Quyền sở hữu và tính nhất quán trong tám MS
+
+| Chủ sở hữu | Dữ liệu có thẩm quyền |
+|---|---|
+| Identity | Account, Operator, Session, OtpChallenge, PhoneVerification, RegistrationOperation |
+| Customer | Customer, CustomerActivityGuard |
+| Driver | Driver, DriverApplication, Vehicle, VehicleAssignment, DriverLocation, DriverReservation |
+| Booking | BookingRequest, DispatchProcess, TripRequest, AssignmentSaga và snapshot giá được chấp nhận |
+| Trip | Trip, TripPreparation, TripStatusHistory, IncidentRecord, TripRoutePoint, JourneyMetrics, ClosureOperation |
+| Payment | PricingConfig, Fare, Payment, PaymentAttempt, ProviderEvent |
+| Rating | Rating |
+| Notification | Notification, inbox và công việc công bố thông báo |
+
+Idempotency, audit, outbox/inbox và job được quản lý tại dịch vụ cần sử dụng, không phải database dùng chung. Operator profile nếu còn giữ trong mô hình thuộc Identity, không tạo MS thứ chín.
+
+- Giao tiếp nội bộ qua hợp đồng có xác thực; không đọc/ghi database dịch vụ khác.
+- Snapshot giá, xe và danh tính lịch sử giữ nguyên theo quy tắc đã chốt; projection có nguồn và version, không trở thành bản gốc có thể sửa độc lập.
+- Dữ liệu đăng ký chưa hoàn tất và TripPreparation có trạng thái kỹ thuật, không được trình bày như đăng ký hoặc chuyến đã thành công.
+- CustomerActivityGuard chuyển quyền từ Booking sang Trip, không tạo quyền thứ hai; chỉ giải phóng khi còn khớp chủ sở hữu.
+- DriverReservation bảo vệ cả Driver và Vehicle. Quyền đã gắn Trip hoạt động không tự mất chỉ vì TTL hoặc Worker dừng.
+- Sự kiện lặp/sai thứ tự không làm giảm version, ghi đè kết quả cuối hoặc tác động lên công việc mới.
+
+---
+
 # B10. Yêu cầu phi chức năng
 
 Các mục tiêu định lượng dưới đây là đề xuất cho môi trường nghiệm thu MVP. Khi kiểm thử phải ghi rõ cấu hình máy, dữ liệu, tải và phiên bản ứng dụng.
 
 | Mã | Yêu cầu | Cách kiểm chứng |
 |---|---|---|
-| NFR01 | Với 50 người dùng đồng thời, dữ liệu 10.000 chuyến, bài thử 10 phút: 95% yêu cầu nội bộ về hồ sơ, tạo Booking, cập nhật/xem trạng thái phản hồi trong 1 giây; tỷ lệ lỗi ngoài dự kiến dưới 1%. Không tính thời gian chờ tài xế và nhà cung cấp bên ngoài vào độ trễ API nội bộ | Kiểm thử tải và báo cáo phân vị/tỷ lệ lỗi |
-| NFR02 | CAB Core, Rating và Notification có tiến trình và quyền sở hữu dữ liệu riêng theo thiết kế. Rating/Notification có thể build và triển khai riêng khi giữ tương thích hợp đồng. Các module trong CAB Core chưa được coi là các microservice triển khai độc lập. Khi xử lý đồng thời không tạo hai Trip cho một Booking hoặc hai Trip hoạt động cho một tài xế | Rà soát ranh giới dịch vụ, quyền database, triển khai riêng và kiểm thử tranh chấp |
-| NFR03 | Sau khi dịch vụ khởi động lại, trạng thái đã xác nhận không bị mất; yêu cầu gửi lại không tạo chuyến hoặc thanh toán trùng. Lỗi thông báo không ngăn lưu kết quả chuyến | Kiểm thử gián đoạn và khôi phục |
+| NFR01 | Với 50 người dùng đồng thời, dữ liệu 10.000 chuyến, bài thử 10 phút: mục tiêu 95% yêu cầu hồ sơ, tạo Booking, cập nhật/xem trạng thái phản hồi trong 1 giây; tỷ lệ lỗi ngoài dự kiến dưới 1%. Đo từ Gateway, bao gồm các hop nội bộ. Thời gian chờ tài xế/provider đo riêng. Nếu có phản hồi đang xử lý, phải báo riêng độ trễ xác nhận cuối, không tính phản hồi 202 nhanh là nghiệp vụ đã hoàn tất | Kiểm thử tải và báo cáo riêng độ trễ API, thời gian hoàn tất operation, phân vị và tỷ lệ lỗi |
+| NFR02 | Tám MS Identity, Customer, Driver, Booking, Trip, Payment, Rating và Notification có tiến trình, quyền sở hữu dữ liệu và khả năng build/triển khai riêng khi giữ tương thích hợp đồng. Dispatch thuộc Booking; hành trình thuộc Trip và vị trí mới nhất thuộc Driver. Khi tranh chấp không tạo hai Trip cho một Booking hoặc hai quyền phục vụ hoạt động cho cùng Driver/Vehicle | Rà soát tám ranh giới, quyền database, triển khai riêng và kiểm thử tranh chấp |
+| NFR03 | Sau restart không mất kết quả đã xác nhận; retry không tạo Booking, hồ sơ, Trip, Rating, thông báo hoặc thanh toán trùng. Saga lưu bước đã hoàn tất; mất phản hồi được tra cứu trước khi bù. Lỗi thông báo không đảo ngược nghiệp vụ. Lệnh cũ không giải phóng tài nguyên hoặc hồi sinh tiến trình đã hủy | Ngắt sau từng commit/RPC, phát lặp và sai thứ tự, restart Worker, đối chiếu các bất biến |
 | NFR04 | Chức năng được bảo vệ kiểm tra chữ ký JWT, issuer, audience, thời hạn, Account, Session, role và quyền trên dữ liệu. Token bị sửa hoặc không hợp lệ trả 401; token hợp lệ nhưng sai role của chức năng trả 403. Phiên đã thu hồi không tiếp tục truy cập được | Kiểm thử JWT tampering, truy cập trái phép, token hết hạn và thu hồi |
 | NFR05 | Mật khẩu lưu dạng băm chuyên dụng; email, phone và giấy phép được mã hóa khi lưu, khóa tách khỏi database và Git. Có quản lý phiên bản/luân chuyển khóa. Không ghi mật khẩu, OTP, token hoặc dữ liệu nhạy cảm không cần thiết vào log. Dữ liệu cá nhân/vị trí chỉ hiển thị đúng quyền. Kết nối ngoài máy phát triển dùng HTTPS | Đọc trực tiếp database, kiểm tra quyền giải mã, rà soát log/secret và kiểm thử xoay khóa |
-| NFR06 | Có thể truy từ Booking đến Trip, Fare, Payment và Incident bằng mã định danh; thao tác quan trọng có người thực hiện, thời điểm và correlationId | Kiểm tra nhật ký của một luồng hoàn chỉnh |
+| NFR06 | Truy vết từ Account/Booking tới Trip, Fare, Payment, Incident bằng ID, operationId/correlationId. Mỗi dịch vụ ghi audit của thay đổi do mình thực hiện; không phụ thuộc Analytics để giữ audit gốc. Theo dõi backlog, tiến trình chờ/bù và giải phóng quá hạn mà không lộ secret | Kiểm tra trace/audit của luồng qua nhiều MS và công việc phục hồi |
 | NFR07 | Gateway cung cấp /health, /ready và /health/services; phản ánh trạng thái thực của dịch vụ và phụ thuộc. Readiness chưa đạt trả 503. Danh sách chi tiết chỉ dành cho OPERATOR. Theo dõi được Worker, backlog, độ trễ, Booking đang chờ và Payment UNKNOWN | Thử dừng dịch vụ/phụ thuộc, kiểm tra HTTP status, nội dung phản hồi và khả năng khôi phục |
 | NFR08 | Nhà cung cấp thanh toán, bản đồ và thông báo được tách qua hợp đồng tích hợp; thay nhà cung cấp không đổi quy tắc nghiệp vụ cốt lõi | Rà soát thiết kế và kiểm thử với bộ giả lập hợp đồng |
 | NFR09 | Khi kết nối bình thường, 95% cập nhật trạng thái/vị trí đã được máy chủ nhận xuất hiện cho người theo dõi trong 3 giây; vị trí quá ngưỡng được đánh dấu cũ | Đo timestamp và mô phỏng mất mạng |
-| NFR10 | Dữ liệu bền vững có quy trình sao lưu và khôi phục; trong môi trường thử nghiệm sao lưu mỗi ngày và thực hiện ít nhất một lần phục hồi kiểm chứng | Khôi phục bản sao, đối chiếu số lượng và dữ liệu mẫu |
+| NFR10 | Có sao lưu/khôi phục dữ liệu bền vững; môi trường thử nghiệm sao lưu mỗi ngày và có ít nhất một lần phục hồi kiểm chứng. Phạm vi gồm dữ liệu tám MS, bằng chứng chống trùng, tiến trình/job và kế hoạch khôi phục khóa. Sau restore kiểm tra liên kết và đối soát trạng thái liên dịch vụ; không suy ra nhất quán chỉ từ số hàng khôi phục | Restore có kiểm soát, đối chiếu dữ liệu liên dịch vụ và tiếp tục job; không thu tiền lần nữa |
 | NFR11 | Mọi HTTP request từ client và callback bên ngoài đi qua Gateway. Các dịch vụ nghiệp vụ không công bố cổng trong cấu hình chạy bài mặc định. Route nội bộ không mở cho client. Gateway không thay thế phân quyền tại dịch vụ đích | Gọi qua Gateway, kiểm tra cấu hình cổng và thử truy cập backend trực tiếp |
-| NFR12 | Có IPC thực sự: HTTP nội bộ có xác thực dịch vụ và timeout; RabbitMQ truyền sự kiện nghiệp vụ. Sự kiện được lưu bền vững, retry có giới hạn, chống xử lý trùng và có xử lý lỗi quá ngưỡng | Theo dõi một lời gọi HTTP nội bộ, một sự kiện qua broker; thử giao lặp và phục hồi sau gián đoạn |
-| NFR13 | Hệ thống khởi chạy bằng Docker Compose với cấu hình, migration và seed được hướng dẫn. Thành phần có healthcheck; ứng dụng phục hồi kết nối khi phụ thuộc khởi động lại | Khởi chạy trên môi trường sạch, liệt kê container, kiểm tra sức khỏe và restart phụ thuộc |
-| NFR14 | Source code thể hiện trách nhiệm từng dịch vụ/module. Repository có .gitignore, .dockerignore và .env.example; không commit secret hoặc đóng gói secret vào image | Rà soát cấu trúc source, file được Git theo dõi, cấu hình build và lịch sử Git khi có nghi ngờ lộ secret |
+| NFR12 | Gateway và các MS dùng gRPC nội bộ có xác thực, scope, deadline và mapping lỗi; RabbitMQ truyền sự kiện từ dịch vụ sở hữu nghiệp vụ. Outbox/inbox bền vững, retry có backoff theo loại việc, chống trùng và xử lý lỗi quá ngưỡng. Chỉ retry RPC ghi khi có chống lặp; không buộc mọi luồng dùng event bất đồng bộ | Theo dõi một RPC gRPC thật và một sự kiện qua broker; kiểm thử timeout, caller sai, giao lặp/sai thứ tự và phục hồi |
+| NFR13 | Compose baseline có Gateway, tám MS, PostgreSQL, Redis và RabbitMQ, tương ứng 12 container nếu mỗi thành phần một container; Worker tách riêng làm tăng container nhưng không tăng số MS nghiệp vụ. Có cấu hình/migration/seed và healthcheck riêng, kết nối phục hồi khi phụ thuộc restart; chỉ Gateway công bố cổng ứng dụng | Liệt kê thành phần và quyền database, khởi chạy/restart phụ thuộc theo hướng dẫn; migration/seed là tác vụ một lần |
+| NFR14 | Source có thư mục riêng cho Gateway và tám MS; contracts dùng chung không chứa ORM/repository để truy cập chéo database. Repository có .gitignore, .dockerignore, .env.example; không commit hoặc đóng gói secret vào image | Rà soát cấu trúc source, import giữa dịch vụ, file tracked, image và lịch sử Git khi nghi lộ secret |
 | NFR15 | Input người dùng không được ghép trực tiếp vào SQL; truy vấn tham số hóa và các thành phần động có danh sách cho phép. Payload SQL injection không vượt xác thực, không đọc trái phép và không làm lộ lỗi database | Gửi payload injection qua API và kiểm tra phản hồi cùng truy vấn liên quan |
 | NFR16 | Nội dung người dùng được xử lý như văn bản trong MVP. Khi hiển thị phải encode đúng ngữ cảnh, không thực thi script. Phản hồi JSON và giao diện phải được kiểm tra phù hợp | Gửi payload XSS qua API, kiểm tra response và nơi hiển thị trên trình duyệt |
 | NFR17 | Gateway áp dụng rate limit theo IP/tài khoản/chức năng; vượt ngưỡng trả 429 và Retry-After. Có kiểm thử tải theo kịch bản hơn 1.000 request/giây của rubric, ghi rõ môi trường, thời gian, số 429, lỗi ngoài dự kiến và khả năng phục hồi | Chạy công cụ kiểm thử tải trong môi trường kiểm soát; lưu báo cáo thay vì suy đoán từ cấu hình |
+| NFR18 | Tiến trình liên dịch vụ có trạng thái bền vững, chủ sở hữu, ID/phiên bản và phục hồi có điều kiện. Chỉ người có quyền xem/tiếp tục; operationId không tự là quyền truy cập. Thời hạn lưu, ngân sách chờ và quy trình can thiệp được đặc tả trước triển khai | Kiểm thử FR28/UC22/AC21; gọi sai người, restart, timeout và lệnh quá hạn hoặc đến muộn |
 
 Không cam kết tỷ lệ uptime vận hành thực tế chỉ dựa trên bài thử ngắn của MVP.
 
@@ -896,12 +1017,13 @@ flowchart LR
         HIST(["UC13: Lịch sử chuyến"])
         PRICE(["UC14: Biểu giá và cước dự kiến"])
         N(["UC15: Thông báo"])
-        REPORT(["UC16: Báo cáo"])
+        REPORT(["UC16: Báo cáo - ngoài MVP"])
         REG(["UC17: Đăng ký tài xế qua OTP"])
         NEAR(["UC18: Tài xế gần vị trí"])
         BOOKHIST(["UC19: Danh sách Booking"])
         PROFILE(["UC20: Hồ sơ theo mã"])
         HEALTH(["UC21: Sức khỏe hệ thống"])
+        PROGRESS(["UC22: Theo dõi tiến trình liên dịch vụ"])
     end
 
     C --- A
@@ -942,6 +1064,10 @@ flowchart LR
     O --- NEAR
     O --- PROFILE
     O --- HEALTH
+    C --- PROGRESS
+    D --- PROGRESS
+    G --- PROGRESS
+    O --- PROGRESS
 
     P --- PAY
     M --- PRICE
@@ -959,8 +1085,8 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 
 | Use Case con | Tác nhân | Luồng chính và hậu điều kiện | Ngoại lệ |
 |---|---|---|---|
-| UC01.1 Đăng ký khách hàng | Khách chưa có tài khoản | Nhập thông tin → kiểm tra → tạo Account CUSTOMER và Customer → yêu cầu đăng nhập | Trùng email/điện thoại, thiếu dữ liệu, tự gán quyền |
-| UC01.2 Đăng nhập | Ba vai trò | Nhập emailOrPhone và mật khẩu → xác thực → kiểm tra ACTIVE → tạo Session → trả thông tin tài khoản và quyền | Sai thông tin, tài khoản không hoạt động; không tiết lộ tài khoản nào tồn tại khi thông tin xác thực sai |
+| UC01.1 Đăng ký khách hàng | Khách chưa có tài khoản | Nhập thông tin → kiểm tra → Identity ghi tiến trình → Customer tạo hồ sơ → xác nhận đủ liên kết → hoàn tất đăng ký → yêu cầu đăng nhập | Trùng định danh, thiếu dữ liệu, tự gán quyền; mất phản hồi thì theo dõi/retry cùng tiến trình, không báo thành công một phần |
+| UC01.2 Đăng nhập | Ba vai trò | Nhập emailOrPhone và mật khẩu → xác thực → kiểm tra ACTIVE và cấp phát hồ sơ đã hoàn tất → tạo Session → trả thông tin tài khoản/quyền | Sai thông tin, tài khoản không hoạt động hoặc cấp phát chưa xong; không tiết lộ tài khoản tồn tại khi thông tin xác thực sai |
 | UC01.3 Xem/cập nhật hồ sơ | Ba vai trò | Xem hồ sơ mình → sửa trường cho phép → kiểm tra → lưu → trả dữ liệu mới | Sửa role/status/ID, trùng liên hệ, thiếu xác minh mật khẩu khi đổi email/điện thoại |
 | UC01.4 Đổi mật khẩu | Ba vai trò | Xác minh mật khẩu hiện tại → kiểm tra mật khẩu mới → lưu bản băm → thu hồi mọi phiên → đăng nhập lại | Sai mật khẩu hiện tại hoặc dữ liệu mới không hợp lệ |
 | UC01.5 Làm mới phiên | Ba vai trò | Kiểm tra refresh token, Session và Account → thay refresh token → cấp access token mới | Hết hạn, đã thu hồi, token đã được thay thế |
@@ -970,15 +1096,15 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 
 - Tác nhân: CUSTOMER.
 - Tiền điều kiện: không có Booking/Trip khác đang hoạt động; loại dịch vụ có biểu giá hiệu lực.
-- Luồng: nhập điểm đón/đến và loại dịch vụ → kiểm tra → lưu Booking và giá áp dụng → chuyển FINDING_DRIVER → khởi tạo UC03.
+- Luồng: nhập điểm đón/đến và loại dịch vụ → kiểm tra → ghi tiến trình → Customer giữ quyền hoạt động → lấy snapshot giá từ Payment → Booking lưu yêu cầu và công việc điều phối → chuyển FINDING_DRIVER → khởi tạo UC03.
 - Ngoại lệ: dữ liệu sai, ngoài vùng được hỗ trợ, dịch vụ chưa cấu hình, đã có yêu cầu hoạt động hoặc gửi trùng.
-- Hậu điều kiện: có một Booking hợp lệ hoặc yêu cầu bị từ chối với lý do rõ ràng.
+- Hậu điều kiện cuối: có một Booking hợp lệ hoặc yêu cầu bị từ chối với lý do rõ ràng. Nếu chưa xác định kết quả do gián đoạn, phản ánh tiến trình theo UC22; không giả thành thất bại hoặc tạo Booking thứ hai.
 
 ## UC03 – Tìm và phân công tài xế
 
 - Kích hoạt: Booking chuyển FINDING_DRIVER.
 - Tác nhân tham gia: tài xế phản hồi qua UC05.
-- Luồng: chọn ứng viên theo BRu01 → gửi một TripRequest → chờ phản hồi → xác nhận phân công → tạo Trip → cập nhật Booking → thông báo.
+- Luồng: chọn ứng viên theo BRu01 → gửi một TripRequest → chờ phản hồi → Booking điều phối giữ quyền và chuẩn bị/kích hoạt Trip theo UC05 → ghi kết quả phân công → thông báo.
 - Ngoại lệ: từ chối, hết hạn, mất điều kiện, tranh chấp, Booking bị hủy.
 - Hậu điều kiện: DRIVER_ASSIGNED, NO_DRIVER_FOUND hoặc CANCELLED; không còn lời mời PENDING khi quá trình đã kết thúc.
 
@@ -994,10 +1120,13 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 
 - Tác nhân: tài xế được chỉ định.
 - Tiền điều kiện: TripRequest PENDING, còn hạn; Booking đang tìm và tài xế còn đủ điều kiện.
-- Luồng nhận: xem lời mời → chấp nhận → kiểm tra lại điều kiện → giành quyền phân công → tài xế BUSY → tạo Trip.
+- Luồng nhận: xem lời mời → chấp nhận → Booking phân xử quyền xử lý → Driver giữ Driver/Vehicle → Trip chuẩn bị chuyến → gắn quyền Customer/Driver/Vehicle với tripId → kích hoạt Trip → ghi kết quả phân công và thông báo.
 - Luồng từ chối: nhập lý do nếu có → REJECTED → điều phối tiếp tục.
 - Ngoại lệ: phản hồi muộn, đã xử lý, sai tài xế, Booking đã hủy, tài xế vừa nhận chuyến khác.
 - Hậu điều kiện: kết quả lời mời được ghi nhận một lần.
+
+- Chỉ xác nhận nhận thành công khi đủ hậu điều kiện phân công; khi mất phản hồi tra cứu cùng assignmentId trước khi bù. Trip đã hoạt động không bị xóa bù. Yêu cầu hủy đến trong lúc phân công được Booking ghi nhận và xử lý theo trạng thái thật.
+- Ngoại lệ bổ sung: reservation tranh chấp, Trip đã kích hoạt nhưng phản hồi mất, lệnh cũ đến sau khi bù; theo dõi/khôi phục qua UC22.
 
 ## UC06 – Thực hiện chuyến
 
@@ -1006,7 +1135,7 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - Luồng: xác nhận đến đón → đón khách → bắt đầu hành trình → hoàn thành.
 - Hệ thống kiểm tra từng chuyển trạng thái, ghi lịch sử và thông báo.
 - Ngoại lệ: bỏ bước, cập nhật chuyến khác, lặp thao tác hoặc sự cố.
-- Hậu điều kiện: Trip có trạng thái hợp lệ; khi COMPLETED thì chốt dữ liệu hành trình và kích hoạt tính cước.
+- Hậu điều kiện: Trip có trạng thái hợp lệ; COMPLETED tạo công việc xác nhận JourneyMetrics và giải phóng tài nguyên đúng quyền. Chỉ khi metrics CONFIRMED mới cho Payment phát hành Fare. Giải phóng liên dịch vụ có thể chờ retry, không làm Trip đã đóng quay lại hoạt động.
 
 ## UC07 – Tính cước và thanh toán
 
@@ -1026,6 +1155,8 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - Ngoại lệ: sai chủ chuyến, điểm không hợp lệ, chuyến chưa hoàn thành hoặc đánh giá trùng.
 - Hậu điều kiện: một Rating gắn đúng Trip, Customer và Driver.
 - Không yêu cầu Payment phải SUCCESS.
+
+- Rating xác minh Account/Session với Identity và ngữ cảnh chuyến với Trip; không còn phụ thuộc lời gọi đến CAB Core. Không xác minh được thì không lưu đánh giá từ dữ liệu client tự khai báo.
 
 ## UC09 – Quản lý vận hành và sự cố
 
@@ -1069,7 +1200,7 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - Tác nhân: khách sở hữu, tài xế được phân công hoặc OPERATOR.
 - Luồng: chọn hủy → nhập lý do → kiểm tra quyền/trạng thái → kết thúc Booking hoặc Trip → thu hồi lời mời → cập nhật tài xế → thông báo.
 - Ngoại lệ: đã đón khách, hết quyền, chưa đủ thời gian NO_SHOW hoặc trạng thái đã thay đổi.
-- Hậu điều kiện: đối tượng được hủy đúng phạm vi, không để lời mời còn hiệu lực hoặc tài xế bị giữ bận sai.
+- Hậu điều kiện cuối: đối tượng hủy đúng phạm vi, không còn offer hợp lệ và quyền Customer/Driver/Vehicle được giải phóng đúng đối tượng. Quyết định hủy và tiến trình giải phóng phải truy vết được; gián đoạn được retry/cảnh báo, không giả định cập nhật nguyên tử giữa các dịch vụ.
 
 ## UC13 – Lịch sử chuyến
 
@@ -1095,6 +1226,8 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 
 ## UC16 – Báo cáo cơ bản
 
+**Ngoài MVP, giữ để truy vết.** Chỉ thực hiện khi phạm vi mở rộng đã được duyệt; dữ liệu tổng hợp đi qua hợp đồng/projection có nguồn và độ mới, không JOIN trực tiếp database của các MS.
+
 - Tác nhân: OPERATOR.
 - Luồng: chọn thời gian → tổng hợp → hiển thị số chuyến và số tiền đã thu.
 - Quy ước: số tiền đã thu tính theo Payment SUCCESS và paidAt; số chuyến tính theo thời điểm tạo Trip.
@@ -1114,8 +1247,8 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
   5. Hệ thống xác minh và cấp verification token ngắn hạn.
   6. Nhập thông tin cá nhân, email, mật khẩu, giấy phép và phương tiện.
   7. Gửi hồ sơ cùng mã chống lặp.
-  8. Hệ thống kiểm tra định danh, tiêu thụ verification token và tạo Account/Driver/DriverApplication nhất quán.
-  9. Tài xế đăng nhập để xem hồ sơ và chờ kết quả.
+  8. Identity kiểm tra định danh, tiêu thụ token và lưu tiến trình; Driver tạo Driver/DriverApplication idempotently; Identity xác nhận đủ liên kết để hoàn tất.
+  9. Khi đăng ký đã hoàn tất, tài xế đăng nhập xem hồ sơ và chờ xét duyệt. Nếu cấp phát chưa hoàn tất thì theo dõi/tiếp tục tiến trình theo UC22.
 - Ngoại lệ: OTP sai/hết hạn, vượt giới hạn, token đã dùng, dữ liệu trùng, dữ liệu không hợp lệ hoặc provider không khả dụng.
 - Hậu điều kiện: Account DRIVER ACTIVE, Driver PENDING_APPROVAL/OFFLINE và DriverApplication SUBMITTED; chưa được nhận chuyến.
 
@@ -1152,6 +1285,18 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - Hậu điều kiện: phản hồi thể hiện tình trạng thực; readiness không đạt trả 503; thông tin chi tiết được bảo vệ và không lộ secret.
 ---
 
+## UC22 – Theo dõi và phục hồi tiến trình liên dịch vụ
+
+- Tác nhân: người khởi tạo có quyền, OPERATOR được phép và Worker của dịch vụ sở hữu tiến trình.
+- Tiền điều kiện: có operation được lưu; caller chứng minh quyền xem hoặc tiếp tục. Người đăng ký chưa có Session phải dùng bằng chứng truy cập được đặc tả riêng.
+- Luồng: gửi/tra cứu lại thao tác → đối chiếu danh tính, key và nội dung → đọc bước đã commit → tiếp tục hoặc trả trạng thái hiện tại → xác nhận kết quả cuối khi đủ điều kiện.
+- Worker: phát hiện công việc đến hạn → giành quyền xử lý theo version → tra cứu trạng thái chưa rõ → retry/bù có điều kiện → lưu kết quả và audit.
+- Ngoại lệ: key trùng khác nội dung; caller khác; dependency không phản hồi; lệnh cũ; kết quả mâu thuẫn cần vận hành.
+- Hậu điều kiện: không tạo tác động trùng, không lộ tiến trình của người khác, không trả thành công giả hoặc làm mất dữ liệu đã commit.
+- API 202/operation URL và chính sách hết hạn là hợp đồng cần chốt, không được coi là đã có chỉ từ Use Case này.
+
+---
+
 # B13. Tiêu chí chấp nhận
 
 ## AC01 – Tài khoản và phiên
@@ -1166,6 +1311,9 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - Refresh token cũ không dùng lại được sau khi đã thay thế.
 - Phản hồi và log không chứa mật khẩu hoặc token bí mật ngoài dữ liệu cấp phiên cần thiết cho người đăng nhập.
 
+- Dừng dịch vụ Customer sau khi Identity lưu tiến trình: không báo đăng ký hoàn tất hoặc cấp phiên sử dụng đầy đủ; khi khôi phục chỉ tạo một Account/Customer liên kết.
+- Retry sau mất phản hồi tìm lại cùng kết quả/operation, không tạo hồ sơ khác.
+
 ## AC02 – Đặt xe
 
 - Dữ liệu hợp lệ tạo một Booking và chuyển sang tìm tài xế.
@@ -1174,6 +1322,9 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - Gửi lại cùng mã chống lặp và cùng nội dung trả cùng kết quả, không tạo thêm Booking.
 - Cùng mã chống lặp nhưng khác nội dung bị từ chối.
 - Booking giữ đúng phiên bản biểu giá tại thời điểm tạo.
+
+- Hai key khác nhau của cùng Customer vẫn chỉ giữ được một ActivityGuard.
+- Mất phản hồi sau commit Booking không giải phóng guard một cách mù quáng; tiến trình được tra cứu/khôi phục.
 
 ## AC03 – Điều phối
 
@@ -1186,6 +1337,12 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - Một tài xế không được nhận hai Trip đang hoạt động.
 - Khi kết thúc tìm thất bại, Booking NO_DRIVER_FOUND và không còn lời mời hợp lệ.
 
+- Hai Booking tranh chấp cùng Driver/Vehicle chỉ có một reservation được xác nhận.
+- Trip chuẩn bị chưa được hiển thị như chuyến hoạt động.
+- Trip đã kích hoạt nhưng mất phản hồi: retry trả đúng Trip, không tạo mới hoặc trả Driver về AVAILABLE.
+- Hủy phần chuẩn bị rồi nhận lệnh kích hoạt trễ: từ chối lệnh cũ.
+- Mất phản hồi không tự kết luận tài xế từ chối hoặc chuyển sang ứng viên khác trước khi đối soát.
+
 ## AC04 – Theo dõi
 
 - Khách của chuyến và OPERATOR xem được dữ liệu được phép.
@@ -1195,15 +1352,21 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - Không có ETA thì thể hiện chưa xác định, không báo ETA bằng 0.
 - Cập nhật đáp ứng mục tiêu NFR09 trong môi trường nghiệm thu.
 
+- Mẫu GPS từ Driver sang Trip được chống trùng và kiểm tra đúng chuyến/thời gian; mẫu chuyến cũ không cập nhật chuyến mới.
+- Trip đã đóng không trả vị trí live của tài xế đang thực hiện chuyến khác.
+
 ## AC05 – Thực hiện chuyến
 
 - Chỉ tài xế được phân công thực hiện cập nhật thông thường.
 - Bỏ qua trạng thái bắt buộc bị từ chối.
 - Mỗi thay đổi có lịch sử và người thực hiện.
 - Gửi lại cùng thao tác đã thành công không tạo lịch sử hoặc sự kiện lặp.
-- COMPLETED có thời điểm kết thúc và kích hoạt tính cước.
+- COMPLETED có thời điểm kết thúc và kích hoạt xác nhận JourneyMetrics; chỉ metrics CONFIRMED mới cho phép phát hành Fare.
 - Trip kết thúc không quay lại hoạt động.
 - ERROR không tự bị xem là chuyến hoàn thành.
+
+- Giải phóng sau đóng Trip được lưu bền vững và tiếp tục sau restart; lệnh giải phóng trễ không ảnh hưởng Trip mới.
+- Tài nguyên chưa xác nhận giải phóng không được nhận công việc mới để che tình trạng phụ thuộc đang lỗi.
 
 ## AC06 – Tính cước và thanh toán
 
@@ -1222,6 +1385,10 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - Cùng Idempotency-Key nhưng nội dung khác bị từ chối.
 - Một request dùng key mới vẫn phải tuân thủ ràng buộc không thu trùng và không mở lần thử khi kết quả trước còn UNKNOWN.
 - Sau thanh toán, Trip vẫn COMPLETED và Payment liên kết là SUCCESS.
+
+- Payment xác minh quyền và dữ liệu có thẩm quyền từ Identity/Trip qua hợp đồng, không đọc chéo database.
+- Fare giữ snapshot giá và metricsVersion đã dùng; sự kiện metrics lặp không tạo Fare/Payment thứ hai.
+- Phản hồi tiến trình đang chạy không được tính là kết quả thanh toán cuối cùng; replay không mở Attempt mới.
 ## AC07 – Đánh giá
 
 - Chỉ khách của Trip COMPLETED được đánh giá.
@@ -1259,6 +1426,9 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - Tài xế được giải phóng hoặc đưa OFFLINE đúng điều kiện.
 - Mọi hủy có lý do và người thực hiện.
 
+- Accept/hủy cùng lúc có một quyết định điều phối; lỗi giữa các MS không tạo hai kết quả cuối mâu thuẫn.
+- Hủy đã ghi nhận nhưng giải phóng chưa xong phải có công việc phục hồi và cảnh báo; không giải phóng Driver khi chưa xác minh Trip có đang hoạt động.
+
 ## AC11 – Lịch sử
 
 - Khách/tài xế chỉ thấy chuyến thuộc phạm vi mình.
@@ -1285,6 +1455,8 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - Notification Service lỗi không làm mất hoặc đảo ngược quyết định xét duyệt đã lưu.
 ## AC14 – Báo cáo
 
+**Ngoài MVP; các tiêu chí dưới đây chỉ áp dụng khi chức năng báo cáo được duyệt triển khai.** Không coi chưa chạy AC14 là lỗi thiếu chức năng bắt buộc của baseline tám MS.
+
 - Số tiền đã thu chỉ gồm Payment SUCCESS theo paidAt.
 - Không tính Payment FAILED/UNKNOWN vào số tiền đã thu.
 - Số chuyến hoàn thành/hủy khớp dữ liệu Trip trong phạm vi thời gian.
@@ -1298,7 +1470,7 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - Không trả OTP trong API công khai hoặc ghi OTP vào log.
 - Verification token dùng một lần, gắn với số điện thoại đã xác minh.
 - Đăng ký hợp lệ tạo Account DRIVER, Driver PENDING_APPROVAL/OFFLINE và DriverApplication SUBMITTED nhất quán.
-- Trùng email, phone hoặc giấy phép không tạo bộ dữ liệu dở dang.
+- Trùng email, phone hoặc giấy phép không tạo bộ đăng ký hoàn tất thứ hai. Bản ghi cấp phát tạm thời nếu có phải có tiến trình bù/thu hồi hoặc phục hồi; không đăng nhập như hồ sơ hợp lệ khi chưa hoàn tất.
 - Phát lại yêu cầu đăng ký hợp lệ không tạo tài khoản hoặc hồ sơ thứ hai.
 - Tài xế chờ duyệt đăng nhập và xem hồ sơ mình được, nhưng không bật AVAILABLE hoặc nhận chuyến.
 - OPERATOR xem được danh sách và chi tiết hồ sơ.
@@ -1307,6 +1479,9 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - Không duyệt bằng cách chiếm xe của tài xế khác hoặc xe đang phục vụ chuyến.
 - Driver giữ OFFLINE sau duyệt.
 - Tài xế nhận được kết quả xét duyệt.
+
+- Dừng Identity/Driver giữa các bước đăng ký rồi khôi phục không tạo Account, hồ sơ hoặc tiêu thụ verification token lần hai.
+- Duyệt hồ sơ, tạo/liên kết xe, VehicleAssignment và outbox vẫn có thể commit nguyên tử trong Driver Service; không tách nhỏ transaction này sang MS khác.
 
 ## AC16 – Tra cứu tài xế trong khu vực
 
@@ -1344,7 +1519,7 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - Giải thích được cấu trúc source và trách nhiệm từng dịch vụ/module.
 - Client sử dụng Gateway; cấu hình chạy bài không công bố cổng HTTP của backend.
 - Route nội bộ không gọi được từ client qua Gateway.
-- Có bằng chứng HTTP nội bộ và RabbitMQ truyền dữ liệu giữa các dịch vụ.
+- Có bằng chứng gRPC nội bộ và RabbitMQ truyền dữ liệu giữa các dịch vụ theo hợp đồng; không lấy việc gọi hàm trong cùng tiến trình làm bằng chứng IPC giữa hai MS.
 - Message lặp không làm lặp tác động nghiệp vụ.
 - Broker ngừng hoạt động không làm mất sự kiện đã ghi bền vững; khôi phục thì xử lý tiếp.
 - Docker Compose khởi chạy được các thành phần theo hướng dẫn.
@@ -1352,6 +1527,11 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - /health, /ready và /health/services trả đúng trạng thái khi hệ thống bình thường và khi ngắt phụ thuộc.
 - Chi tiết health chỉ dành cho OPERATOR; không lộ secret.
 - Repository và image không chứa secret được commit/đóng gói ngoài ý muốn.
+
+- Giải thích đúng tám MS nghiệp vụ; Gateway và hạ tầng không tính vào số này.
+- Runtime role của mỗi MS bị từ chối đọc/ghi database MS khác.
+- Danh sách health không còn chỉ có CAB Core; có đủ tám MS, Gateway và phụ thuộc theo cấu hình.
+- Nếu thiếu hợp đồng gRPC hoặc schema producer mới thì chưa đánh dấu IPC tương ứng đã hoàn tất.
 
 ## AC20 – Bảo mật và chống lạm dụng
 
@@ -1365,6 +1545,19 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - Vượt rate limit nhận 429 và Retry-After.
 - Có báo cáo kiểm thử tải theo kịch bản rubric, ghi rõ môi trường và kết quả; không chỉ đưa ảnh cấu hình rate limit.
 - Replay thanh toán đáp ứng AC06, không phát sinh thu tiền trùng.
+---
+
+## AC21 – Tiến trình liên dịch vụ
+
+- Chỉ công bố kết quả cuối thành công khi đủ hậu điều kiện của nghiệp vụ; timeout không được giả thành rollback toàn bộ.
+- Restart tại từng bước không làm mất quyết định đã commit; retry không tạo hồ sơ, Booking, Trip hoặc thanh toán trùng.
+- Operation, reservation và lệnh giải phóng gắn đúng ID/phiên bản; lệnh cũ không tác động công việc mới.
+- Chỉ người có quyền xem kết quả/tiến trình; biết operationId hoặc Idempotency-Key không đủ để đọc dữ liệu của người khác.
+- Đăng ký chưa có user token có bằng chứng tra cứu được đặc tả và kiểm thử riêng.
+- Có kiểm thử mất phản hồi sau kích hoạt Trip và sau provider đã xử lý; không giải phóng/thu tiền lần nữa khi kết quả chưa rõ.
+- Có quan sát tiến trình chờ, bù và cần vận hành; khi hết ngân sách retry không tự giả thành thành công.
+- Kịch bản 202/operation endpoint chỉ được nghiệm thu sau khi hợp đồng API tương ứng đã được duyệt và triển khai.
+
 ---
 
 # B14. Ma trận truy xuất yêu cầu
@@ -1385,25 +1578,27 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 | RQM12 | BG05, BG07 | BR11 | BP11 | FR21.1 | UC14 | AC12 | Must Have |
 | RQM13 | BG01, BG05 | BR01, BR11 | BP01 | FR21.2 | UC14 | AC12 | Should Have |
 | RQM14 | BG06 | BR10 | BP10 | FR13 | UC15 | AC13 | Must Have |
-| RQM15 | BG07 | BR06 | BP13 | FR22 | UC16 | AC14 | Should Have |
+| RQM15 | BG07 | BR06 | BP13 | FR22 | UC16 | AC14 | Ngoài MVP, giữ để truy vết |
 | RQM16 | BG07, BG08 | BR08, BR09 | BP14 | FR23 | UC17 | AC15 | Must Have |
 | RQM17 | BG01, BG02 | BR01, BR02 | BP15 | FR24 | UC18 | AC16 | Must Have |
 | RQM18 | BG01 | BR01 | BP12 | FR25 | UC19 | AC17 | Must Have |
 | RQM19 | BG07, BG08 | BR06, BR08, BR09 | BP12 | FR26 | UC20 | AC18 | Must Have |
 | RQM20 | BG07 | BR06 | BP05 | FR27 | UC21 | AC19 | Must Have |
+| RQM21 | BG01, BG02, BG04, BG05, BG08 | BR01, BR02, BR04, BR05, BR08, BR09 | BP16 | FR28; áp dụng cho các FR liên dịch vụ | UC22 | AC21 | Must Have; hợp đồng chi tiết cần chốt trước triển khai |
 
 Các NFR áp dụng xuyên suốt các dòng liên quan. Khi lập test case phải ghi rõ FR/AC hoặc NFR được kiểm chứng.
 ### Truy xuất các yêu cầu kỹ thuật và bảo mật
 
 | Nhóm yêu cầu | NFR | Tiêu chí chấp nhận |
 |---|---|---|
-| Ranh giới dịch vụ và xử lý đồng thời | NFR02, NFR03 | AC02, AC03, AC19 |
+| Ranh giới dịch vụ và xử lý đồng thời | NFR02, NFR03, NFR18 | AC02, AC03, AC19, AC21 |
 | Gateway, IPC và triển khai | NFR11, NFR12, NFR13, NFR14 | AC19 |
 | Health và quan sát hệ thống | NFR06, NFR07 | AC19 |
 | Xác thực, phân quyền và bảo vệ dữ liệu | NFR04, NFR05 | AC01, AC18, AC20 |
 | SQL injection và XSS | NFR15, NFR16 | AC20 |
 | Rate limit và tải vượt giới hạn | NFR17 | AC20 |
 | Replay và kết quả thanh toán | NFR03, NFR04 | AC06, AC20 |
+| Tiến trình liên dịch vụ và quyền tra cứu | NFR03, NFR04, NFR06, NFR18 | AC01, AC03, AC10, AC15, AC21 |
 
 ### Đối chiếu rubric chấm project
 
@@ -1423,13 +1618,13 @@ Các NFR áp dụng xuyên suốt các dòng liên quan. Khi lập test case ph�
 | 12 | Tra cứu Driver theo mã | FR26, UC20, AC18 |
 | 13 | Tài xế trong 1 km, limit và paging | FR24, UC18, AC16 |
 | 14 | Danh sách Booking của Customer | FR25, UC19, AC17 |
-| 15 | Đặt xe và phát offer | FR02–FR07, UC02–UC03, AC02–AC03 |
-| 16 | Tài xế nhận chuyến | FR05, UC05, AC03 |
+| 15 | Đặt xe và phát offer | FR02–FR07, FR28, UC02–UC03, UC22, AC02–AC03, AC21 |
+| 16 | Tài xế nhận chuyến | FR05, FR28, UC05, UC22, AC03, AC21 |
 | 17 | Trạng thái và vị trí chuyến | FR08, FR09, FR18, UC04, UC06, UC11, AC04–AC05 |
-| 18 | Hủy chuyến có lý do và thông báo | FR19, UC12, AC10, AC13 |
+| 18 | Hủy chuyến có lý do và thông báo | FR19, FR28, UC12, UC22, AC10, AC13, AC21 |
 | 19 | Thanh toán online và callback | FR11–FR12, UC07, AC06 |
 | 20 | Đánh giá chuyến đi | FR16, UC08, AC07 |
-| 21 | Tài xế đăng ký qua OTP | FR23, UC17, AC15 |
+| 21 | Tài xế đăng ký qua OTP | FR23, FR28, UC17, UC22, AC15, AC21 |
 | 22 | Duyệt/từ chối hồ sơ | FR17, FR13, UC10, UC15, AC15, AC13 |
 | 23 | Bật/tắt nhận chuyến | FR18, UC11, AC09 |
 | 24 | Bảo vệ dữ liệu lưu trữ và quản lý khóa | NFR05, AC20 |
@@ -1438,7 +1633,7 @@ Các NFR áp dụng xuyên suốt các dòng liên quan. Khi lập test case ph�
 | 27 | JWT tampering | NFR04, AC20 |
 | 28 | Truy cập API sai quyền | FR01.7, NFR04, AC20 |
 | 29 | Rate limit | NFR17, AC20 |
-| 30 | Replay/idempotency thanh toán | FR12, NFR03, AC06, AC20 |
+| 30 | Replay/idempotency thanh toán | FR12, FR28, NFR03, NFR18, AC06, AC20, AC21 |
 
 Bảng này xác định phạm vi cần kiểm chứng, không phải bảng điểm hoặc kết quả đã đạt.
 
@@ -1446,7 +1641,7 @@ Mỗi tiêu chí khi nghiệm thu phải có dữ liệu kiểm thử, thao tác
 
 ### Trạng thái bộ kiểm thử liên kết
 
-Bản CAB_Test_Cases_ver_1.xlsx cập nhật theo baseline thiết kế 1.2 gồm:
+Thông tin dưới đây là mốc của CAB_Test_Cases_ver_1.xlsx theo baseline 1.2, được giữ để truy vết; chưa phải xác nhận workbook đã chuyển đổi sang tám MS. Mốc cũ gồm:
 
 - 16 sheet.
 - 398 ca kiểm thử.
@@ -1455,7 +1650,7 @@ Bản CAB_Test_Cases_ver_1.xlsx cập nhật theo baseline thiết kế 1.2 gồ
 - 11 ca NEEDS_DECISION trong các ca đang áp dụng.
 - Sheet Rubric Mapping đối chiếu đủ 30 tiêu chí chấm project.
 
-Tại thời điểm cập nhật tài liệu, toàn bộ ca kiểm thử có Execution Status=NOT_RUN; chưa có kết quả thực thi backend.
+Tại mốc baseline 1.2 được ghi trong SRS cũ, toàn bộ ca có Execution Status=NOT_RUN. Lần sửa SRS này không chạy kiểm thử hoặc xác minh trạng thái thực thi hiện tại; giữ kết quả kiểm thử riêng và không tự chuyển ca sang PASS.
 
 Các ca NEEDS_DECISION gồm:
 
@@ -1470,6 +1665,15 @@ Sau khi hoàn tất quyết định thiết kế, cập nhật dữ liệu kiể
 Việc có ca kiểm thử liên kết không tự chứng minh tiêu chí rubric đã đạt. Kết luận nghiệm thu phải dựa trên kết quả thực tế và bằng chứng.
 
 Danh sách NEEDS_DECISION trong workbook không thay thế danh sách quyết định thiết kế còn mở. Phương pháp xác nhận JourneyMetrics vẫn cần được đặc tả và bổ sung kiểm thử thuật toán trước khi triển khai tính cước.
+
+Khi chuyển workbook sang tám MS:
+
+- Giữ ID các ca còn đúng; chỉ chỉnh Preconditions, bước, endpoint/caller, Expected Result và Required Evidence bị ảnh hưởng.
+- Không đổi số hoặc xóa ca hàng loạt. Ca thay thế/ngừng áp dụng được đánh dấu và liên kết lý do.
+- Các ca báo cáo liên quan FR22/UC16/AC14 được rà soát để đánh dấu ngoài MVP; không tự giả định danh sách bốn ca cũ đã bao gồm thay đổi này.
+- Bổ sung ca cấp phát hồ sơ gián đoạn, reservation tranh chấp, accept/cancel, Trip kích hoạt mất phản hồi, lệnh trễ sau bù, giải phóng cũ và quyền operation.
+- Sửa minh chứng HTTP nội bộ/CAB Core sang gRPC và các dịch vụ sở hữu mới; kiểm tra nhiều producer, schema event, quyền database và health.
+- Chỉ tính lại tổng ca đang áp dụng, NEEDS_DECISION và số sheet sau khi sửa và kiểm tra workbook thực tế; không tự đặt tổng mới trong SRS.
 
 ## Điều kiện hoàn tất bản thiết kế
 
@@ -1494,6 +1698,14 @@ Bản thiết kế được coi là hoàn tất khi đáp ứng các điều ki�
 - Nhà cung cấp OTP, thanh toán sandbox và hợp đồng tích hợp được chốt trước khi triển khai các phần phụ thuộc.
 - Phương pháp xác nhận quãng đường, chất lượng dữ liệu GPS và xử lý JourneyMetrics cần rà soát được chốt trước khi triển khai tính cước.
 - Các chính sách vận hành còn mở được cụ thể hóa trong Micro_Service_Design trước khi triển khai phần liên quan.
+
+- Tám MS và chủ sở hữu dữ liệu trong B4.6/B9.3 thống nhất với Micro_Service_Design 1.3; không còn cam kết transaction xuyên database.
+- Hợp đồng gRPC, xác thực dịch vụ, mapping lỗi và schema event nhiều producer được đặc tả.
+- Tiến trình đăng ký, phân công, hủy/đóng và giải phóng có trạng thái, điểm quyết định, điều kiện bù và kiểm thử gián đoạn.
+- Hợp đồng khi operation chưa hoàn tất, gồm đề xuất 202 và quyền tra cứu trước đăng nhập, được duyệt đồng bộ trước triển khai.
+- Chính sách Account lock cạnh tranh với lệnh đang chạy được chốt; không tự coi sự kiện thu hồi là cập nhật nguyên tử toàn hệ thống.
+- FR22/UC16/AC14/RQM15 được đánh dấu ngoài MVP, nhưng audit và giám sát kỹ thuật vẫn được nghiệm thu.
+- Giữ nguyên mã và yêu cầu còn phù hợp; mọi thay đổi ý nghĩa hợp đồng phải có truy vết và test tương ứng.
 - Kết quả kiểm thử được ghi nhận riêng; không suy ra từ việc đã viết tài liệu hoặc đã commit.
 
 ### Các quyết định còn mở
@@ -1504,8 +1716,14 @@ Bản thiết kế được coi là hoàn tất khi đáp ứng các điều ki�
 | Thanh toán sandbox | Nhà cung cấp, phương thức hỗ trợ, tạo/tra cứu giao dịch, xác minh webhook, acknowledgement, idempotency và đối soát | Thanh toán online và chống thu tiền trùng |
 | JourneyMetrics | Phương pháp xác nhận quãng đường, tiêu chí chất lượng GPS, xử lý mất mẫu/sự cố và quy trình rà soát | Phát hành Fare và tạo Payment |
 | Vận hành | Hoàn thiện chính sách retry/backoff, lưu dữ liệu và bằng chứng chống trùng, xoay khóa, sao lưu và phục hồi | Công việc nền, bảo mật và khả năng phục hồi |
+| Hợp đồng gRPC và xác thực nội bộ | .proto, caller/scope, user context, deadline và mapping lỗi; xác minh Account/Session | Gateway và tám MS |
+| Saga và reservation | Trạng thái, điểm quyết định, generation, tra cứu kết quả chưa rõ, ma trận bù và can thiệp vận hành | Đăng ký, Booking, accept/cancel, đóng Trip |
+| Operation công khai | Ngân sách chờ, đề xuất 202, schema kết quả/URL tra cứu, quyền trước/sau đăng nhập và thời hạn bằng chứng | FR28, UC22, AC21 và API bị ảnh hưởng |
+| Thu hồi quyền khi có lệnh đang chạy | Điểm cấp quyền, xử lý lệnh in-flight và kiểm thử cạnh tranh với khóa Account | Identity, Driver, Booking, Trip và Payment |
+| Sự kiện nhiều producer | Schema/version, allowlist nguồn theo eventType, quyền broker và loại bỏ phụ thuộc source=CAB_CORE | Outbox/inbox, Notification và API 06 |
+| Đồng bộ tài liệu và demo | Ma trận UC/test sau tách MS, số thành phần health, phạm vi báo cáo và giao diện kiểm chứng XSS | API 01–08, workbook và kịch bản chấm |
 
-Chi tiết các quyết định này được quản lý tại mục 15.4 của Micro_Service_Design. Khi có quyết định được duyệt, phải cập nhật các tài liệu và test case bị ảnh hưởng.
+Chi tiết các quyết định này được quản lý tại mục 15 của Micro_Service_Design phiên bản 1.3. Khi có quyết định được duyệt, phải cập nhật các tài liệu và test case bị ảnh hưởng.
 
 Các ca NEEDS_DECISION chỉ được chuyển sang DEFINED khi đã đủ đặc tả; không chuyển sang PASS chỉ vì quyết định đã được chốt.
 
