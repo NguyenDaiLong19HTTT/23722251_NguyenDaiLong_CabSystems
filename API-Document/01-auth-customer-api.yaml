@@ -2,10 +2,29 @@ openapi: 3.0.3
 
 info:
   title: CAB System - Authentication & Account API
-  version: "1.2.0"
+  version: "1.3.0"
   description: |
-    Đặc tả tài khoản và xác thực theo SRS CAB System phiên bản 1.2,
-    đối chiếu rubric chấm project và Micro_Service_Design phiên bản 1.2.
+    Đặc tả tài khoản, xác thực và hồ sơ Customer theo bản SRS 8 MS phiên bản 1.3
+    và Micro_Service_Design phiên bản 1.3; kế thừa hợp đồng API 1.2.0.
+    Bản xem trước cần chủ dự án duyệt trước khi áp dụng.
+
+    Phân chia trách nhiệm:
+    - identity-service sở hữu Account, fullName, email, phone, mật khẩu,
+      OTP, PhoneVerification, Session và RegistrationOperation.
+    - customer-service sở hữu Customer, accountId liên kết và CustomerActivityGuard.
+    - driver-service sở hữu Driver và DriverApplication; không sở hữu mật khẩu/OTP.
+    - Gateway nhận REST, chuyển sang gRPC; không truy cập database nghiệp vụ.
+    - Dịch vụ chỉ ghi database của mình. Liên kết accountId không phải khóa ngoại xuyên DB.
+    - Tên x-owner-service chỉ mô tả trách nhiệm, không phải cấu hình routing thực thi.
+
+    Thay đổi hợp đồng đề xuất trong bản này:
+    - POST /auth/register yêu cầu Idempotency-Key và Registration-Recovery-Token.
+    - Bổ sung 202 khi cấp phát hồ sơ chưa hoàn tất, cùng API tra cứu có bằng chứng riêng.
+    - Không đổi enum Account hay cấp phiên đầy đủ trước khi cấp phát hoàn tất.
+    - D05/D08 được cụ thể hóa cho đăng ký Customer tại đây, chưa coi là đã được duyệt
+      hoặc đã hoàn tất hợp đồng của các API khác.
+    - Hợp đồng .proto và danh tính dịch vụ thuộc D04 phải được bổ sung riêng.
+    - API 07 cần đồng bộ luồng đăng ký Driver trước khi triển khai tích hợp.
 
     Truy xuất yêu cầu:
     - BR08, BR09.
@@ -16,6 +35,7 @@ info:
     - UC01.1 đến UC01.6, UC17, UC20.
     - AC01, AC15, AC18, AC20.
     - NFR04, NFR05, NFR11, NFR15, NFR17.
+    - FR28, UC22, AC21, NFR18: tiến trình đăng ký và phục hồi có phân quyền.
 
     Phạm vi:
     - /auth/register chỉ tạo Account CUSTOMER và hồ sơ Customer.
@@ -25,7 +45,8 @@ info:
       07-operations-api.yaml.
     - API tra cứu Driver theo mã nằm trong tài liệu quản lý Driver.
     - CUSTOMER, DRIVER và OPERATOR dùng chung chức năng đăng nhập.
-    - OPERATOR có thể cấp Account DRIVER qua nghiệp vụ quản trị.
+    - Account DRIVER được tạo qua luồng xác minh OTP và gửi DriverApplication.
+    - OPERATOR chỉ xét duyệt hồ sơ; không tạo trực tiếp Account DRIVER.
     - Account OPERATOR được cấp bằng quy trình quản trị riêng.
     - Không có đăng ký OPERATOR công khai.
 
@@ -93,7 +114,7 @@ servers:
     description: |
       Đường dẫn cơ sở trên API Gateway.
       Host được xác định khi triển khai hoặc cấu hình Postman.
-      Không cấu hình client gọi trực tiếp cổng của CAB Core.
+      Không cấu hình client gọi trực tiếp cổng của tám microservice.
 
 tags:
   - name: Auth
@@ -115,13 +136,14 @@ paths:
     post:
       tags: [Auth]
       operationId: registerCustomer
+      x-owner-service: identity-service
       summary: Đăng ký tài khoản khách hàng
       security: []
       description: |
         FR01.1, UC01.1, BRu11, BRu12, AC01.
 
         Tạo Account có role CUSTOMER và accountStatus ACTIVE,
-        đồng thời tạo hồ sơ Customer liên kết.
+        và cấp phát hồ sơ Customer liên kết qua identity-service và customer-service.
 
         Email được trim và chuyển về chữ thường.
         Điện thoại dùng định dạng quốc tế E.164.
@@ -130,15 +152,45 @@ paths:
         Từ chối thuộc tính ngoài schema, bao gồm role và accountStatus.
         Không tự tạo phiên; người dùng đăng nhập sau đăng ký.
 
-        Account và Customer phải được tạo trong một transaction.
-        Không trả thành công khi chỉ tạo được một trong hai đối tượng.
+        Identity ghi Account, RegistrationOperation và dữ liệu chống lặp trong
+        transaction cục bộ; gọi Customer qua gRPC với cùng operationId/accountId.
+        Customer tạo hồ sơ idempotently với unique accountId trong DB của mình.
+        Identity chỉ đánh dấu SUCCEEDED khi xác nhận hồ sơ đúng Account đã tồn tại.
+        Không có transaction xuyên hai database. Trạng thái cấp phát nội bộ
+        không thay thế enum accountStatus. Chưa hoàn tất thì chưa được login.
+        Mất phản hồi phải tra cứu/retry cùng operationId, không tạo Account lần hai.
+        Chỉ trả 201 khi hoàn tất cả Account và Customer. Nếu đã ghi operation bền vững
+        nhưng còn xử lý/khôi phục, trả 202; không gọi đó là đăng ký hoàn tất.
 
         Endpoint này không dùng để đăng ký tài xế.
         Việc phone đúng định dạng không có nghĩa số điện thoại đã được OTP xác minh.
 
-        Endpoint chưa cung cấp cơ chế replay theo Idempotency-Key.
-        Gửi lại sau khi đăng ký đã thành công có thể nhận 409;
-        ràng buộc duy nhất phải ngăn tạo tài khoản trùng.
+        Trước request đầu, client tạo và lưu tạm Idempotency-Key cùng
+        Registration-Recovery-Token ngẫu nhiên bằng CSPRNG (32 byte, base64url).
+        Hai giá trị giữ nguyên khi retry; token không phải JWT hay bằng chứng OTP.
+        Phạm vi key là endpoint đăng ký Customer, không dùng chung với API khác.
+        Máy chủ lưu digest token và fingerprint có khóa của payload đã chuẩn hóa;
+        không lưu password plaintext hoặc hash nhanh không khóa để so sánh request.
+        Password vẫn lưu bằng cơ chế băm mật khẩu chuyên dụng của Account.
+
+        Cùng key + đúng token + cùng payload trả cùng operation hoặc kết quả 201
+        đã lưu; request đồng thời chỉ khởi tạo một operation. Đổi payload với
+        cùng key trả 409 IDEMPOTENCY_CONFLICT sau khi xác minh token.
+        Token sai cho key đã có trả 401 REGISTRATION_RECOVERY_INVALID, không lộ kết quả.
+        Key mới nhưng email/phone đã được giữ bởi đăng ký khác trả CONTACT_CONFLICT.
+        Không cho người khác chiếm operation chỉ nhờ biết email, phone hoặc key.
+
+        Đề xuất retention: giữ operation đang xử lý và bằng chứng phục hồi đến khi
+        có kết quả cuối; giữ khả năng replay/tra cứu thêm 7 ngày sau kết quả cuối.
+        Hết cửa sổ trả 409 IDEMPOTENCY_KEY_EXPIRED khi retry đúng bằng chứng;
+        tra cứu trả 404. Giữ tombstone key/digest tối thiểu để không khởi tạo lại
+        cùng key; chính sách dọn tombstone phải chốt theo D08 trước triển khai.
+        Không lưu PII trong tombstone. Không tự xóa Account chỉ vì timeout.
+        FAILED chỉ ghi khi xác nhận thất bại cuối cùng; chưa rõ kết quả phải giữ
+        PROCESSING để worker đối soát. Không retry bằng key mới khi chưa rõ kết quả.
+      parameters:
+        - $ref: "#/components/parameters/RegistrationIdempotencyKey"
+        - $ref: "#/components/parameters/RegistrationRecoveryToken"
       requestBody:
         required: true
         content:
@@ -160,10 +212,36 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RegisteredCustomerAccount"
+        "202":
+          description: Đã ghi nhận đăng ký bền vững; hồ sơ Customer chưa hoàn tất. Theo dõi Location hoặc
+            retry cùng key/token/payload.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            Location:
+              description: URL tương đối để GET tiến trình qua Gateway; vẫn yêu cầu Registration-Recovery-Token.
+              schema:
+                type: string
+              example: /v1/auth/customer-registrations/REG_example
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerRegistrationOperation"
+        "401":
+          description: REGISTRATION_RECOVERY_INVALID. Bằng chứng phục hồi không hợp lệ; không trả trạng thái đăng ký.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
         "409":
-          $ref: "#/components/responses/ContactConflict"
+          $ref: "#/components/responses/RegistrationConflict"
         "429":
           $ref: "#/components/responses/TooManyRequests"
         "503":
@@ -175,6 +253,7 @@ paths:
     post:
       tags: [Auth]
       operationId: login
+      x-owner-service: identity-service
       summary: Đăng nhập cho CUSTOMER, DRIVER hoặc OPERATOR
       security: []
       description: |
@@ -189,7 +268,8 @@ paths:
 
         Sau khi xác thực đúng:
         - Kiểm tra Account ACTIVE.
-        - Kiểm tra hồ sơ tương ứng với role tồn tại và nhất quán.
+        - Kiểm tra cấp phát đã SUCCEEDED và liên kết hồ sơ theo role đã được xác nhận.
+        - OPERATOR dùng hồ sơ được cấp nội bộ Identity, không cần MS thứ chín.
         - Tạo Session mới.
         - Cấp access token và refresh token.
         - Trả thông tin Account và mã hồ sơ tương ứng.
@@ -207,8 +287,10 @@ paths:
         Chỉ trả ACCOUNT_NOT_ACTIVE sau khi đã xác minh
         thông tin đăng nhập đúng.
 
-        Nếu hồ sơ theo role bị thiếu hoặc dữ liệu không nhất quán,
-        không cấp phiên; ghi nhận lỗi để xử lý.
+        Sau khi mật khẩu đúng, cấp phát còn xử lý trả 409 REGISTRATION_IN_PROGRESS.
+        Nếu hồ sơ bắt buộc bị thiếu hoặc không thể xác minh an toàn, trả 503,
+        không cấp phiên; ghi nhận lỗi để xử lý. Identity dùng liên kết đã xác nhận
+        của RegistrationOperation; không đọc trực tiếp DB Customer/Driver.
       requestBody:
         required: true
         content:
@@ -254,6 +336,16 @@ paths:
                 message: "Thông tin đăng nhập không hợp lệ."
         "403":
           $ref: "#/components/responses/AccountNotActive"
+        "409":
+          description: REGISTRATION_IN_PROGRESS. Chỉ trả sau khi mật khẩu đúng; cấp phát
+            hồ sơ chưa hoàn tất, chưa tạo Session.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "429":
           $ref: "#/components/responses/TooManyRequests"
         "503":
@@ -265,6 +357,7 @@ paths:
     post:
       tags: [Auth]
       operationId: refreshSession
+      x-owner-service: identity-service
       summary: Làm mới token của phiên hiện tại
       security: []
       description: |
@@ -277,7 +370,8 @@ paths:
         - Refresh token tồn tại, còn hạn và là token hiện hành của Session.
         - Session chưa thu hồi và chưa hết hạn tuyệt đối.
         - Account ACTIVE.
-        - Hồ sơ theo role còn nhất quán.
+        - Cấp phát hồ sơ đã hoàn tất và liên kết theo role còn nhất quán.
+        - Không đọc DB Customer/Driver; xác minh bổ sung qua gRPC khi cần.
 
         Khi thành công:
         - Thay refresh token cũ bằng token mới.
@@ -338,6 +432,7 @@ paths:
     post:
       tags: [Auth]
       operationId: logout
+      x-owner-service: identity-service
       summary: Đăng xuất phiên hiện tại
       description: |
         FR01.6, UC01.6, BRu15, AC01.
@@ -380,6 +475,7 @@ paths:
     post:
       tags: [Auth]
       operationId: changePassword
+      x-owner-service: identity-service
       summary: Đổi mật khẩu và thu hồi mọi phiên
       description: |
         FR01.4, UC01.4, BRu15, AC01.
@@ -391,7 +487,7 @@ paths:
         của Account, bao gồm Session đang thực hiện.
 
         Đổi mật khẩu và thu hồi phiên phải được cập nhật nhất quán.
-        Không trả thành công trước khi transaction commit.
+        Không trả thành công trước khi transaction tại Identity commit.
 
         Người dùng đăng nhập lại bằng mật khẩu mới.
         Không trả token mới trong response.
@@ -436,6 +532,7 @@ paths:
     post:
       tags: [DriverRegistration]
       operationId: requestDriverRegistrationOtp
+      x-owner-service: identity-service
       summary: Yêu cầu OTP đăng ký tài xế
       security: []
       description: |
@@ -515,6 +612,7 @@ paths:
     post:
       tags: [DriverRegistration]
       operationId: verifyDriverRegistrationOtp
+      x-owner-service: identity-service
       summary: Xác minh OTP và cấp quyền gửi hồ sơ tài xế
       security: []
       description: |
@@ -554,7 +652,14 @@ paths:
         Token dùng tại POST /driver-applications,
         được định nghĩa trong 07-operations-api.yaml.
         Phone của hồ sơ phải khớp số đã xác minh.
-        Tạo Account/Driver/hồ sơ và tiêu thụ token nằm trong cùng transaction.
+        Khi gửi hồ sơ tại API 07, Identity tiêu thụ token, tạo Account và ghi
+        RegistrationOperation trong một transaction cục bộ. Driver tạo Driver và
+        DriverApplication trong transaction riêng, nhận cùng operationId qua gRPC.
+        Retry operation đã tiếp nhận không tiêu thụ token lần hai; phải đối chiếu
+        token digest, idempotency key và payload gốc. Token hết hạn sau khi operation
+        được tiếp nhận không hủy công việc đã ghi bền vững. Token đã tiêu thụ không
+        được dùng để khởi tạo operation khác. API 07 sẽ đặc tả response/proof riêng;
+        endpoint tra cứu Customer bổ sung trong file này không trả hồ sơ Driver.
 
         Token hiệu lực tối đa 5 phút và chỉ dùng một lần.
         Không đưa token vào URL hoặc log.
@@ -623,6 +728,7 @@ paths:
     get:
       tags: [Account]
       operationId: getMyAccount
+      x-owner-service: identity-service
       summary: Xem hồ sơ của tài khoản đang đăng nhập
       description: |
         FR01.3, UC01.3, BRu09, AC01.
@@ -665,6 +771,7 @@ paths:
     patch:
       tags: [Account]
       operationId: updateMyAccount
+      x-owner-service: identity-service
       summary: Cập nhật một phần hồ sơ của chính mình
       description: |
         FR01.3, UC01.3, BRu12, BRu14, AC01.
@@ -692,7 +799,9 @@ paths:
         currentPassword chỉ dùng để xác minh, không phải mật khẩu mới.
         Đổi mật khẩu sử dụng /auth/change-password.
 
-        Mọi trường trong request được cập nhật nhất quán.
+        fullName/email/phone có nguồn có thẩm quyền duy nhất tại Identity.
+        Customer và Driver không lưu bản có thể cập nhật độc lập.
+        Mọi trường trong request được cập nhật nhất quán trong transaction Identity.
         Nếu một trường không hợp lệ hoặc trùng, không cập nhật một phần.
 
         Việc cập nhật phone tại endpoint này không tự tạo bằng chứng OTP
@@ -752,6 +861,7 @@ paths:
     get:
       tags: [Customer]
       operationId: getCustomerById
+      x-owner-service: customer-service
       summary: Tra cứu hồ sơ khách hàng theo mã
       description: |
         FR26.1, FR26.3, UC20, BRu09, AC18.
@@ -768,7 +878,9 @@ paths:
         - Xác minh token, Account và Session.
         - Kiểm tra role được phép.
         - Kiểm tra phạm vi dữ liệu.
-        - Đọc hồ sơ Customer và Account liên kết.
+        - Customer đọc hồ sơ của mình rồi lấy dữ liệu Account được phép qua gRPC Identity.
+        - Không join database, không trả bản sao email/phone độc lập.
+        - Nếu không lấy được trường bắt buộc an toàn, trả 503; không trả 200 thiếu trường.
 
         DRIVER có token hợp lệ trả 403 FORBIDDEN.
         CUSTOMER yêu cầu customerId không thuộc mình trả 404.
@@ -808,8 +920,77 @@ paths:
         default:
           $ref: "#/components/responses/UnexpectedError"
 
+  /auth/customer-registrations/{operationId}:
+    get:
+      tags:
+        - Auth
+      operationId: getCustomerRegistrationOperation
+      x-owner-service: identity-service
+      summary: Tra cứu tiến trình đăng ký Customer bằng bằng chứng phục hồi
+      description: FR28, UC22, AC21. Client giữ token từ trước POST đầu tiên; không cần Session và không
+        nhận bearer token thay thế. Chỉ trả operation đăng ký Customer khớp token digest. Rate limit
+        theo IP và operation; không log token. Sai token, mã không tồn tại, sai loại operation hoặc
+        hết cửa sổ tra cứu đều trả 404 giống nhau. Thiếu/sai định dạng token trả 401. GET 200 chỉ là
+        tra cứu thành công, không có nghĩa đăng ký SUCCEEDED. PROCESSING không chứa Account; SUCCEEDED
+        chứa kết quả 201 đã lưu, không cấp Session. FAILED chỉ chứa lỗi an toàn đã xác định cuối cùng.
+        Khi response POST đầu bị mất, gửi lại POST cùng key/token/payload để tìm lại operationId.
+      security:
+        - registrationRecovery: []
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          description: Mã opaque do máy chủ cấp; biết mã không đủ quyền truy cập.
+      responses:
+        "200":
+          description: Trạng thái tiến trình thuộc bằng chứng phục hồi hợp lệ.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerRegistrationOperation"
+        "401":
+          description: REGISTRATION_RECOVERY_INVALID. Thiếu hoặc sai định dạng bằng chứng phục hồi.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: REGISTRATION_NOT_FOUND. Không tìm thấy tiến trình được phép tra cứu.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
 components:
   securitySchemes:
+    registrationRecovery:
+      type: apiKey
+      in: header
+      name: Registration-Recovery-Token
+      description: "Bí mật client tạo bằng CSPRNG trước POST /auth/register: 32 byte mã hóa base64url
+        không padding (43 ký tự). Chỉ dùng phục hồi đúng đăng ký Customer; không phải access token hay
+        OTP. Không đưa vào URL/log, không dùng cho đăng ký Driver. Máy chủ chỉ lưu digest và so sánh an
+        toàn."
+
     bearerAuth:
       type: http
       scheme: bearer
@@ -831,6 +1012,27 @@ components:
         Verification token đăng ký tài xế không dùng thay bearer token.
 
   parameters:
+    RegistrationIdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: UUID ngẫu nhiên client tạo trước lần đăng ký đầu. Giữ nguyên cùng token và payload khi
+        retry. Không phải bằng chứng quyền truy cập.
+      schema:
+        type: string
+        format: uuid
+    RegistrationRecoveryToken:
+      name: Registration-Recovery-Token
+      in: header
+      required: true
+      description: Bí mật phục hồi 32 byte ngẫu nhiên CSPRNG, base64url không padding. Tạo và lưu trước
+        POST đầu, giữ nguyên khi replay; không log.
+      schema:
+        type: string
+        minLength: 43
+        maxLength: 43
+        pattern: ^[A-Za-z0-9_-]{43}$
+
     CustomerId:
       name: customerId
       in: path
@@ -1184,7 +1386,8 @@ components:
 
     CustomerProfile:
       description: |
-        Hồ sơ Customer và thông tin Account liên kết.
+        DTO tổng hợp Customer từ customer-service và Account từ identity-service.
+        Không có nghĩa Customer sở hữu email/phone/fullName hoặc lưu chung bảng.
         CUSTOMER chỉ đọc hồ sơ mình.
         OPERATOR có quyền có thể đọc cả Account INACTIVE/SUSPENDED.
         Không dùng schema đăng ký mới vì hồ sơ được đọc không nhất thiết ACTIVE.
@@ -1239,6 +1442,67 @@ components:
         account:
           $ref: "#/components/schemas/Account"
 
+    CustomerRegistrationOperation:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - status
+        - createdAt
+        - updatedAt
+      description: Trạng thái operation cấp phát, không phải accountStatus. Chỉ trả Account khi hoàn tất.
+        Timestamps UTC. POST 202 chỉ dùng nhánh PROCESSING; GET có thể trả cả ba nhánh.
+      properties:
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        status:
+          type: string
+          enum:
+            - PROCESSING
+            - SUCCEEDED
+            - FAILED
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        result:
+          $ref: "#/components/schemas/RegisteredCustomerAccount"
+        error:
+          $ref: "#/components/schemas/ErrorResponse"
+      oneOf:
+        - properties:
+            status:
+              enum:
+                - PROCESSING
+          not:
+            anyOf:
+              - required:
+                  - result
+              - required:
+                  - error
+        - properties:
+            status:
+              enum:
+                - SUCCEEDED
+          required:
+            - result
+          not:
+            required:
+              - error
+        - properties:
+            status:
+              enum:
+                - FAILED
+          required:
+            - error
+          not:
+            required:
+              - result
+
     FieldError:
       type: object
       additionalProperties: false
@@ -1278,6 +1542,19 @@ components:
           description: Mã tham chiếu để tra cứu lỗi phía máy chủ.
 
   responses:
+    RegistrationConflict:
+      description: "CONTACT_CONFLICT: email/phone đã thuộc hoặc được giữ cho đăng ký khác.
+        IDEMPOTENCY_CONFLICT: đúng token nhưng cùng key khác payload. IDEMPOTENCY_KEY_EXPIRED: hết cửa
+        sổ replay, không khởi tạo lại key này. REGISTRATION_FAILED: replay operation đã thất bại cuối
+        cùng; không tự tạo operation mới. Không lộ thông tin Account khác."
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
     BadRequest:
       description: |
         VALIDATION_ERROR.
@@ -1413,6 +1690,8 @@ components:
         Không bỏ qua kiểm tra Session để cấp quyền.
         Không bỏ giới hạn bắt buộc của login/OTP khi Redis không khả dụng.
         Không trả thành công nếu chưa ghi nhận bền vững thay đổi cần thiết.
+        Với đăng ký Customer, 503 hoặc mất phản hồi không chứng minh chưa tạo operation.
+        Retry cùng key/token/payload; operation đã được xác nhận đang chạy trả 202.
       headers:
         Cache-Control:
           $ref: "#/components/headers/NoStore"
