@@ -2,10 +2,14 @@ openapi: 3.0.3
 
 info:
   title: CAB System - Booking API
-  version: "1.2.0"
+  version: "1.3.0"
   description: |
-    Đặc tả Booking theo SRS CAB System phiên bản 1.2,
-    đối chiếu rubric và Micro_Service_Design phiên bản 1.2.
+    Đặc tả Booking theo bản SRS 8 MS phiên bản 1.3 và Micro_Service_Design 1.3.
+    Kế thừa API 1.2.0; đây là bản xem trước cần duyệt trước khi áp dụng.
+    Giữ các endpoint cũ, trạng thái Booking và cấu trúc dữ liệu nghiệp vụ.
+    Đề xuất mới: 202 cho tạo/hủy chưa hoàn tất và GET /booking-operations/{operationId}.
+    202 thay cho REQUEST_IN_PROGRESS trong luồng tạo, không phải kết quả đặt xe thành công.
+    Các hợp đồng .proto, sự kiện nhiều producer và API 03/04/05 phải được đồng bộ riêng.
 
     Truy xuất yêu cầu:
     - BR01, BR04, BR11.
@@ -14,6 +18,7 @@ info:
     - UC02, UC12, UC19.
     - AC02, AC10, AC12, AC17, AC20.
     - NFR03, NFR04, NFR05, NFR11, NFR15, NFR16, NFR17.
+    - FR28, UC22, AC21, NFR18: theo dõi và phục hồi tiến trình liên dịch vụ.
 
     Phân biệt đối tượng:
     - BookingRequest: yêu cầu đặt xe của khách hàng.
@@ -38,10 +43,16 @@ info:
 
     Kiến trúc:
     - Client truy cập qua API Gateway.
-    - Booking được xử lý trong CAB Core.
-    - Các thay đổi Booking, điều phối và quyền hoạt động của Customer
-      cần nhất quán được thực hiện trong transaction của cab_core.
-    - Sự kiện thông báo được ghi outbox cùng transaction nghiệp vụ.
+    - Gateway chuyển REST sang gRPC; Booking & Dispatch thuộc booking-service.
+    - Booking sở hữu Booking, DispatchProcess, TripRequest và coordinator phân công/hủy.
+    - Customer sở hữu CustomerActivityGuard; Driver sở hữu reservation Driver/Vehicle.
+    - Trip sở hữu TripPreparation và chuyến hoạt động; Payment sở hữu biểu giá/Fare.
+    - Identity xác minh Account/Session; không tin header danh tính client tự gửi.
+    - Mỗi dịch vụ chỉ ghi database của mình; không join DB hoặc transaction xuyên MS.
+    - Lệnh gRPC có operationId, version/generation, danh tính dịch vụ và deadline.
+    - Timeout không chứng minh lệnh chưa chạy; tra cứu trước khi bù hoặc cấp tài nguyên mới.
+    - Booking ghi outbox cùng transaction cục bộ; retry/inbox ngăn hiệu ứng trùng.
+    - x-owner-service là mô tả trách nhiệm, không phải cấu hình routing thực thi.
     - Worker phát sự kiện qua RabbitMQ sau commit.
     - Không yêu cầu Notification Service xử lý xong trước khi trả thành công.
 
@@ -78,7 +89,7 @@ servers:
   - url: /v1
     description: |
       Đường dẫn cơ sở trên API Gateway.
-      Không cấu hình client gọi trực tiếp cổng của CAB Core.
+      Không cấu hình client gọi trực tiếp cổng của các microservice.
 
 tags:
   - name: Booking
@@ -92,6 +103,7 @@ paths:
     get:
       tags: [Booking]
       operationId: listMyBookings
+      x-owner-service: booking-service
       summary: Liệt kê Booking của khách hàng đang đăng nhập
       description: |
         FR25, UC19, BRu28, AC17.
@@ -197,6 +209,7 @@ paths:
     post:
       tags: [Booking]
       operationId: createBooking
+      x-owner-service: booking-service
       summary: Tạo yêu cầu đặt xe
       description: |
         FR02, FR03, UC02, AC02.
@@ -220,8 +233,10 @@ paths:
           IN_PROGRESS; hoặc
         - Có Trip ERROR chưa đóng.
 
-        Trip COMPLETED, CANCELLED hoặc ERROR đã được đóng hợp lệ
-        không chặn đặt mới.
+        Trip COMPLETED, CANCELLED hoặc ERROR đã được đóng hợp lệ không còn là
+        chuyến đang hoạt động. Tuy nhiên chỉ cho đặt mới sau khi Customer xác nhận
+        giải phóng guard đúng tripId/version; trong thời gian phục hồi còn giữ guard
+        trả 409 CUSTOMER_ACTIVITY_RELEASE_PENDING, không tạo yêu cầu chồng lấn.
 
         Payment chưa hoàn tất của chuyến đã đóng không được
         nhầm thành một Trip đang hoạt động.
@@ -230,16 +245,23 @@ paths:
         khách còn đang có hoạt động, vì Booking giữ trạng thái này
         sau khi Trip đã kết thúc.
 
-        Khi tiếp nhận thành công, trong cùng transaction:
-        - Giành quyền hoạt động của Customer.
-        - Cấp bookingId.
-        - Tạo Booking PENDING.
-        - Chọn và lưu phiên bản biểu giá cùng các đơn giá áp dụng.
-        - Ghi công việc điều phối bền vững.
-        - Ghi outbox BOOKING_RECEIVED.
-        - Lưu kết quả idempotency.
+        Các bước tiếp nhận qua nhiều dịch vụ:
+        - Booking ghi operation, bookingId ổn định và khóa chống lặp trong DB của mình.
+        - Customer giành guard nguyên tử theo customerId, ownerOperationId và generation.
+        - Payment cung cấp phiên bản giá hiệu lực và snapshot bất biến qua gRPC.
+        - Booking lưu snapshot đã chọn cho operation; retry không tự chọn giá mới.
+        - Sau các xác nhận trên, transaction cab_booking tạo Booking PENDING,
+          công việc Dispatch, outbox BOOKING_RECEIVED và kết quả idempotency cuối.
 
-        Chỉ trả 201 sau commit, không chờ tài xế chấp nhận.
+        Không công bố Booking tạm thiếu guard hoặc pricingSnapshot trong GET/list.
+        201 chỉ sau commit hoàn tất các điều kiện trên, không chờ Driver chấp nhận.
+        Đã có operation bền vững nhưng chưa hoàn tất thì trả 202 cùng operationId.
+        Mất phản hồi sau commit phải replay 201 đã lưu, không giải phóng guard.
+        Nếu thất bại đã xác định trước commit Booking, lưu quyết định bù bền vững,
+        giải phóng đúng ownerOperationId/generation và chỉ kết thúc FAILED khi đã
+        xác nhận bù xong. Lệnh giữ quyền đến muộn phải bị generation/tombstone chặn.
+        Khi chưa rõ kết quả giữ quyền hoặc commit, tiếp tục PROCESSING và đối soát;
+        không tự tạo Booking khác hoặc giải phóng quyền chỉ vì timeout.
 
         Sau đó Worker chuyển Booking sang FINDING_DRIVER
         và thực hiện điều phối.
@@ -252,7 +274,8 @@ paths:
         - Cùng khóa/cùng nội dung trả HTTP status, body và Location
           của lần tạo thành công trước.
         - Cùng khóa/khác nội dung trả 409 IDEMPOTENCY_CONFLICT.
-        - Cùng khóa đang xử lý trả 409 REQUEST_IN_PROGRESS.
+        - Cùng khóa đang xử lý trả 202 với cùng operationId và Location tra cứu.
+        - Cùng khóa đã thất bại cuối trả lại HTTP status/body lỗi đã lưu.
         - Nhận diện replay trước khi kiểm tra các điều kiện nghiệp vụ
           có thể thay đổi như Booking đang hoạt động hoặc biểu giá mới.
         - Không tạo công việc, outbox hoặc quyền hoạt động mới khi replay.
@@ -311,6 +334,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CreatedBooking"
+        "202":
+          description: Operation đã được ghi bền vững nhưng chưa hoàn tất. Chưa phải kết quả tạo/hủy thành
+            công. GET Location hoặc replay theo quy tắc endpoint.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            Location:
+              description: Đường dẫn theo dõi operation qua Gateway, vẫn yêu cầu JWT và quyền dữ liệu.
+              schema:
+                type: string
+              example: /v1/booking-operations/OP_example
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BookingOperation"
+                  - type: object
+                    properties:
+                      status:
+                        type: string
+                        enum:
+                          - PROCESSING
         "400":
           description: |
             VALIDATION_ERROR, INVALID_ROUTE hoặc OUTSIDE_SERVICE_AREA.
@@ -336,12 +383,15 @@ paths:
             Một trong các mã:
             - ACTIVE_BOOKING_OR_TRIP_EXISTS.
             - IDEMPOTENCY_CONFLICT.
-            - REQUEST_IN_PROGRESS.
+            - IDEMPOTENCY_KEY_EXPIRED.
+            - CUSTOMER_ACTIVITY_RELEASE_PENDING.
             - SERVICE_UNAVAILABLE_FOR_BOOKING.
 
             SERVICE_UNAVAILABLE_FOR_BOOKING dùng khi loại dịch vụ
             chưa hoạt động hoặc chưa có biểu giá hiệu lực.
             Mã này khác lỗi hạ tầng tạm thời HTTP 503.
+            CUSTOMER_ACTIVITY_RELEASE_PENDING dùng khi đã biết chuyến đóng nhưng
+            guard chưa giải phóng xong; không suy diễn tình trạng này từ cache cũ.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
@@ -360,6 +410,7 @@ paths:
     get:
       tags: [Booking]
       operationId: getBooking
+      x-owner-service: booking-service
       summary: Xem chi tiết yêu cầu đặt xe
       description: |
         FR03, FR25, UC02, UC19.
@@ -418,6 +469,7 @@ paths:
     get:
       tags: [Booking]
       operationId: getBookingStatus
+      x-owner-service: booking-service
       summary: Xem trạng thái hiện tại của yêu cầu đặt xe
       description: |
         FR03, UC02.
@@ -477,6 +529,7 @@ paths:
     post:
       tags: [Booking]
       operationId: cancelBooking
+      x-owner-service: booking-service
       summary: Hủy yêu cầu đặt xe trước khi phân công tài xế
       description: |
         FR19, UC12, BRu16, AC10.
@@ -490,15 +543,26 @@ paths:
 
         Chỉ hủy mới khi Booking PENDING hoặc FINDING_DRIVER.
 
-        Trong cùng transaction của CAB Core:
-        - Khóa dữ liệu điều phối liên quan.
-        - Kiểm tra lại trạng thái.
-        - Chuyển Booking thành CANCELLED.
-        - Lưu lý do, accountId người hủy và thời điểm.
-        - Kết thúc DispatchProcess nếu đã được tạo.
-        - Thu hồi TripRequest còn PENDING.
-        - Giải phóng CustomerActivityGuard nếu vẫn trỏ đúng Booking này.
-        - Ghi audit và outbox thông báo.
+        Booking là coordinator phân xử hủy/accept bằng bản ghi quyết định có version
+        tại cab_booking. Không chỉ kiểm tra bookingStatus nếu AssignmentSaga còn chạy.
+        Trong transaction cục bộ, tiếp nhận yêu cầu hủy, lưu operation, lý do/người gọi,
+        quyết định dừng Dispatch và vô hiệu offer chưa nhận theo trạng thái thực.
+        Nếu đã phân công xong, từ chối hủy Booking; không sửa Trip qua DB của Booking.
+
+        Nếu phân công còn chạy, ghi cancelRequested rồi đối soát trạng thái:
+        - Chưa kích hoạt Trip: hủy TripPreparation có tombstone/version; xác nhận
+          không thể kích hoạt trễ trước khi giải phóng đúng reservation Driver/Vehicle.
+        - Customer giải phóng guard đúng owner operation hoặc tripId/version đã xác minh.
+        - Nếu không biết Trip đã kích hoạt, giữ tài nguyên và tiếp tục đối soát.
+        - Nếu Trip đã kích hoạt: phục hồi phân công về phía trước, trả kết quả
+          BOOKING_ALREADY_ASSIGNED khi xác nhận xong; hủy Trip dùng API 04.
+        - Không xóa Trip hoạt động để giả lập rollback; không bù tài nguyên của chuyến khác.
+
+        Chỉ khi quyết định hủy thắng và các xác nhận bù/giải phóng bắt buộc đã xong,
+        Booking commit CANCELLED, audit, outbox và kết quả hủy cuối trong DB của mình.
+        Khi chưa xong, giữ trạng thái Booking công khai gần nhất và trả 202;
+        operation thể hiện tiến trình, không thêm trạng thái mới vào BookingStatus.
+        Worker gặp quyết định hủy phải dừng offer mới dù Booking chưa hiện CANCELLED.
 
         Nếu Worker chưa bắt đầu điều phối,
         công việc đến muộn phải nhận ra Booking đã CANCELLED
@@ -513,7 +577,9 @@ paths:
         Chống lặp theo bookingId:
         - Endpoint không yêu cầu Idempotency-Key.
         - Vẫn phải xác thực quyền và kiểm tra cấu trúc body.
-        - Nếu Booking đã CANCELLED, trả 200 với kết quả hủy đã lưu.
+        - Cùng Booking đang hủy: trả 202 cùng operation, không tạo tiến trình khác.
+        - Nếu Booking đã CANCELLED và giải phóng hoàn tất, trả 200 kết quả đã lưu.
+        - CUSTOMER/OPERATOR vẫn phải có quyền hiện tại khi replay.
         - Không ghi đè lý do, người hủy hoặc thời điểm ban đầu.
         - Không tạo audit nghiệp vụ, outbox hoặc thông báo trùng.
         - Body hợp lệ có lý do khác không sửa kết quả hủy trước đó.
@@ -528,11 +594,12 @@ paths:
         - Không đổi kết quả điều phối thành CANCELLED.
 
         Hủy Booking và accept phải phối hợp trên cùng dữ liệu có thẩm quyền:
-        - Hủy thắng: lời mời mất hiệu lực, không được tạo Trip.
+        - Hủy thắng: lời mời mất hiệu lực, không được kích hoạt Trip.
+          TripPreparation nội bộ nếu có phải được vô hiệu hóa an toàn.
         - Accept thắng: Booking đã phân công, thao tác hủy bị từ chối.
         - Không có hai kết quả thành công mâu thuẫn.
 
-        Chỉ trả 200 sau commit.
+        Chỉ trả 200 sau khi các xác nhận bắt buộc đã xong và kết quả cuối đã commit.
         Lỗi gửi thông báo sau đó không đảo ngược kết quả hủy.
       parameters:
         - $ref: "#/components/parameters/BookingId"
@@ -556,6 +623,30 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CancelledBooking"
+        "202":
+          description: Operation đã được ghi bền vững nhưng chưa hoàn tất. Chưa phải kết quả tạo/hủy thành
+            công. GET Location hoặc replay theo quy tắc endpoint.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            Location:
+              description: Đường dẫn theo dõi operation qua Gateway, vẫn yêu cầu JWT và quyền dữ liệu.
+              schema:
+                type: string
+              example: /v1/booking-operations/OP_example
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/BookingOperation"
+                  - type: object
+                    properties:
+                      status:
+                        type: string
+                        enum:
+                          - PROCESSING
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -578,6 +669,74 @@ paths:
               example:
                 errorCode: BOOKING_ALREADY_ASSIGNED
                 message: "Yêu cầu đã được phân công. Vui lòng xem chuyến để thực hiện thao tác phù hợp."
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
+  /booking-operations/{operationId}:
+    get:
+      tags:
+        - Booking
+      operationId: getBookingOperation
+      x-owner-service: booking-service
+      summary: Tra cứu tiến trình tạo hoặc hủy Booking
+      description: >-
+        FR28, UC22, AC21. Yêu cầu Account ACTIVE và Session hợp lệ như các API Booking.
+  
+        CUSTOMER chỉ đọc operation của mình, kể cả chưa có Booking công khai; đối chiếu
+        ownerAccountId/customerId được ghi khi tiếp nhận. OPERATOR đọc trong phạm vi vận hành được
+        cấp; DRIVER trả 403. Không tồn tại/ngoài phạm vi trả 404 cùng thông báo. Không coi operationId
+        hoặc Idempotency-Key là bằng chứng quyền.
+  
+        GET 200 chỉ xác nhận tra cứu thành công. PROCESSING chưa có kết quả cuối; SUCCEEDED chứa đúng
+        kết quả đã lưu; FAILED chứa lỗi cuối an toàn. Không trả payload gRPC, reservation, stack trace
+        hay thông tin Driver ứng viên.
+  
+        Nếu POST đầu mất phản hồi trước khi client biết operationId, replay tạo cùng key/body hoặc
+        replay hủy cùng bookingId để lấy operation. Việc đọc không khởi động lại thao tác.
+  
+        Đề xuất retention: operation PROCESSING không bị dọn; kết quả cuối giữ cùng vòng đời Booking
+        và bản ghi idempotency. Với tạo thất bại không có Booking, giữ kết quả ít nhất 7 ngày rồi giữ
+        tombstone key theo Account/thao tác, trả 409 IDEMPOTENCY_KEY_EXPIRED khi replay thay vì tạo
+        lại. Tra cứu sau khi hết lưu giữ trả 404. Chính sách dọn tombstone theo D08 còn cần duyệt.
+        Worker tiếp quản bằng version/lease; lease hết không giải phóng tài nguyên. Có cảnh báo và đối
+        soát khi quá deadline, không giữ PROCESSING vô hạn mà không xử lý.
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      responses:
+        "200":
+          description: Trạng thái tiến trình được phép đọc; không phải xác nhận mọi operation đều thành công.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BookingOperation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: BOOKING_OPERATION_NOT_FOUND. Không tìm thấy tiến trình được phép tra cứu.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "429":
           $ref: "#/components/responses/TooManyRequests"
         "503":
@@ -738,8 +897,9 @@ components:
       description: |
         PENDING: đã tiếp nhận.
         FINDING_DRIVER: đang tìm tài xế.
-        DRIVER_ASSIGNED: đã phân công và có Trip.
-        NO_DRIVER_FOUND: tìm kết thúc nhưng không phân công được.
+        DRIVER_ASSIGNED: đã xác nhận Trip hoạt động và hoàn tất phân công.
+        NO_DRIVER_FOUND: tìm kết thúc, đã xác minh không có phân công chưa rõ
+        kết quả và hoàn tất giải phóng guard/reservation cần thiết.
         CANCELLED: đã hủy trước phân công.
 
     CreateBookingRequest:
@@ -788,6 +948,8 @@ components:
           description: Đơn giá cho mỗi phút hành trình tính cước.
       description: |
         Bản ghi bất biến của các đơn giá đã áp dụng.
+        Nguồn có thẩm quyền là Payment; Booking lưu bản sao bất biến đã được chọn
+        cho operation cùng pricingVersionId. Không đọc database Payment trực tiếp.
         Biểu giá mới không cập nhật đè dữ liệu này.
 
         Không phải cước dự kiến hoặc cước thực tế.
@@ -904,6 +1066,8 @@ components:
         Chỉ CANCELLED có cancellation.
         Trường chưa áp dụng được bỏ, không gửi null.
 
+        TripPreparation/assignmentId/reservation và tiến trình nội bộ không được
+        trả như tripId/driverId đã phân công. Không suy diễn thành công từ event trễ.
         Không có tổng cước thực tế trong Booking.
         Cước thực tế thuộc Fare sau khi Trip hoàn thành.
 
@@ -1059,6 +1223,110 @@ components:
           not:
             required: [tripId]
 
+    BookingOperation:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - operationType
+        - status
+        - createdAt
+        - updatedAt
+      properties:
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        operationType:
+          type: string
+          enum:
+            - CREATE_BOOKING
+            - CANCEL_BOOKING
+        status:
+          type: string
+          enum:
+            - PROCESSING
+            - SUCCEEDED
+            - FAILED
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        result:
+          oneOf:
+            - $ref: "#/components/schemas/CreatedBooking"
+            - $ref: "#/components/schemas/CancelledBooking"
+        error:
+          $ref: "#/components/schemas/ErrorResponse"
+        failureHttpStatus:
+          type: integer
+          enum:
+            - 400
+            - 409
+            - 503
+      oneOf:
+        - properties:
+            status:
+              enum:
+                - PROCESSING
+          not:
+            anyOf:
+              - required:
+                  - result
+              - required:
+                  - error
+              - required:
+                  - failureHttpStatus
+        - properties:
+            status:
+              enum:
+                - SUCCEEDED
+            operationType:
+              enum:
+                - CREATE_BOOKING
+            result:
+              $ref: "#/components/schemas/CreatedBooking"
+          required:
+            - result
+          not:
+            anyOf:
+              - required:
+                  - error
+              - required:
+                  - failureHttpStatus
+        - properties:
+            status:
+              enum:
+                - SUCCEEDED
+            operationType:
+              enum:
+                - CANCEL_BOOKING
+            result:
+              $ref: "#/components/schemas/CancelledBooking"
+          required:
+            - result
+          not:
+            anyOf:
+              - required:
+                  - error
+              - required:
+                  - failureHttpStatus
+        - properties:
+            status:
+              enum:
+                - FAILED
+          required:
+            - error
+            - failureHttpStatus
+          not:
+            required:
+              - result
+      description: "Trạng thái xử lý riêng, không thay đổi enum BookingStatus. FAILED chỉ sau khi kết quả
+        và bù đã rõ. Lỗi hạ tầng còn chưa rõ kết quả giữ PROCESSING. result là response cuối đã lưu
+        (CREATE: 201, CANCEL: 200); xem Booking API để lấy trạng thái hiện tại."
+
     FieldError:
       type: object
       additionalProperties: false
@@ -1203,6 +1471,8 @@ components:
         RabbitMQ tạm ngừng không tự làm mất kết quả tạo/hủy đã commit.
 
         Nhận 503 không chứng minh chắc chắn thao tác ghi trước đó chưa thực hiện.
+        Nếu đã xác nhận operation bền vững đang xử lý, dùng 202 và đường dẫn tra cứu.
+        Không trả thành công khi bước bắt buộc của MS khác còn chưa xác định.
 
         Khi tạo Booking, gửi lại cùng Idempotency-Key và cùng body.
         Khi hủy, tra cứu trạng thái hoặc gửi lại thao tác hủy hợp lệ.
