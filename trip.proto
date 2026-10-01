@@ -1,0 +1,32 @@
+syntax = "proto3";
+package cab.internal.v1;
+
+import "google/protobuf/timestamp.proto";
+import "cab/internal/v1/common.proto";
+
+service TripInternalService {
+ rpc PrepareTrip(PrepareTripRequest) returns (TripPreparation);
+ rpc GetTripPreparation(GetTripPreparationRequest) returns (TripPreparation);
+ rpc ActivateTrip(ActivateTripRequest) returns (TripPreparation);
+ rpc CancelTripPreparation(CancelTripPreparationRequest) returns (TripPreparation);
+ rpc GetClosureContext(GetClosureContextRequest) returns (ClosureContext);
+ rpc GetTripRatingContext(TripContextRequest) returns (TripRatingContext);
+ rpc GetTripPaymentContext(TripContextRequest) returns (TripPaymentContext);
+ rpc GetActiveTripContactContext(TripContextRequest) returns (ActiveTripContactContext);
+ rpc GetFareContext(GetFareContextRequest) returns (FareContext);
+}
+message PrepareTripRequest { Command command = 1; string assignment_id = 2; string trip_id = 3; string booking_id = 4; TripParties parties = 5; GuardRef guard = 6; ReservationRef reservation = 7; Location pickup = 8; Location destination = 9; PricingSnapshot pricing = 10; }
+message GetTripPreparationRequest { string assignment_id = 1; }
+enum PreparationState { PREPARATION_STATE_UNSPECIFIED = 0; PREPARED = 1; ACTIVE = 2; PREPARATION_CANCELLED = 3; }
+message TripPreparation { string assignment_id = 1; string trip_id = 2; string booking_id = 3; PreparationState state = 4; uint64 version = 5; }
+message ActivateTripRequest { Command command = 1; string assignment_id = 2; uint64 expected_version = 3; }
+message CancelTripPreparationRequest { Command command = 1; string assignment_id = 2; string trip_id = 3; string booking_id = 4; }
+message GetClosureContextRequest { string trip_id = 1; string closure_operation_id = 2; }
+message ClosureContext { string trip_id = 1; string closure_operation_id = 2; TripStatus status = 3; google.protobuf.Timestamp closed_at = 4; GuardRef guard = 5; ReservationRef reservation = 6; bool block_vehicle = 7; optional string vehicle_issue_incident_id = 8; uint64 trip_version = 9; }
+message TripContextRequest { string trip_id = 1; }
+message TripRatingContext { string trip_id = 1; uint64 trip_version = 2; string customer_id = 3; string driver_id = 4; TripStatus trip_status = 5; optional google.protobuf.Timestamp completed_at = 6; }
+message TripPaymentContext { string trip_id = 1; uint64 trip_version = 2; TripParties parties = 3; TripStatus trip_status = 4; optional google.protobuf.Timestamp completed_at = 5; }
+message ActiveTripContactContext { string trip_id = 1; TripParties parties = 2; TripStatus trip_status = 3; uint64 trip_version = 4; bool closed = 5; }
+message GetFareContextRequest { string trip_id = 1; uint64 metrics_version = 2; }
+enum MetricsStatus { METRICS_STATUS_UNSPECIFIED = 0; METRICS_PENDING = 1; METRICS_CONFIRMED = 2; METRICS_REVIEW_REQUIRED = 3; }
+message FareContext { string trip_id = 1; TripStatus trip_status = 2; TripParties parties = 3; MetricsStatus metrics_status = 4; uint64 metrics_version = 5; Decimal distance_km = 6; Decimal duration_minutes = 7; PricingSnapshot pricing = 8; google.protobuf.Timestamp completed_at = 9; google.protobuf.Timestamp metrics_confirmed_at = 10; }

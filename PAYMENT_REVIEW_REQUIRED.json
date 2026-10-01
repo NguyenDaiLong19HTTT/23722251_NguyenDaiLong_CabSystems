@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 2,
+  "eventId": "00000000-0000-0000-0000-000000000010",
+  "source": "PAYMENT_SERVICE",
+  "eventType": "PAYMENT_REVIEW_REQUIRED",
+  "aggregateType": "PAYMENT",
+  "aggregateId": "AGG001",
+  "aggregateVersion": 1,
+  "referenceType": "PAYMENT",
+  "referenceId": "AGG001",
+  "recipientAccountIds": [
+    "ACC001"
+  ],
+  "snapshot": {},
+  "occurredAt": "2026-10-01T10:00:00Z",
+  "correlationId": "test-correlation"
+}

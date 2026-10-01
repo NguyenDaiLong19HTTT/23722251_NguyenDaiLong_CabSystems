@@ -1,0 +1,11 @@
+syntax = "proto3";
+package cab.internal.v1;
+
+import "google/protobuf/timestamp.proto";
+import "cab/internal/v1/common.proto";
+
+service PaymentInternalService {
+ rpc GetPricingSnapshot(GetPricingSnapshotRequest) returns (PricingSnapshot);
+}
+// Idempotent durable capture: replay operation_id returns original snapshot, not today's price.
+message GetPricingSnapshotRequest { string operation_id = 1; VehicleType vehicle_type = 2; google.protobuf.Timestamp booking_accepted_at = 3; }

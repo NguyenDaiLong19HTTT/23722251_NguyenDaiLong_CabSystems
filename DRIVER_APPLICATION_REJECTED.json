@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 2,
+  "eventId": "00000000-0000-0000-0000-000000000013",
+  "source": "DRIVER_SERVICE",
+  "eventType": "DRIVER_APPLICATION_REJECTED",
+  "aggregateType": "DRIVER_APPLICATION",
+  "aggregateId": "AGG001",
+  "aggregateVersion": 1,
+  "referenceType": "DRIVER_APPLICATION",
+  "referenceId": "AGG001",
+  "recipientAccountIds": [
+    "ACC001"
+  ],
+  "snapshot": {
+    "reasonText": "Lý do thử nghiệm"
+  },
+  "occurredAt": "2026-10-01T10:00:00Z",
+  "correlationId": "test-correlation"
+}

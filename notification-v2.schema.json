@@ -1,0 +1,784 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cab:notification:2",
+  "$ref": "#/$defs/NotificationDomainEvent",
+  "$defs": {
+    "NotificationDomainEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "eventId",
+        "source",
+        "eventType",
+        "occurredAt",
+        "referenceType",
+        "referenceId",
+        "recipientAccountIds",
+        "snapshot",
+        "correlationId",
+        "aggregateType",
+        "aggregateId",
+        "aggregateVersion"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "type": "integer",
+          "enum": [
+            2
+          ],
+          "description": "Phiên bản message, độc lập với version tài liệu OpenAPI"
+        },
+        "eventId": {
+          "$ref": "#/$defs/EventId"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "BOOKING_SERVICE",
+            "TRIP_SERVICE",
+            "PAYMENT_SERVICE",
+            "DRIVER_SERVICE"
+          ],
+          "description": "Nguồn nghiệp vụ của các sự kiện trong phiên bản này.\nKhông dùng riêng giá trị này để xác thực nguồn.\n"
+        },
+        "eventType": {
+          "$ref": "#/$defs/NotificationEventType"
+        },
+        "occurredAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Thời điểm phát sinh sự kiện tại MS nguồn.\nGiữ nguyên khi publish hoặc consume lại.\n"
+        },
+        "referenceType": {
+          "$ref": "#/$defs/ReferenceType"
+        },
+        "referenceId": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "recipientAccountIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/Identifier"
+          },
+          "description": "Account ID, không phải Customer ID hoặc Driver ID.\nDo nguồn nghiệp vụ có thẩm quyền xác định theo eventType.\nNotification Service không nhận người nhận do client tự chọn.\n"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/EventSnapshot"
+        },
+        "correlationId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "aggregateType": {
+          "type": "string",
+          "enum": [
+            "BOOKING",
+            "TRIP_REQUEST",
+            "TRIP",
+            "PAYMENT",
+            "DRIVER_APPLICATION"
+          ]
+        },
+        "aggregateId": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "aggregateVersion": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Phiên bản aggregate tại commit tạo sự kiện, giữ nguyên khi replay; không so sánh version giữa hai aggregate/MS."
+        }
+      },
+      "description": "Hợp đồng message qua RabbitMQ, không phải request body của API công khai.\nNội dung được đóng băng tại nguồn và giữ nguyên khi gửi lại.\nSnapshot tối thiểu giúp xử lý sự kiện đến chậm mà không cần đọc\ntrực tiếp cơ sở dữ liệu của MS nguồn.\n",
+      "oneOf": [
+        {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "BOOKING_SERVICE"
+              ]
+            },
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "BOOKING_RECEIVED"
+              ]
+            },
+            "aggregateType": {
+              "type": "string",
+              "enum": [
+                "BOOKING"
+              ]
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "BOOKING"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "BOOKING_SERVICE"
+              ]
+            },
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "BOOKING_CANCELLED"
+              ]
+            },
+            "aggregateType": {
+              "type": "string",
+              "enum": [
+                "BOOKING"
+              ]
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "BOOKING"
+              ]
+            },
+            "snapshot": {
+              "type": "object",
+              "required": [
+                "reasonCode",
+                "reasonText"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "BOOKING_SERVICE"
+              ]
+            },
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "DRIVER_ASSIGNED"
+              ]
+            },
+            "aggregateType": {
+              "type": "string",
+              "enum": [
+                "BOOKING"
+              ]
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "TRIP"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "BOOKING_SERVICE"
+              ]
+            },
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "NO_DRIVER_FOUND"
+              ]
+            },
+            "aggregateType": {
+              "type": "string",
+              "enum": [
+                "BOOKING"
+              ]
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "BOOKING"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "BOOKING_SERVICE"
+              ]
+            },
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "TRIP_REQUEST_RECEIVED"
+              ]
+            },
+            "aggregateType": {
+              "type": "string",
+              "enum": [
+                "TRIP_REQUEST"
+              ]
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "TRIP_REQUEST"
+              ]
+            },
+            "snapshot": {
+              "type": "object",
+              "required": [
+                "expiresAt"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "TRIP_SERVICE"
+              ]
+            },
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "DRIVER_ARRIVED"
+              ]
+            },
+            "aggregateType": {
+              "type": "string",
+              "enum": [
+                "TRIP"
+              ]
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "TRIP"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "TRIP_SERVICE"
+              ]
+            },
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "TRIP_STARTED"
+              ]
+            },
+            "aggregateType": {
+              "type": "string",
+              "enum": [
+                "TRIP"
+              ]
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "TRIP"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "TRIP_SERVICE"
+              ]
+            },
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "TRIP_COMPLETED"
+              ]
+            },
+            "aggregateType": {
+              "type": "string",
+              "enum": [
+                "TRIP"
+              ]
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "TRIP"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "TRIP_SERVICE"
+              ]
+            },
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "TRIP_CANCELLED"
+              ]
+            },
+            "aggregateType": {
+              "type": "string",
+              "enum": [
+                "TRIP"
+              ]
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "TRIP"
+              ]
+            },
+            "snapshot": {
+              "type": "object",
+              "required": [
+                "reasonCode",
+                "reasonText"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "TRIP_SERVICE"
+              ]
+            },
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "TRIP_ERROR"
+              ]
+            },
+            "aggregateType": {
+              "type": "string",
+              "enum": [
+                "TRIP"
+              ]
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "TRIP"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "TRIP_SERVICE"
+              ]
+            },
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "TRIP_RECOVERED"
+              ]
+            },
+            "aggregateType": {
+              "type": "string",
+              "enum": [
+                "TRIP"
+              ]
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "TRIP"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "TRIP_SERVICE"
+              ]
+            },
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "TRIP_CLOSED_ABNORMALLY"
+              ]
+            },
+            "aggregateType": {
+              "type": "string",
+              "enum": [
+                "TRIP"
+              ]
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "TRIP"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "PAYMENT_SERVICE"
+              ]
+            },
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "PAYMENT_SUCCESS"
+              ]
+            },
+            "aggregateType": {
+              "type": "string",
+              "enum": [
+                "PAYMENT"
+              ]
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "PAYMENT"
+              ]
+            },
+            "snapshot": {
+              "type": "object",
+              "required": [
+                "paymentAttemptId",
+                "amount",
+                "currency"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "PAYMENT_SERVICE"
+              ]
+            },
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "PAYMENT_FAILED"
+              ]
+            },
+            "aggregateType": {
+              "type": "string",
+              "enum": [
+                "PAYMENT"
+              ]
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "PAYMENT"
+              ]
+            },
+            "snapshot": {
+              "type": "object",
+              "required": [
+                "paymentAttemptId"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "PAYMENT_SERVICE"
+              ]
+            },
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "PAYMENT_UNKNOWN"
+              ]
+            },
+            "aggregateType": {
+              "type": "string",
+              "enum": [
+                "PAYMENT"
+              ]
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "PAYMENT"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "PAYMENT_SERVICE"
+              ]
+            },
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "PAYMENT_REVIEW_REQUIRED"
+              ]
+            },
+            "aggregateType": {
+              "type": "string",
+              "enum": [
+                "PAYMENT"
+              ]
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "PAYMENT"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "DRIVER_SERVICE"
+              ]
+            },
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "DRIVER_APPLICATION_SUBMITTED"
+              ]
+            },
+            "aggregateType": {
+              "type": "string",
+              "enum": [
+                "DRIVER_APPLICATION"
+              ]
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "DRIVER_APPLICATION"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "DRIVER_SERVICE"
+              ]
+            },
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "DRIVER_APPLICATION_APPROVED"
+              ]
+            },
+            "aggregateType": {
+              "type": "string",
+              "enum": [
+                "DRIVER_APPLICATION"
+              ]
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "DRIVER_APPLICATION"
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "DRIVER_SERVICE"
+              ]
+            },
+            "eventType": {
+              "type": "string",
+              "enum": [
+                "DRIVER_APPLICATION_REJECTED"
+              ]
+            },
+            "aggregateType": {
+              "type": "string",
+              "enum": [
+                "DRIVER_APPLICATION"
+              ]
+            },
+            "referenceType": {
+              "type": "string",
+              "enum": [
+                "DRIVER_APPLICATION"
+              ]
+            },
+            "snapshot": {
+              "type": "object",
+              "required": [
+                "reasonText"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "EventId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Định danh ổn định, duy nhất trên toàn hệ thống.\nCó namespace nguồn hoặc cơ chế tương đương.\nGửi lại cùng sự kiện phải giữ nguyên eventId.\n"
+    },
+    "NotificationEventType": {
+      "type": "string",
+      "enum": [
+        "BOOKING_RECEIVED",
+        "BOOKING_CANCELLED",
+        "DRIVER_ASSIGNED",
+        "NO_DRIVER_FOUND",
+        "TRIP_REQUEST_RECEIVED",
+        "DRIVER_ARRIVED",
+        "TRIP_STARTED",
+        "TRIP_COMPLETED",
+        "TRIP_CANCELLED",
+        "TRIP_ERROR",
+        "TRIP_RECOVERED",
+        "TRIP_CLOSED_ABNORMALLY",
+        "PAYMENT_SUCCESS",
+        "PAYMENT_FAILED",
+        "PAYMENT_UNKNOWN",
+        "PAYMENT_REVIEW_REQUIRED",
+        "DRIVER_APPLICATION_SUBMITTED",
+        "DRIVER_APPLICATION_APPROVED",
+        "DRIVER_APPLICATION_REJECTED"
+      ],
+      "description": "Quy tắc nguồn, tham chiếu và người nhận:\n\nBOOKING_RECEIVED:\n- referenceType=BOOKING.\n- Gửi đến Account của Customer sở hữu Booking.\n- Phát sau khi Booking được ghi nhận bền vững.\n\nBOOKING_CANCELLED:\n- referenceType=BOOKING.\n- Gửi đến Account của Customer sở hữu Booking.\n- Chỉ phát khi Booking chuyển CANCELLED.\n- Snapshot có mã và nội dung lý do an toàn để hiển thị.\n- BOOKING_CANCELLED dùng reasonCode=OTHER vì API Booking chỉ nhận reason text; reasonText lấy từ lý do đã lưu, không tự tạo mã phân loại mới.\n- Không dùng cho việc hủy Trip đã được tạo.\n\nNO_DRIVER_FOUND:\n- referenceType=BOOKING.\n- Gửi đến Account của Customer sở hữu Booking.\n- Chỉ phát khi Booking chuyển NO_DRIVER_FOUND.\n- Không dùng cho lỗi kỹ thuật tạm thời của điều phối.\n\nDRIVER_ASSIGNED:\n- referenceType=TRIP.\n- Gửi đến Account của Customer của Trip.\n- Chỉ phát sau khi nhận chuyến và tạo Trip đã commit.\n\nTRIP_REQUEST_RECEIVED:\n- referenceType=TRIP_REQUEST.\n- Gửi đến Account của Driver được đề nghị chuyến.\n- Snapshot chứa expiresAt của đề nghị gốc.\n- Thông báo đến chậm không kéo dài expiresAt.\n- Client lấy trạng thái hiện tại từ Dispatch API trước khi thao tác.\n- Dispatch API vẫn kiểm tra quyền, trạng thái và thời hạn khi nhận chuyến.\n- Không dùng thông báo làm bộ đếm thời gian điều phối.\n\nDRIVER_ARRIVED:\n- referenceType=TRIP.\n- Gửi đến Account của Customer.\n- Phát khi Trip chuyển ARRIVED_PICKUP theo luồng thông thường.\n\nTRIP_STARTED:\n- referenceType=TRIP.\n- Gửi đến Account của Customer.\n- Phát khi Trip chuyển IN_PROGRESS theo luồng thông thường.\n\nTRIP_COMPLETED:\n- referenceType=TRIP.\n- Gửi đến Account của Customer và Driver của Trip.\n- Phát khi Trip chuyển COMPLETED.\n- Không khẳng định tài nguyên đã giải phóng, Fare đã sẵn sàng hoặc Payment đã SUCCESS.\n\nTRIP_CANCELLED:\n- referenceType=TRIP.\n- Gửi đến Account của Customer và Driver của Trip.\n- Phát khi Trip chuyển CANCELLED.\n- Snapshot có mã và nội dung lý do an toàn để hiển thị.\n- Không đổi Booking đã DRIVER_ASSIGNED thành CANCELLED.\n\nTRIP_ERROR:\n- referenceType=TRIP.\n- Gửi đến Account của Customer và Driver của Trip.\n- Chỉ phát khi Trip chuyển vào ERROR.\n- Thêm Incident khi đang ERROR không tự phát lại sự kiện này.\n- Không chứa chi tiết Incident nhạy cảm.\n\nTRIP_RECOVERED:\n- referenceType=TRIP.\n- Gửi đến Account của Customer và Driver của Trip.\n- Phát khi OPERATOR khôi phục trạng thái trước ERROR.\n- Không phát lại DRIVER_ARRIVED hoặc TRIP_STARTED chỉ vì khôi phục.\n\nTRIP_CLOSED_ABNORMALLY:\n- referenceType=TRIP.\n- Gửi đến Account của Customer và Driver của Trip.\n- Phát khi OPERATOR đóng Trip bất thường trong trạng thái ERROR.\n- Không mô tả Trip là COMPLETED hoặc tự yêu cầu thanh toán.\n\nPAYMENT_SUCCESS:\n- referenceType=PAYMENT.\n- Gửi đến Account của Customer và Driver của Trip tương ứng.\n- Chỉ phát khi Payment được xác nhận SUCCESS.\n- Snapshot chứa amount, currency và paymentAttemptId đã thành công.\n- Browser redirect không phải bằng chứng thành công.\n- Callback lặp không phát thêm sự kiện thành công.\n- Không phát thành công chỉ vì chọn CASH.\n\nPAYMENT_FAILED:\n- referenceType=PAYMENT.\n- Gửi đến Account của Customer sở hữu Payment.\n- Phát khi attempt hiện tại được xác nhận thất bại cuối cùng\n  và Payment chuyển FAILED.\n- Snapshot chứa paymentAttemptId liên quan.\n- Mỗi attempt thất bại khác nhau có eventId riêng.\n- Không phát chỉ vì timeout hoặc checkout hết hạn.\n- Giao diện đọc trạng thái hiện tại trước khi cho phép retry.\n\nPAYMENT_UNKNOWN:\n- referenceType=PAYMENT.\n- Gửi đến Account của Customer sở hữu Payment.\n- Phát khi Payment chuyển UNKNOWN.\n- Snapshot chứa paymentAttemptId liên quan nếu xác định được.\n- Nội dung phải nêu kết quả chưa rõ, đang cần đối soát.\n- Không khẳng định đã thất bại hoặc hướng dẫn trả tiền lần nữa.\n\nPAYMENT_REVIEW_REQUIRED:\n- referenceType=PAYMENT.\n- Gửi đến Account của Customer sở hữu Payment.\n- Phát khi requiresReview chuyển từ false sang true.\n- Không phát lại chỉ vì callback trùng.\n- Không hạ Payment SUCCESS thành FAILED hoặc UNKNOWN.\n- Nội dung không khẳng định đã hoàn tiền hoặc sẽ thu thêm tiền.\n- Không tự tạo TripIncident hoặc thay đổi trạng thái Trip.\n\nDRIVER_APPLICATION_SUBMITTED:\n- referenceType=DRIVER_APPLICATION.\n- Gửi đến Account của Driver sở hữu hồ sơ.\n- Driver phát sau transaction Driver/Application SUBMITTED, với accountId do Identity đã cấp và xác nhận hợp lệ cho operation đăng ký.\n- Không hứa transaction chung Account/Driver; thông báo chỉ xác nhận đã tiếp nhận hồ sơ, không chứng minh toàn bộ cấp phát Identity đã hoàn tất.\n- Người nhận chỉ đăng nhập/đọc hộp thư khi cấp phát và Account/Session đủ điều kiện.\n- Nội dung cho biết đang chờ xét duyệt.\n- Không khẳng định Driver đã được phép nhận chuyến.\n\nDRIVER_APPLICATION_APPROVED:\n- referenceType=DRIVER_APPLICATION.\n- Gửi đến Account của Driver sở hữu hồ sơ.\n- Phát sau khi kết quả duyệt và các cập nhật liên quan đã commit.\n- Không tự đưa tài xế sang AVAILABLE.\n- Tài xế phải sử dụng API online và đáp ứng điều kiện hiện tại.\n\nDRIVER_APPLICATION_REJECTED:\n- referenceType=DRIVER_APPLICATION.\n- Gửi đến Account của Driver sở hữu hồ sơ.\n- Phát sau khi kết quả từ chối đã commit.\n- Snapshot có lý do từ chối an toàn để hiển thị.\n- Không tự hứa chức năng nộp lại hồ sơ khi chưa thuộc phạm vi thiết kế.\n\nVới sự kiện có hai người nhận:\n- recipientAccountIds chứa Account của Customer và Driver.\n- Mỗi người có Notification riêng và trạng thái đọc độc lập.\n\nOPERATOR đọc công việc cần xử lý qua API Operations.\nKhông tự gửi đến toàn bộ OPERATOR nếu chưa có chính sách người nhận.\n"
+    },
+    "ReferenceType": {
+      "type": "string",
+      "enum": [
+        "BOOKING",
+        "TRIP_REQUEST",
+        "TRIP",
+        "PAYMENT",
+        "DRIVER_APPLICATION"
+      ]
+    },
+    "Identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "EventSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Mã lý do nghiệp vụ, không chứa dữ liệu nhạy cảm"
+        },
+        "reasonText": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "description": "Diễn giải lý do đã được nguồn giới hạn cho mục đích hiển thị.\nLà văn bản thuần.\nKhông sao chép ghi chú nội bộ hoặc dữ liệu nhạy cảm không cần thiết.\n"
+        },
+        "paymentAttemptId": {
+          "$ref": "#/$defs/Identifier"
+        },
+        "amount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Số tiền VND đã được Payment MS xác nhận"
+        },
+        "currency": {
+          "type": "string",
+          "enum": [
+            "VND"
+          ]
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Thời hạn gốc của TripRequest"
+        }
+      },
+      "description": "Snapshot tối thiểu tại thời điểm phát sinh sự kiện.\nKhông lấy dữ liệu hiện tại để ghi đè ý nghĩa sự kiện lịch sử.\n\nRàng buộc theo eventType:\n- BOOKING_CANCELLED và TRIP_CANCELLED yêu cầu reasonCode, reasonText.\n- DRIVER_APPLICATION_REJECTED yêu cầu reasonText.\n- TRIP_REQUEST_RECEIVED yêu cầu expiresAt.\n- PAYMENT_SUCCESS yêu cầu paymentAttemptId, amount, currency.\n- PAYMENT_FAILED yêu cầu paymentAttemptId.\n- amount và currency phải cùng xuất hiện nếu có sử dụng.\n\nProducer và consumer phải kiểm tra các ràng buộc theo eventType.\nCác trường không liên quan phải được bỏ qua khỏi payload,\nkhông dùng snapshot để vận chuyển dữ liệu tùy ý.\n",
+      "allOf": [
+        {
+          "anyOf": [
+            {
+              "required": [
+                "amount",
+                "currency"
+              ]
+            },
+            {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "amount"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "currency"
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

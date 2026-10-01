@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "eventId": "00000000-0000-0000-0000-000000000067",
+  "source": "DRIVER_SERVICE",
+  "eventType": "DRIVER_LOCATION_RECORDED",
+  "aggregateType": "DRIVER",
+  "aggregateId": "DRV001",
+  "aggregateVersion": 1,
+  "occurredAt": "2026-10-01T10:00:01Z",
+  "correlationId": "test-correlation",
+  "causationId": "CMD001",
+  "payload": {
+    "sampleId": "GPS001",
+    "driverId": "DRV001",
+    "recordedAt": "2026-10-01T10:00:00Z",
+    "receivedAt": "2026-10-01T10:00:01Z",
+    "latitude": 10.77,
+    "longitude": 106.69
+  }
+}

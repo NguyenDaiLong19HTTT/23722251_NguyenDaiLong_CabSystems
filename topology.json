@@ -1,0 +1,245 @@
+{
+  "vhost": "/cab",
+  "transport": "amqps",
+  "port": 5671,
+  "exchangeType": "topic",
+  "durable": true,
+  "messageDeliveryMode": 2,
+  "producers": {
+    "identity-service": {
+      "exchange": "cab.identity.events",
+      "publishOnlyOwnExchange": true,
+      "routingKeys": [
+        "domain.v1.ACCOUNT_ACCESS_CHANGED",
+        "domain.v1.ACCOUNT_PROVISIONED"
+      ]
+    },
+    "driver-service": {
+      "exchange": "cab.driver.events",
+      "publishOnlyOwnExchange": true,
+      "routingKeys": [
+        "notification.v2.DRIVER_APPLICATION_SUBMITTED",
+        "notification.v2.DRIVER_APPLICATION_APPROVED",
+        "notification.v2.DRIVER_APPLICATION_REJECTED",
+        "domain.v1.DRIVER_LOCATION_RECORDED"
+      ]
+    },
+    "booking-service": {
+      "exchange": "cab.booking.events",
+      "publishOnlyOwnExchange": true,
+      "routingKeys": [
+        "notification.v2.BOOKING_RECEIVED",
+        "notification.v2.BOOKING_CANCELLED",
+        "notification.v2.DRIVER_ASSIGNED",
+        "notification.v2.NO_DRIVER_FOUND",
+        "notification.v2.TRIP_REQUEST_RECEIVED"
+      ]
+    },
+    "trip-service": {
+      "exchange": "cab.trip.events",
+      "publishOnlyOwnExchange": true,
+      "routingKeys": [
+        "notification.v2.DRIVER_ARRIVED",
+        "notification.v2.TRIP_STARTED",
+        "notification.v2.TRIP_COMPLETED",
+        "notification.v2.TRIP_CANCELLED",
+        "notification.v2.TRIP_ERROR",
+        "notification.v2.TRIP_RECOVERED",
+        "notification.v2.TRIP_CLOSED_ABNORMALLY",
+        "domain.v1.JOURNEY_METRICS_CONFIRMED"
+      ]
+    },
+    "payment-service": {
+      "exchange": "cab.payment.events",
+      "publishOnlyOwnExchange": true,
+      "routingKeys": [
+        "notification.v2.PAYMENT_SUCCESS",
+        "notification.v2.PAYMENT_FAILED",
+        "notification.v2.PAYMENT_UNKNOWN",
+        "notification.v2.PAYMENT_REVIEW_REQUIRED"
+      ]
+    }
+  },
+  "queues": {
+    "cab.notification.v2": {
+      "consumer": "notification-service",
+      "type": "quorum",
+      "durable": true,
+      "bindings": [
+        {
+          "exchange": "cab.booking.events",
+          "routingKey": "notification.v2.*"
+        },
+        {
+          "exchange": "cab.driver.events",
+          "routingKey": "notification.v2.*"
+        },
+        {
+          "exchange": "cab.trip.events",
+          "routingKey": "notification.v2.*"
+        },
+        {
+          "exchange": "cab.payment.events",
+          "routingKey": "notification.v2.*"
+        }
+      ],
+      "deadLetterQueue": "cab.notification.v2.dlq",
+      "prefetch": 20,
+      "manualAck": true
+    },
+    "cab.customer.identity.v1": {
+      "consumer": "customer-service",
+      "type": "quorum",
+      "durable": true,
+      "bindings": [
+        {
+          "exchange": "cab.identity.events",
+          "routingKey": "domain.v1.ACCOUNT_ACCESS_CHANGED"
+        },
+        {
+          "exchange": "cab.identity.events",
+          "routingKey": "domain.v1.ACCOUNT_PROVISIONED"
+        }
+      ],
+      "deadLetterQueue": "cab.customer.identity.v1.dlq",
+      "prefetch": 20,
+      "manualAck": true
+    },
+    "cab.driver.identity.v1": {
+      "consumer": "driver-service",
+      "type": "quorum",
+      "durable": true,
+      "bindings": [
+        {
+          "exchange": "cab.identity.events",
+          "routingKey": "domain.v1.ACCOUNT_ACCESS_CHANGED"
+        },
+        {
+          "exchange": "cab.identity.events",
+          "routingKey": "domain.v1.ACCOUNT_PROVISIONED"
+        }
+      ],
+      "deadLetterQueue": "cab.driver.identity.v1.dlq",
+      "prefetch": 20,
+      "manualAck": true
+    },
+    "cab.booking.identity.v1": {
+      "consumer": "booking-service",
+      "type": "quorum",
+      "durable": true,
+      "bindings": [
+        {
+          "exchange": "cab.identity.events",
+          "routingKey": "domain.v1.ACCOUNT_ACCESS_CHANGED"
+        },
+        {
+          "exchange": "cab.identity.events",
+          "routingKey": "domain.v1.ACCOUNT_PROVISIONED"
+        }
+      ],
+      "deadLetterQueue": "cab.booking.identity.v1.dlq",
+      "prefetch": 20,
+      "manualAck": true
+    },
+    "cab.trip.identity.v1": {
+      "consumer": "trip-service",
+      "type": "quorum",
+      "durable": true,
+      "bindings": [
+        {
+          "exchange": "cab.identity.events",
+          "routingKey": "domain.v1.ACCOUNT_ACCESS_CHANGED"
+        },
+        {
+          "exchange": "cab.identity.events",
+          "routingKey": "domain.v1.ACCOUNT_PROVISIONED"
+        }
+      ],
+      "deadLetterQueue": "cab.trip.identity.v1.dlq",
+      "prefetch": 20,
+      "manualAck": true
+    },
+    "cab.payment.identity.v1": {
+      "consumer": "payment-service",
+      "type": "quorum",
+      "durable": true,
+      "bindings": [
+        {
+          "exchange": "cab.identity.events",
+          "routingKey": "domain.v1.ACCOUNT_ACCESS_CHANGED"
+        },
+        {
+          "exchange": "cab.identity.events",
+          "routingKey": "domain.v1.ACCOUNT_PROVISIONED"
+        }
+      ],
+      "deadLetterQueue": "cab.payment.identity.v1.dlq",
+      "prefetch": 20,
+      "manualAck": true
+    },
+    "cab.rating.identity.v1": {
+      "consumer": "rating-service",
+      "type": "quorum",
+      "durable": true,
+      "bindings": [
+        {
+          "exchange": "cab.identity.events",
+          "routingKey": "domain.v1.ACCOUNT_ACCESS_CHANGED"
+        },
+        {
+          "exchange": "cab.identity.events",
+          "routingKey": "domain.v1.ACCOUNT_PROVISIONED"
+        }
+      ],
+      "deadLetterQueue": "cab.rating.identity.v1.dlq",
+      "prefetch": 20,
+      "manualAck": true
+    },
+    "cab.notification.identity.v1": {
+      "consumer": "notification-service",
+      "type": "quorum",
+      "durable": true,
+      "bindings": [
+        {
+          "exchange": "cab.identity.events",
+          "routingKey": "domain.v1.ACCOUNT_ACCESS_CHANGED"
+        },
+        {
+          "exchange": "cab.identity.events",
+          "routingKey": "domain.v1.ACCOUNT_PROVISIONED"
+        }
+      ],
+      "deadLetterQueue": "cab.notification.identity.v1.dlq",
+      "prefetch": 20,
+      "manualAck": true
+    },
+    "cab.trip.gps.v1": {
+      "consumer": "trip-service",
+      "type": "quorum",
+      "durable": true,
+      "bindings": [
+        {
+          "exchange": "cab.driver.events",
+          "routingKey": "domain.v1.DRIVER_LOCATION_RECORDED"
+        }
+      ],
+      "deadLetterQueue": "cab.trip.gps.v1.dlq",
+      "prefetch": 20,
+      "manualAck": true
+    },
+    "cab.payment.metrics.v1": {
+      "consumer": "payment-service",
+      "type": "quorum",
+      "durable": true,
+      "bindings": [
+        {
+          "exchange": "cab.trip.events",
+          "routingKey": "domain.v1.JOURNEY_METRICS_CONFIRMED"
+        }
+      ],
+      "deadLetterQueue": "cab.payment.metrics.v1.dlq",
+      "prefetch": 20,
+      "manualAck": true
+    }
+  }
+}

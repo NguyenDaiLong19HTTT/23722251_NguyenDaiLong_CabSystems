@@ -1,0 +1,1755 @@
+openapi: 3.0.3
+info:
+  title: CAB System - Notification API
+  version: 1.3.0
+  description: >
+    API thông báo trong ứng dụng của CAB System, theo bản SRS 8 MS 1.3 và Micro_Service_Design 1.3. Bản xem
+    trước cần duyệt; chưa xác nhận triển khai. Giữ API công khai, đổi message sang schemaVersion=2 và chuyển
+    POST nội bộ thành ca sử dụng Notification.
+
+
+    1. Phạm vi
+
+    - Người dùng xem hộp thư của chính tài khoản đang đăng nhập.
+
+    - Người dùng đánh dấu một thông báo của mình là đã đọc.
+
+    - Notification Service nhận sự kiện nghiệp vụ qua RabbitMQ.
+
+    - Hỗ trợ chống trùng, thử lại và phục hồi xử lý có kiểm soát.
+
+    - Phiên bản này chỉ hỗ trợ kênh IN_APP.
+
+    - Không bao gồm SMS, email, push notification hoặc gửi OTP.
+
+    - Không sử dụng hộp thư IN_APP để chứng minh OTP đã được gửi.
+
+
+    2. Kiến trúc
+
+    - Notification là một service độc lập.
+
+    - Notification Service sở hữu cơ sở dữ liệu cab_notification.
+
+    - Không đọc hoặc ghi database của MS khác; chỉ ghi cab_notification.
+
+    - Booking, Trip, Payment và Driver ghi nghiệp vụ/outbox trong transaction cục bộ của mình.
+
+    - Worker của từng producer chuyển outbox đến RabbitMQ; giữ nguyên eventId khi gửi lại.
+
+    - Notification Service tiếp nhận sự kiện vào inbox bền vững.
+
+    - Worker của Notification Service tạo và công bố thông báo.
+
+    - Lỗi thông báo không đảo ngược nghiệp vụ đã hoàn tất tại MS nguồn.
+
+    - API người dùng đi qua API Gateway.
+
+    - Gateway chuyển REST sang gRPC Notification. Worker gọi ca sử dụng nội bộ, không mở REST tạo thông báo.
+
+
+    3. Tiếp nhận sự kiện qua RabbitMQ
+
+    - Sử dụng exchange, queue và message có cấu hình bền vững phù hợp.
+
+    - Publisher sử dụng publisher confirms và xử lý trường hợp không có route.
+
+    - Không đánh dấu outbox đã chuyển thành công khi broker chưa xác nhận
+      hoặc sự kiện không được định tuyến đến queue dự kiến.
+    - Khi gửi lại, giữ nguyên eventId và nội dung sự kiện.
+
+    - Consumer sử dụng manual acknowledgement.
+
+    - Chỉ ACK sau khi đã commit inbox cùng công việc xử lý bền vững,
+      hoặc xác định sự kiện trùng hợp lệ đã được lưu trước đó.
+    - Crash sau commit nhưng trước ACK được xử lý bằng dedupe khi nhận lại.
+
+    - Không tuyên bố RabbitMQ tự bảo đảm exactly-once.
+
+    - Lỗi tạm thời được thử lại với backoff và giới hạn có cấu hình.
+
+    - Sự kiện không hợp lệ, xung đột hoặc hết giới hạn thử lại được đưa
+      vào khu vực lỗi hoặc DLQ bền vững để kiểm tra.
+    - Không ACK rồi bỏ mất sự kiện trước khi lưu được dữ liệu lỗi cần thiết.
+
+    - Không requeue tức thời vô hạn gây vòng lặp tiêu thụ tài nguyên.
+
+
+    4. Danh tính nguồn sự kiện
+
+    - Broker sử dụng tài khoản và quyền publish/consume tách biệt.
+
+    - Mỗi producer có credential/route riêng, chỉ phát các loại sự kiện được ánh xạ trong hợp đồng.
+
+    - Trường source trong payload không tự chứng minh danh tính nguồn.
+
+    - Consumer kiểm tra nguồn qua cấu hình broker, quyền truy cập,
+      route được phép và hợp đồng sự kiện.
+    - Kiểm tra schemaVersion, eventType, referenceType và tập người nhận.
+
+    - Không chấp nhận message do client công khai tự phát.
+
+    - Không sử dụng trạng thái hiện tại của đối tượng để dựng lại một
+      sự kiện lịch sử khi không có bằng chứng sự kiện tương ứng.
+
+    5. Chống trùng
+
+    - Inbox có khóa duy nhất eventId trên toàn hệ thống.
+
+    - eventId phải có namespace nguồn hoặc cơ chế bảo đảm duy nhất tương đương.
+
+    - Cùng eventId và cùng nội dung chuẩn hóa là sự kiện gửi lại hợp lệ.
+
+    - Cùng eventId nhưng nội dung khác phải được giữ lại để kiểm tra,
+      không ghi đè sự kiện đã tiếp nhận.
+    - Một thông báo có khóa duy nhất gồm eventId, recipientAccountId và channel.
+
+    - Một sự kiện có nhiều người nhận tạo các thông báo riêng cho từng người.
+
+    - Mỗi lần thử công bố giữ nguyên notificationId.
+
+    - Gửi lại không đặt isRead về false và không thay readAt.
+
+    - Không tạo eventId mới chỉ vì một lần gửi hoặc xử lý trước đó bị lỗi.
+
+
+    6. Trạng thái công bố
+
+    - PENDING: đã tiếp nhận bền vững, chưa công bố vào hộp thư.
+
+    - SENT: đã công bố bền vững vào hộp thư của người nhận.
+
+    - FAILED: chưa công bố được sau khi hết số lần thử theo cấu hình.
+
+    - SENT không có nghĩa trình duyệt hoặc người dùng đã nhận và đọc.
+
+    - isRead và readAt chỉ phản ánh thao tác đánh dấu đọc.
+
+    - Ghi nội dung, publishedAt và SENT trong một transaction.
+
+    - Sau khi SENT, không sửa nội dung lịch sử theo trạng thái mới của đối tượng.
+
+    - Nếu cần thông báo diễn biến mới, tạo sự kiện nghiệp vụ mới.
+
+    - Kênh cập nhật tức thời, nếu bổ sung, chỉ hỗ trợ làm mới giao diện.
+
+    - Lỗi cập nhật tức thời không đổi SENT thành FAILED.
+
+    - Người dùng vẫn có thể lấy thông báo SENT bằng GET.
+
+
+    7. Phân quyền
+
+    - CUSTOMER, DRIVER và OPERATOR được đọc hộp thư của chính mình.
+
+    - Tài khoản phải ACTIVE và session còn hiệu lực.
+
+    - DRIVER đang chờ duyệt hoặc bị từ chối hồ sơ vẫn được đọc hộp thư
+      nếu tài khoản và session còn hợp lệ.
+    - Không yêu cầu Driver APPROVED, AVAILABLE hoặc đang online để đọc thông báo.
+
+    - OPERATOR không được đọc hộp thư của người khác qua API này.
+
+    - Lời gọi gRPC nội bộ xác minh mTLS/SAN và allowlist theo contracts/SECURITY.md.
+
+    - User JWT không được dùng thay danh tính dịch vụ mTLS.
+
+    - JWT phải được kiểm tra chữ ký, thuật toán cho phép, issuer,
+      audience, thời hạn và trạng thái session.
+    - Xác minh Account/Session hiện tại với Identity qua gRPC đã xác thực; không đọc DB Identity.
+
+    - Không tin header danh tính có thể do client tự cung cấp.
+
+    - Không thể xác minh quyền do phụ thuộc tạm thời lỗi thì trả 503,
+      không bỏ qua bước kiểm tra.
+
+    8. Riêng tư và an toàn hiển thị
+
+    - Không đưa token, mật khẩu, OTP, chữ ký thanh toán hoặc dữ liệu thẻ
+      vào thông báo, event snapshot hoặc log thông thường.
+    - Không nhúng vị trí GPS trực tiếp hoặc hồ sơ cá nhân đầy đủ.
+
+    - Nội dung được tạo từ template phía server.
+
+    - Không nhận title hoặc message tùy ý từ API tạo thông báo.
+
+    - title và message là văn bản thuần.
+
+    - Giao diện phải hiển thị dưới dạng text và encode theo ngữ cảnh.
+
+    - Không thực thi nội dung thông báo như HTML hoặc script.
+
+    - Query và thao tác dữ liệu phải được tham số hóa.
+
+    - Khi mở đối tượng tham chiếu, API nghiệp vụ phải kiểm tra lại quyền.
+
+    - Sở hữu thông báo không tự cấp quyền truy cập đối tượng tham chiếu.
+
+    - Nội dung mô tả sự kiện đã xảy ra, không bảo đảm trạng thái hiện tại.
+
+
+    9. Vận hành và rubric
+
+    - Theo dõi số sự kiện tồn đọng, độ trễ, retry, FAILED và DLQ.
+
+    - Lưu audit cho việc phục hồi hoặc xử lý lại thông báo thất bại.
+
+    - Phục hồi FAILED sử dụng cùng notificationId.
+
+    - Ca sử dụng tạo thông báo không tự phục hồi bản ghi FAILED; phục hồi phải có quyền/audit.
+
+    - API công khai có rate limit và trả 429 khi vượt hạn mức.
+
+    - Mọi response trong tài liệu này sử dụng Cache-Control: no-store.
+
+    - correlationId dùng để liên kết log qua Gateway, MS nguồn và Notification.
+
+    - Luồng RabbitMQ phải được triển khai và kiểm thử thực tế để chứng minh IPC.
+
+    - gRPC hoặc ca sử dụng nội bộ không thay thế luồng sự kiện qua RabbitMQ.
+servers:
+  - url: /v1
+    description: API công khai thông qua API Gateway
+tags:
+  - name: Notifications
+    description: Hộp thư của tài khoản đang đăng nhập
+security:
+  - bearerAuth: []
+x-rabbitmq-contract:
+  description: >
+    Phần mở rộng mô tả hợp đồng message.
+
+    Đây không phải endpoint HTTP hoặc tài liệu AsyncAPI hoàn chỉnh.
+
+
+    MS sở hữu nghiệp vụ tạo NotificationDomainEvent v2 từ kết quả đã commit.
+
+    Sự kiện được ghi trong outbox cùng transaction nghiệp vụ.
+
+
+    Consumer lưu NotificationDomainEvent vào inbox của cab_notification
+
+    cùng công việc tạo thông báo cho toàn bộ recipientAccountIds.
+
+    Sau khi commit mới ACK.
+
+
+    Worker có thể xử lý lần lượt từng người nhận.
+
+    Tiến độ phải được lưu bền vững để crash giữa chừng không làm mất
+
+    thông báo của các người nhận còn lại.
+
+    Unique constraint bảo vệ trường hợp xử lý lặp hoặc chạy đồng thời.
+
+
+    Việc consume, lưu inbox và fan-out được thực hiện trong Notification Service;
+
+    consumer không cần gọi HTTP đến chính service để hoàn thành luồng này.
+
+
+    Tên exchange, queue, routing key, số lần retry và thời gian backoff
+
+    được chốt trong cấu hình triển khai, không hard-code trong mã nghiệp vụ.
+
+
+    SchemaVersion 2 là thay đổi không tương thích với message v1 source=CAB_CORE. Producer/consumer phải triển
+    khai đồng bộ; không sửa source rồi giả coi là event mới. Nếu có dữ liệu v1 tồn đọng phải drain bằng
+    consumer v1 hoặc dùng adapter migration được duyệt, giữ nguyên eventId và bằng chứng nguồn; không publish
+    lại với ID khác. V2 không tự nhận CAB_CORE. D09 phải chốt route/version, contract test và quy trình
+    cutover trước triển khai.
+
+    Không bảo đảm thứ tự toàn cục giữa các MS. aggregateVersion chỉ so sánh trong cùng
+    source/aggregateType/aggregateId. Không bỏ thông báo lịch sử hợp lệ chỉ vì version nhỏ hơn sự kiện đã
+    nhận; hiển thị occurredAt, không đổi trạng thái nghiệp vụ từ thông báo. Lỗ hổng version cần theo dõi nhưng
+    không mặc định thiếu message, vì không phải mọi version đều phát thông báo.
+
+    Giữ inbox/dedupe qua toàn bộ thời gian có thể replay outbox/DLQ, không dọn khi còn fan-out hoặc retry.
+    Retention/backoff/giới hạn retry thuộc D08 cần chốt; replay sau dọn không được tạo thông báo lần hai.
+
+
+    DRIVER_ASSIGNED do Booking phát sau khi Trip đã kích hoạt và phân công đã commit: aggregateType=BOOKING,
+    aggregateId=bookingId, referenceType=TRIP, referenceId=tripId. Không suy ra aggregateId luôn bằng
+    referenceId. Các nhóm còn lại dùng aggregateType/referenceType tương ứng và cùng ID.
+    Identity/Customer/Rating không được phát các eventType đã liệt kê; thêm loại thông báo mới phải bổ sung
+    hợp đồng/quyền riêng, không mặc nhiên cấp quyền vì thuộc tám MS.
+  messageSchema:
+    $ref: "#/components/schemas/NotificationDomainEvent"
+  deduplicationKeys:
+    inbox:
+      - eventId
+    notification:
+      - eventId
+      - recipientAccountId
+      - channel
+  producerMatrix:
+    - source: BOOKING_SERVICE
+      aggregateType: BOOKING
+      eventTypes:
+        - BOOKING_RECEIVED
+        - BOOKING_CANCELLED
+        - DRIVER_ASSIGNED
+        - NO_DRIVER_FOUND
+    - source: BOOKING_SERVICE
+      aggregateType: TRIP_REQUEST
+      eventTypes:
+        - TRIP_REQUEST_RECEIVED
+    - source: TRIP_SERVICE
+      aggregateType: TRIP
+      eventTypes:
+        - DRIVER_ARRIVED
+        - TRIP_STARTED
+        - TRIP_COMPLETED
+        - TRIP_CANCELLED
+        - TRIP_ERROR
+        - TRIP_RECOVERED
+        - TRIP_CLOSED_ABNORMALLY
+    - source: PAYMENT_SERVICE
+      aggregateType: PAYMENT
+      eventTypes:
+        - PAYMENT_SUCCESS
+        - PAYMENT_FAILED
+        - PAYMENT_UNKNOWN
+        - PAYMENT_REVIEW_REQUIRED
+    - source: DRIVER_SERVICE
+      aggregateType: DRIVER_APPLICATION
+      eventTypes:
+        - DRIVER_APPLICATION_SUBMITTED
+        - DRIVER_APPLICATION_APPROVED
+        - DRIVER_APPLICATION_REJECTED
+paths:
+  /notifications:
+    get:
+      tags:
+        - Notifications
+      operationId: listMyNotifications
+      summary: Lấy hộp thư của tài khoản đang đăng nhập
+      description: |
+        Cho phép CUSTOMER, DRIVER và OPERATOR có tài khoản ACTIVE,
+        session còn hiệu lực.
+
+        DRIVER có hồ sơ PENDING hoặc REJECTED vẫn được sử dụng endpoint này.
+
+        recipientAccountId lấy từ danh tính đã xác thực.
+        Không nhận accountId, userId, userType hoặc recipientAccountId từ query.
+        Query parameter ngoài hợp đồng trả 400.
+
+        Chỉ trả thông báo:
+        - Thuộc tài khoản đang đăng nhập.
+        - channel=IN_APP.
+        - deliveryStatus=SENT.
+
+        Không trả PENDING hoặc FAILED.
+
+        Sắp xếp theo publishedAt giảm dần, sau đó notificationId giảm dần.
+        Phân trang keyset bằng cursor.
+        Cursor gắn với tài khoản, bộ lọc isRead và limit.
+        Cursor sai, bị sửa, khác phạm vi hoặc hết hạn trả 400.
+
+        Phân trang không phải snapshot bất biến.
+        Thông báo mới có thể được công bố và trạng thái đọc có thể thay đổi
+        giữa các lần lấy trang.
+        Giao diện tải lại trang đầu để nhận thông báo mới hoặc làm mới bộ lọc.
+
+        GET không đánh dấu đã đọc.
+        Hộp thư rỗng trả items=[] và nextCursor=null.
+
+        Nếu RabbitMQ tạm thời lỗi nhưng dữ liệu hộp thư và bước xác thực
+        vẫn truy cập được, endpoint vẫn có thể trả các thông báo đã công bố.
+      parameters:
+        - name: isRead
+          in: query
+          required: false
+          description: |
+            true: chỉ lấy đã đọc.
+            false: chỉ lấy chưa đọc.
+            Bỏ qua: lấy cả hai.
+          schema:
+            type: boolean
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Danh sách thông báo của tài khoản hiện tại
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+      x-owner-service: notification-service
+  /notifications/{notificationId}/read:
+    patch:
+      tags:
+        - Notifications
+      operationId: markMyNotificationAsRead
+      summary: Đánh dấu một thông báo của mình là đã đọc
+      description: |
+        Cho phép CUSTOMER, DRIVER và OPERATOR có tài khoản ACTIVE,
+        session còn hiệu lực.
+        Không yêu cầu Driver APPROVED hoặc đang online.
+
+        Chỉ cập nhật thông báo:
+        - Thuộc tài khoản đang đăng nhập.
+        - channel=IN_APP.
+        - deliveryStatus=SENT.
+
+        Không nhận request body.
+        Nếu gửi body, trả 400 VALIDATION_ERROR.
+        Không nhận recipientAccountId, isRead hoặc readAt từ client.
+
+        Lần đầu:
+        - Đặt isRead=true.
+        - Đặt readAt bằng thời gian máy chủ.
+        - Cập nhật nguyên tử và có điều kiện isRead=false.
+
+        Gọi lại hoặc có request đồng thời:
+        - Trả 200 với thông báo đã đọc.
+        - Giữ nguyên readAt của lần cập nhật thành công đầu tiên.
+        - Không đổi publishedAt hoặc nội dung.
+        - Không tạo thêm thông báo.
+
+        Idempotent theo notificationId và tài khoản.
+        Không yêu cầu Idempotency-Key.
+
+        Trả cùng lỗi 404 cho thông báo không tồn tại, thuộc người khác,
+        PENDING hoặc FAILED.
+
+        Đánh dấu đọc không thực hiện bất kỳ nghiệp vụ nào sau đây:
+        - Chấp nhận đề nghị chuyến đi.
+        - Xác nhận đón khách hoặc hoàn tất chuyến.
+        - Xác nhận nhận tiền.
+        - Duyệt hồ sơ tài xế.
+        - Cho tài xế online.
+
+        Các thao tác đó phải sử dụng API nghiệp vụ tương ứng.
+      parameters:
+        - $ref: "#/components/parameters/NotificationId"
+      responses:
+        "200":
+          description: Thông báo đã được đánh dấu đọc
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadNotification"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotificationNotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+      x-owner-service: notification-service
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Access token người dùng.
+        Kiểm tra chữ ký, thuật toán cho phép, issuer, audience và thời hạn.
+        Tài khoản phải ACTIVE, session chưa hết hạn hoặc bị thu hồi.
+        Người nhận được xác định từ danh tính đã xác thực.
+  headers:
+    NoStore:
+      description: Không lưu response vào bộ nhớ đệm
+      schema:
+        type: string
+        enum:
+          - no-store
+    RetryAfter:
+      description: Số giây tối thiểu nên chờ trước khi thử lại
+      schema:
+        type: integer
+        minimum: 1
+  parameters:
+    NotificationId:
+      name: notificationId
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Identifier"
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Số thông báo tối đa trong một trang
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: |
+        Cursor do server phát hành.
+        Gắn với tài khoản, isRead và limit.
+        Client không tự tạo hoặc chỉnh sửa.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 2048
+  schemas:
+    Identifier:
+      type: string
+      minLength: 1
+      maxLength: 128
+    EventId:
+      type: string
+      minLength: 1
+      maxLength: 200
+      description: |
+        Định danh ổn định, duy nhất trên toàn hệ thống.
+        Có namespace nguồn hoặc cơ chế tương đương.
+        Gửi lại cùng sự kiện phải giữ nguyên eventId.
+    NotificationChannel:
+      type: string
+      enum:
+        - IN_APP
+      description: Chỉ hỗ trợ hộp thư trong ứng dụng ở phiên bản này
+    DeliveryStatus:
+      type: string
+      enum:
+        - PENDING
+        - SENT
+        - FAILED
+    ReferenceType:
+      type: string
+      enum:
+        - BOOKING
+        - TRIP_REQUEST
+        - TRIP
+        - PAYMENT
+        - DRIVER_APPLICATION
+    NotificationEventType:
+      type: string
+      enum:
+        - BOOKING_RECEIVED
+        - BOOKING_CANCELLED
+        - DRIVER_ASSIGNED
+        - NO_DRIVER_FOUND
+        - TRIP_REQUEST_RECEIVED
+        - DRIVER_ARRIVED
+        - TRIP_STARTED
+        - TRIP_COMPLETED
+        - TRIP_CANCELLED
+        - TRIP_ERROR
+        - TRIP_RECOVERED
+        - TRIP_CLOSED_ABNORMALLY
+        - PAYMENT_SUCCESS
+        - PAYMENT_FAILED
+        - PAYMENT_UNKNOWN
+        - PAYMENT_REVIEW_REQUIRED
+        - DRIVER_APPLICATION_SUBMITTED
+        - DRIVER_APPLICATION_APPROVED
+        - DRIVER_APPLICATION_REJECTED
+      description: >
+        Quy tắc nguồn, tham chiếu và người nhận:
+
+
+        BOOKING_RECEIVED:
+
+        - referenceType=BOOKING.
+
+        - Gửi đến Account của Customer sở hữu Booking.
+
+        - Phát sau khi Booking được ghi nhận bền vững.
+
+
+        BOOKING_CANCELLED:
+
+        - referenceType=BOOKING.
+
+        - Gửi đến Account của Customer sở hữu Booking.
+
+        - Chỉ phát khi Booking chuyển CANCELLED.
+
+        - Snapshot có mã và nội dung lý do an toàn để hiển thị.
+
+        - BOOKING_CANCELLED dùng reasonCode=OTHER vì API Booking chỉ nhận reason text; reasonText lấy từ lý do
+        đã lưu, không tự tạo mã phân loại mới.
+
+        - Không dùng cho việc hủy Trip đã được tạo.
+
+
+        NO_DRIVER_FOUND:
+
+        - referenceType=BOOKING.
+
+        - Gửi đến Account của Customer sở hữu Booking.
+
+        - Chỉ phát khi Booking chuyển NO_DRIVER_FOUND.
+
+        - Không dùng cho lỗi kỹ thuật tạm thời của điều phối.
+
+
+        DRIVER_ASSIGNED:
+
+        - referenceType=TRIP.
+
+        - Gửi đến Account của Customer của Trip.
+
+        - Chỉ phát sau khi nhận chuyến và tạo Trip đã commit.
+
+
+        TRIP_REQUEST_RECEIVED:
+
+        - referenceType=TRIP_REQUEST.
+
+        - Gửi đến Account của Driver được đề nghị chuyến.
+
+        - Snapshot chứa expiresAt của đề nghị gốc.
+
+        - Thông báo đến chậm không kéo dài expiresAt.
+
+        - Client lấy trạng thái hiện tại từ Dispatch API trước khi thao tác.
+
+        - Dispatch API vẫn kiểm tra quyền, trạng thái và thời hạn khi nhận chuyến.
+
+        - Không dùng thông báo làm bộ đếm thời gian điều phối.
+
+
+        DRIVER_ARRIVED:
+
+        - referenceType=TRIP.
+
+        - Gửi đến Account của Customer.
+
+        - Phát khi Trip chuyển ARRIVED_PICKUP theo luồng thông thường.
+
+
+        TRIP_STARTED:
+
+        - referenceType=TRIP.
+
+        - Gửi đến Account của Customer.
+
+        - Phát khi Trip chuyển IN_PROGRESS theo luồng thông thường.
+
+
+        TRIP_COMPLETED:
+
+        - referenceType=TRIP.
+
+        - Gửi đến Account của Customer và Driver của Trip.
+
+        - Phát khi Trip chuyển COMPLETED.
+
+        - Không khẳng định tài nguyên đã giải phóng, Fare đã sẵn sàng hoặc Payment đã SUCCESS.
+
+
+        TRIP_CANCELLED:
+
+        - referenceType=TRIP.
+
+        - Gửi đến Account của Customer và Driver của Trip.
+
+        - Phát khi Trip chuyển CANCELLED.
+
+        - Snapshot có mã và nội dung lý do an toàn để hiển thị.
+
+        - Không đổi Booking đã DRIVER_ASSIGNED thành CANCELLED.
+
+
+        TRIP_ERROR:
+
+        - referenceType=TRIP.
+
+        - Gửi đến Account của Customer và Driver của Trip.
+
+        - Chỉ phát khi Trip chuyển vào ERROR.
+
+        - Thêm Incident khi đang ERROR không tự phát lại sự kiện này.
+
+        - Không chứa chi tiết Incident nhạy cảm.
+
+
+        TRIP_RECOVERED:
+
+        - referenceType=TRIP.
+
+        - Gửi đến Account của Customer và Driver của Trip.
+
+        - Phát khi OPERATOR khôi phục trạng thái trước ERROR.
+
+        - Không phát lại DRIVER_ARRIVED hoặc TRIP_STARTED chỉ vì khôi phục.
+
+
+        TRIP_CLOSED_ABNORMALLY:
+
+        - referenceType=TRIP.
+
+        - Gửi đến Account của Customer và Driver của Trip.
+
+        - Phát khi OPERATOR đóng Trip bất thường trong trạng thái ERROR.
+
+        - Không mô tả Trip là COMPLETED hoặc tự yêu cầu thanh toán.
+
+
+        PAYMENT_SUCCESS:
+
+        - referenceType=PAYMENT.
+
+        - Gửi đến Account của Customer và Driver của Trip tương ứng.
+
+        - Chỉ phát khi Payment được xác nhận SUCCESS.
+
+        - Snapshot chứa amount, currency và paymentAttemptId đã thành công.
+
+        - Browser redirect không phải bằng chứng thành công.
+
+        - Callback lặp không phát thêm sự kiện thành công.
+
+        - Không phát thành công chỉ vì chọn CASH.
+
+
+        PAYMENT_FAILED:
+
+        - referenceType=PAYMENT.
+
+        - Gửi đến Account của Customer sở hữu Payment.
+
+        - Phát khi attempt hiện tại được xác nhận thất bại cuối cùng
+          và Payment chuyển FAILED.
+        - Snapshot chứa paymentAttemptId liên quan.
+
+        - Mỗi attempt thất bại khác nhau có eventId riêng.
+
+        - Không phát chỉ vì timeout hoặc checkout hết hạn.
+
+        - Giao diện đọc trạng thái hiện tại trước khi cho phép retry.
+
+
+        PAYMENT_UNKNOWN:
+
+        - referenceType=PAYMENT.
+
+        - Gửi đến Account của Customer sở hữu Payment.
+
+        - Phát khi Payment chuyển UNKNOWN.
+
+        - Snapshot chứa paymentAttemptId liên quan nếu xác định được.
+
+        - Nội dung phải nêu kết quả chưa rõ, đang cần đối soát.
+
+        - Không khẳng định đã thất bại hoặc hướng dẫn trả tiền lần nữa.
+
+
+        PAYMENT_REVIEW_REQUIRED:
+
+        - referenceType=PAYMENT.
+
+        - Gửi đến Account của Customer sở hữu Payment.
+
+        - Phát khi requiresReview chuyển từ false sang true.
+
+        - Không phát lại chỉ vì callback trùng.
+
+        - Không hạ Payment SUCCESS thành FAILED hoặc UNKNOWN.
+
+        - Nội dung không khẳng định đã hoàn tiền hoặc sẽ thu thêm tiền.
+
+        - Không tự tạo TripIncident hoặc thay đổi trạng thái Trip.
+
+
+        DRIVER_APPLICATION_SUBMITTED:
+
+        - referenceType=DRIVER_APPLICATION.
+
+        - Gửi đến Account của Driver sở hữu hồ sơ.
+
+        - Driver phát sau transaction Driver/Application SUBMITTED, với accountId do Identity đã cấp và xác
+        nhận hợp lệ cho operation đăng ký.
+
+        - Không hứa transaction chung Account/Driver; thông báo chỉ xác nhận đã tiếp nhận hồ sơ, không chứng
+        minh toàn bộ cấp phát Identity đã hoàn tất.
+
+        - Người nhận chỉ đăng nhập/đọc hộp thư khi cấp phát và Account/Session đủ điều kiện.
+
+        - Nội dung cho biết đang chờ xét duyệt.
+
+        - Không khẳng định Driver đã được phép nhận chuyến.
+
+
+        DRIVER_APPLICATION_APPROVED:
+
+        - referenceType=DRIVER_APPLICATION.
+
+        - Gửi đến Account của Driver sở hữu hồ sơ.
+
+        - Phát sau khi kết quả duyệt và các cập nhật liên quan đã commit.
+
+        - Không tự đưa tài xế sang AVAILABLE.
+
+        - Tài xế phải sử dụng API online và đáp ứng điều kiện hiện tại.
+
+
+        DRIVER_APPLICATION_REJECTED:
+
+        - referenceType=DRIVER_APPLICATION.
+
+        - Gửi đến Account của Driver sở hữu hồ sơ.
+
+        - Phát sau khi kết quả từ chối đã commit.
+
+        - Snapshot có lý do từ chối an toàn để hiển thị.
+
+        - Không tự hứa chức năng nộp lại hồ sơ khi chưa thuộc phạm vi thiết kế.
+
+
+        Với sự kiện có hai người nhận:
+
+        - recipientAccountIds chứa Account của Customer và Driver.
+
+        - Mỗi người có Notification riêng và trạng thái đọc độc lập.
+
+
+        OPERATOR đọc công việc cần xử lý qua API Operations.
+
+        Không tự gửi đến toàn bộ OPERATOR nếu chưa có chính sách người nhận.
+    EventSnapshot:
+      type: object
+      additionalProperties: false
+      properties:
+        reasonCode:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Mã lý do nghiệp vụ, không chứa dữ liệu nhạy cảm
+        reasonText:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: |
+            Diễn giải lý do đã được nguồn giới hạn cho mục đích hiển thị.
+            Là văn bản thuần.
+            Không sao chép ghi chú nội bộ hoặc dữ liệu nhạy cảm không cần thiết.
+        paymentAttemptId:
+          $ref: "#/components/schemas/Identifier"
+        amount:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Số tiền VND đã được Payment MS xác nhận
+        currency:
+          type: string
+          enum:
+            - VND
+        expiresAt:
+          type: string
+          format: date-time
+          description: Thời hạn gốc của TripRequest
+      description: |
+        Snapshot tối thiểu tại thời điểm phát sinh sự kiện.
+        Không lấy dữ liệu hiện tại để ghi đè ý nghĩa sự kiện lịch sử.
+
+        Ràng buộc theo eventType:
+        - BOOKING_CANCELLED và TRIP_CANCELLED yêu cầu reasonCode, reasonText.
+        - DRIVER_APPLICATION_REJECTED yêu cầu reasonText.
+        - TRIP_REQUEST_RECEIVED yêu cầu expiresAt.
+        - PAYMENT_SUCCESS yêu cầu paymentAttemptId, amount, currency.
+        - PAYMENT_FAILED yêu cầu paymentAttemptId.
+        - amount và currency phải cùng xuất hiện nếu có sử dụng.
+
+        Producer và consumer phải kiểm tra các ràng buộc theo eventType.
+        Các trường không liên quan phải được bỏ qua khỏi payload,
+        không dùng snapshot để vận chuyển dữ liệu tùy ý.
+      allOf:
+        - anyOf:
+            - required:
+                - amount
+                - currency
+            - not:
+                anyOf:
+                  - required:
+                      - amount
+                  - required:
+                      - currency
+    NotificationDomainEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - schemaVersion
+        - eventId
+        - source
+        - eventType
+        - occurredAt
+        - referenceType
+        - referenceId
+        - recipientAccountIds
+        - snapshot
+        - correlationId
+        - aggregateType
+        - aggregateId
+        - aggregateVersion
+      properties:
+        schemaVersion:
+          type: integer
+          enum:
+            - 2
+          description: Phiên bản message, độc lập với version tài liệu OpenAPI
+        eventId:
+          $ref: "#/components/schemas/EventId"
+        source:
+          type: string
+          enum:
+            - BOOKING_SERVICE
+            - TRIP_SERVICE
+            - PAYMENT_SERVICE
+            - DRIVER_SERVICE
+          description: |
+            Nguồn nghiệp vụ của các sự kiện trong phiên bản này.
+            Không dùng riêng giá trị này để xác thực nguồn.
+        eventType:
+          $ref: "#/components/schemas/NotificationEventType"
+        occurredAt:
+          type: string
+          format: date-time
+          description: |
+            Thời điểm phát sinh sự kiện tại MS nguồn.
+            Giữ nguyên khi publish hoặc consume lại.
+        referenceType:
+          $ref: "#/components/schemas/ReferenceType"
+        referenceId:
+          $ref: "#/components/schemas/Identifier"
+        recipientAccountIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/Identifier"
+          description: |
+            Account ID, không phải Customer ID hoặc Driver ID.
+            Do nguồn nghiệp vụ có thẩm quyền xác định theo eventType.
+            Notification Service không nhận người nhận do client tự chọn.
+        snapshot:
+          $ref: "#/components/schemas/EventSnapshot"
+        correlationId:
+          type: string
+          minLength: 1
+          maxLength: 200
+        aggregateType:
+          type: string
+          enum:
+            - BOOKING
+            - TRIP_REQUEST
+            - TRIP
+            - PAYMENT
+            - DRIVER_APPLICATION
+        aggregateId:
+          $ref: "#/components/schemas/Identifier"
+        aggregateVersion:
+          type: integer
+          minimum: 1
+          description: Phiên bản aggregate tại commit tạo sự kiện, giữ nguyên khi replay; không so sánh version giữa hai
+            aggregate/MS.
+      description: |
+        Hợp đồng message qua RabbitMQ, không phải request body của API công khai.
+        Nội dung được đóng băng tại nguồn và giữ nguyên khi gửi lại.
+        Snapshot tối thiểu giúp xử lý sự kiện đến chậm mà không cần đọc
+        trực tiếp cơ sở dữ liệu của MS nguồn.
+      oneOf:
+        - properties:
+            source:
+              type: string
+              enum:
+                - BOOKING_SERVICE
+            eventType:
+              type: string
+              enum:
+                - BOOKING_RECEIVED
+            aggregateType:
+              type: string
+              enum:
+                - BOOKING
+            referenceType:
+              type: string
+              enum:
+                - BOOKING
+        - properties:
+            source:
+              type: string
+              enum:
+                - BOOKING_SERVICE
+            eventType:
+              type: string
+              enum:
+                - BOOKING_CANCELLED
+            aggregateType:
+              type: string
+              enum:
+                - BOOKING
+            referenceType:
+              type: string
+              enum:
+                - BOOKING
+            snapshot:
+              type: object
+              required:
+                - reasonCode
+                - reasonText
+        - properties:
+            source:
+              type: string
+              enum:
+                - BOOKING_SERVICE
+            eventType:
+              type: string
+              enum:
+                - DRIVER_ASSIGNED
+            aggregateType:
+              type: string
+              enum:
+                - BOOKING
+            referenceType:
+              type: string
+              enum:
+                - TRIP
+        - properties:
+            source:
+              type: string
+              enum:
+                - BOOKING_SERVICE
+            eventType:
+              type: string
+              enum:
+                - NO_DRIVER_FOUND
+            aggregateType:
+              type: string
+              enum:
+                - BOOKING
+            referenceType:
+              type: string
+              enum:
+                - BOOKING
+        - properties:
+            source:
+              type: string
+              enum:
+                - BOOKING_SERVICE
+            eventType:
+              type: string
+              enum:
+                - TRIP_REQUEST_RECEIVED
+            aggregateType:
+              type: string
+              enum:
+                - TRIP_REQUEST
+            referenceType:
+              type: string
+              enum:
+                - TRIP_REQUEST
+            snapshot:
+              type: object
+              required:
+                - expiresAt
+        - properties:
+            source:
+              type: string
+              enum:
+                - TRIP_SERVICE
+            eventType:
+              type: string
+              enum:
+                - DRIVER_ARRIVED
+            aggregateType:
+              type: string
+              enum:
+                - TRIP
+            referenceType:
+              type: string
+              enum:
+                - TRIP
+        - properties:
+            source:
+              type: string
+              enum:
+                - TRIP_SERVICE
+            eventType:
+              type: string
+              enum:
+                - TRIP_STARTED
+            aggregateType:
+              type: string
+              enum:
+                - TRIP
+            referenceType:
+              type: string
+              enum:
+                - TRIP
+        - properties:
+            source:
+              type: string
+              enum:
+                - TRIP_SERVICE
+            eventType:
+              type: string
+              enum:
+                - TRIP_COMPLETED
+            aggregateType:
+              type: string
+              enum:
+                - TRIP
+            referenceType:
+              type: string
+              enum:
+                - TRIP
+        - properties:
+            source:
+              type: string
+              enum:
+                - TRIP_SERVICE
+            eventType:
+              type: string
+              enum:
+                - TRIP_CANCELLED
+            aggregateType:
+              type: string
+              enum:
+                - TRIP
+            referenceType:
+              type: string
+              enum:
+                - TRIP
+            snapshot:
+              type: object
+              required:
+                - reasonCode
+                - reasonText
+        - properties:
+            source:
+              type: string
+              enum:
+                - TRIP_SERVICE
+            eventType:
+              type: string
+              enum:
+                - TRIP_ERROR
+            aggregateType:
+              type: string
+              enum:
+                - TRIP
+            referenceType:
+              type: string
+              enum:
+                - TRIP
+        - properties:
+            source:
+              type: string
+              enum:
+                - TRIP_SERVICE
+            eventType:
+              type: string
+              enum:
+                - TRIP_RECOVERED
+            aggregateType:
+              type: string
+              enum:
+                - TRIP
+            referenceType:
+              type: string
+              enum:
+                - TRIP
+        - properties:
+            source:
+              type: string
+              enum:
+                - TRIP_SERVICE
+            eventType:
+              type: string
+              enum:
+                - TRIP_CLOSED_ABNORMALLY
+            aggregateType:
+              type: string
+              enum:
+                - TRIP
+            referenceType:
+              type: string
+              enum:
+                - TRIP
+        - properties:
+            source:
+              type: string
+              enum:
+                - PAYMENT_SERVICE
+            eventType:
+              type: string
+              enum:
+                - PAYMENT_SUCCESS
+            aggregateType:
+              type: string
+              enum:
+                - PAYMENT
+            referenceType:
+              type: string
+              enum:
+                - PAYMENT
+            snapshot:
+              type: object
+              required:
+                - paymentAttemptId
+                - amount
+                - currency
+        - properties:
+            source:
+              type: string
+              enum:
+                - PAYMENT_SERVICE
+            eventType:
+              type: string
+              enum:
+                - PAYMENT_FAILED
+            aggregateType:
+              type: string
+              enum:
+                - PAYMENT
+            referenceType:
+              type: string
+              enum:
+                - PAYMENT
+            snapshot:
+              type: object
+              required:
+                - paymentAttemptId
+        - properties:
+            source:
+              type: string
+              enum:
+                - PAYMENT_SERVICE
+            eventType:
+              type: string
+              enum:
+                - PAYMENT_UNKNOWN
+            aggregateType:
+              type: string
+              enum:
+                - PAYMENT
+            referenceType:
+              type: string
+              enum:
+                - PAYMENT
+        - properties:
+            source:
+              type: string
+              enum:
+                - PAYMENT_SERVICE
+            eventType:
+              type: string
+              enum:
+                - PAYMENT_REVIEW_REQUIRED
+            aggregateType:
+              type: string
+              enum:
+                - PAYMENT
+            referenceType:
+              type: string
+              enum:
+                - PAYMENT
+        - properties:
+            source:
+              type: string
+              enum:
+                - DRIVER_SERVICE
+            eventType:
+              type: string
+              enum:
+                - DRIVER_APPLICATION_SUBMITTED
+            aggregateType:
+              type: string
+              enum:
+                - DRIVER_APPLICATION
+            referenceType:
+              type: string
+              enum:
+                - DRIVER_APPLICATION
+        - properties:
+            source:
+              type: string
+              enum:
+                - DRIVER_SERVICE
+            eventType:
+              type: string
+              enum:
+                - DRIVER_APPLICATION_APPROVED
+            aggregateType:
+              type: string
+              enum:
+                - DRIVER_APPLICATION
+            referenceType:
+              type: string
+              enum:
+                - DRIVER_APPLICATION
+        - properties:
+            source:
+              type: string
+              enum:
+                - DRIVER_SERVICE
+            eventType:
+              type: string
+              enum:
+                - DRIVER_APPLICATION_REJECTED
+            aggregateType:
+              type: string
+              enum:
+                - DRIVER_APPLICATION
+            referenceType:
+              type: string
+              enum:
+                - DRIVER_APPLICATION
+            snapshot:
+              type: object
+              required:
+                - reasonText
+    CreateNotificationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - eventId
+        - recipientAccountId
+        - eventType
+        - referenceType
+        - referenceId
+        - channel
+      properties:
+        eventId:
+          $ref: "#/components/schemas/EventId"
+        recipientAccountId:
+          $ref: "#/components/schemas/Identifier"
+        eventType:
+          $ref: "#/components/schemas/NotificationEventType"
+        referenceType:
+          $ref: "#/components/schemas/ReferenceType"
+        referenceId:
+          $ref: "#/components/schemas/Identifier"
+        channel:
+          $ref: "#/components/schemas/NotificationChannel"
+      description: |
+        Yêu cầu nội bộ cho một người nhận.
+        Mọi trường phải khớp sự kiện đã tiếp nhận trong inbox.
+        Không cho phép mở rộng tập người nhận hoặc thay nội dung sự kiện.
+        Không nhận title, message, trạng thái hoặc thời gian do bên gọi tự đặt.
+    NotificationReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        - notificationId
+        - eventId
+        - recipientAccountId
+        - eventType
+        - referenceType
+        - referenceId
+        - channel
+        - deliveryStatus
+        - occurredAt
+        - createdAt
+        - updatedAt
+      properties:
+        notificationId:
+          $ref: "#/components/schemas/Identifier"
+        eventId:
+          $ref: "#/components/schemas/EventId"
+        recipientAccountId:
+          $ref: "#/components/schemas/Identifier"
+        eventType:
+          $ref: "#/components/schemas/NotificationEventType"
+        referenceType:
+          $ref: "#/components/schemas/ReferenceType"
+        referenceId:
+          $ref: "#/components/schemas/Identifier"
+        channel:
+          $ref: "#/components/schemas/NotificationChannel"
+        deliveryStatus:
+          $ref: "#/components/schemas/DeliveryStatus"
+        occurredAt:
+          type: string
+          format: date-time
+          description: Thời điểm nghiệp vụ phát sinh tại nguồn
+        createdAt:
+          type: string
+          format: date-time
+          description: Thời điểm tạo Notification lần đầu
+        updatedAt:
+          type: string
+          format: date-time
+          description: Thời điểm cập nhật xử lý gần nhất
+        publishedAt:
+          type: string
+          format: date-time
+          description: Thời điểm công bố lần đầu, không đổi khi xử lý lặp
+      oneOf:
+        - required:
+            - publishedAt
+          properties:
+            deliveryStatus:
+              type: string
+              enum:
+                - SENT
+        - properties:
+            deliveryStatus:
+              type: string
+              enum:
+                - PENDING
+                - FAILED
+          not:
+            required:
+              - publishedAt
+      description: |
+        Kết quả dành cho dịch vụ nội bộ.
+        Không trả trạng thái đọc, nội dung inbox thô hoặc lỗi hạ tầng chi tiết.
+        Trường không áp dụng được bỏ khỏi response, không trả null.
+    PendingNotificationReceipt:
+      allOf:
+        - $ref: "#/components/schemas/NotificationReceipt"
+        - type: object
+          properties:
+            deliveryStatus:
+              type: string
+              enum:
+                - PENDING
+    Notification:
+      type: object
+      additionalProperties: false
+      required:
+        - notificationId
+        - eventId
+        - recipientAccountId
+        - eventType
+        - referenceType
+        - referenceId
+        - channel
+        - deliveryStatus
+        - title
+        - message
+        - isRead
+        - occurredAt
+        - createdAt
+        - publishedAt
+      properties:
+        notificationId:
+          $ref: "#/components/schemas/Identifier"
+        eventId:
+          $ref: "#/components/schemas/EventId"
+        recipientAccountId:
+          $ref: "#/components/schemas/Identifier"
+        eventType:
+          $ref: "#/components/schemas/NotificationEventType"
+        referenceType:
+          $ref: "#/components/schemas/ReferenceType"
+        referenceId:
+          $ref: "#/components/schemas/Identifier"
+        channel:
+          $ref: "#/components/schemas/NotificationChannel"
+        deliveryStatus:
+          type: string
+          enum:
+            - SENT
+          description: Hộp thư người dùng chỉ chứa thông báo đã công bố
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Tiêu đề văn bản thuần do template phía server tạo
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: |
+            Nội dung văn bản thuần.
+            Client không được thực thi như HTML hoặc script.
+            Mô tả sự kiện đã xảy ra, không bảo đảm trạng thái hiện tại.
+            Không chứa dữ liệu nhạy cảm hoặc thông tin nội bộ không cần thiết.
+        isRead:
+          type: boolean
+          description: Đã có thao tác đánh dấu đọc hợp lệ hay chưa
+        readAt:
+          type: string
+          format: date-time
+          description: |
+            Có khi và chỉ khi isRead=true.
+            Thời gian máy chủ của lần đánh dấu đọc thành công đầu tiên.
+        occurredAt:
+          type: string
+          format: date-time
+          description: |
+            Thời điểm nghiệp vụ phát sinh tại nguồn.
+            Có thể sớm hơn thời điểm công bố nếu xử lý bị chậm.
+        createdAt:
+          type: string
+          format: date-time
+          description: Thời điểm tạo Notification lần đầu
+        publishedAt:
+          type: string
+          format: date-time
+          description: Thời điểm công bố trong hộp thư lần đầu
+      oneOf:
+        - properties:
+            isRead:
+              type: boolean
+              enum:
+                - false
+          not:
+            required:
+              - readAt
+        - required:
+            - readAt
+          properties:
+            isRead:
+              type: boolean
+              enum:
+                - true
+    ReadNotification:
+      allOf:
+        - $ref: "#/components/schemas/Notification"
+        - type: object
+          required:
+            - readAt
+          properties:
+            isRead:
+              type: boolean
+              enum:
+                - true
+    NotificationPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/Notification"
+        nextCursor:
+          type: string
+          nullable: true
+          description: |
+            Cursor trang tiếp theo.
+            null nếu không còn kết quả phù hợp tại thời điểm truy vấn.
+    ErrorDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - field
+        - message
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+          description: Thông báo an toàn để hiển thị
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - errorCode
+        - message
+        - correlationId
+      properties:
+        errorCode:
+          type: string
+          description: Mã lỗi ổn định cho client xử lý
+        message:
+          type: string
+          description: Không chứa stack trace, thông tin xác thực hoặc bí mật
+        details:
+          type: array
+          items:
+            $ref: "#/components/schemas/ErrorDetail"
+        correlationId:
+          type: string
+          description: Định danh để tra cứu log và audit liên quan
+  responses:
+    BadRequest:
+      description: |
+        Request không hợp lệ.
+        errorCode có thể là VALIDATION_ERROR, INVALID_CURSOR,
+        CURSOR_EXPIRED, INVALID_EVENT_REFERENCE hoặc UNSUPPORTED_CHANNEL.
+        Không chấp nhận trường request hoặc query parameter ngoài hợp đồng.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: |
+        UNAUTHENTICATED.
+        Thiếu token, token không hợp lệ, bị sửa hoặc hết hạn.
+        Bao gồm session hết hạn hoặc đã bị thu hồi.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: |
+        FORBIDDEN hoặc ACCOUNT_INACTIVE.
+        Danh tính đã xác thực nhưng không được sử dụng API.
+        Driver PENDING hoặc REJECTED không phải lý do từ chối hộp thư
+        nếu tài khoản vẫn ACTIVE và session hợp lệ.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ServiceUnauthorized:
+      description: |
+        UNAUTHENTICATED_SERVICE.
+        Không xác minh được danh tính dịch vụ mTLS hoặc broker credential.
+        Schema lỗi legacy, không tạo HTTP endpoint nội bộ; lỗi dependency công khai là 503.
+        Không chấp nhận user JWT thay thế.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ServiceForbidden:
+      description: |
+        SERVICE_PERMISSION_DENIED, EVENT_TYPE_NOT_ALLOWED
+        hoặc RECIPIENT_NOT_ALLOWED.
+        Dịch vụ thiếu quyền, loại sự kiện ngoài phạm vi được phép,
+        hoặc người nhận không thuộc tập người nhận của sự kiện.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    EventNotFound:
+      description: |
+        EVENT_NOT_FOUND.
+        Không tìm thấy sự kiện đã tiếp nhận hợp lệ trong inbox.
+        Chỉ trả sau khi đã xác thực và kiểm tra quyền dịch vụ.
+        Không chứng minh nghiệp vụ gốc chưa xảy ra; sự kiện có thể chưa đến.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotificationNotFound:
+      description: |
+        NOTIFICATION_NOT_FOUND.
+        Dùng cùng phản hồi khi ID không tồn tại, thuộc tài khoản khác,
+        hoặc thông báo chưa được công bố.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: |
+        EVENT_PAYLOAD_CONFLICT.
+        Nội dung không khớp sự kiện đã lưu hoặc bản ghi cùng khóa.
+        Không ghi đè sự kiện, người nhận hay thông báo đã tiếp nhận.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    TooManyRequests:
+      description: |
+        RATE_LIMIT_EXCEEDED.
+        Vượt hạn mức API công khai tại Gateway.
+        Client chờ theo Retry-After trước khi thử lại.
+        Gọi lại thao tác đánh dấu đọc không thay readAt đã ghi.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ServiceUnavailable:
+      description: |
+        SERVICE_UNAVAILABLE.
+        Thành phần cần thiết cho thao tác tạm thời không sẵn sàng.
+
+        Nếu mất kết quả POST nội bộ, gửi lại cùng eventId và nội dung.
+        Nếu mất kết quả PATCH read, có thể gọi lại cùng notificationId.
+
+        Không suy ra nghiệp vụ gốc đã thất bại.
+        Không tạo eventId hoặc notificationId mới chỉ để vượt qua lỗi.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    UnexpectedError:
+      description: |
+        INTERNAL_ERROR.
+        Không trả stack trace, chuỗi kết nối, token hoặc thông tin xác thực.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+x-internal-workflows:
+  ensureNotification:
+    owner: notification-service
+    formerOperationId: createInternalNotification
+    formerHttpPath: POST /notifications
+    transport: LOCAL_USE_CASE
+    inputSchema:
+      $ref: "#/components/schemas/CreateNotificationRequest"
+    description: Consumer lưu inbox và công việc fan-out bền vững trước ACK. Worker gọi ca sử dụng với
+      eventId/recipientAccountId/channel từ inbox đã xác minh, không nhận event giả hay nội dung tự do từ
+      client. Kiểm tra eventType/referenceType/referenceId khớp inbox và recipient thuộc tập đã lưu.
+      Unique(eventId,recipientAccountId,channel) chống tạo trùng. Tạo PENDING và job trong cùng transaction
+      cab_notification; cùng khóa trả hiện trạng, không đổi notificationId/isRead/readAt. Nội dung mâu thuẫn
+      phải cách ly/audit. FAILED không tự reset; thao tác phục hồi có kiểm soát giữ cùng ID, tăng retry
+      metadata và không đổi nội dung lịch sử. Ca sử dụng và worker dùng cùng ràng buộc. Không cần HTTP gọi vào
+      chính service; nếu phát sinh bên gọi khác phải chốt .proto/scope theo D04, không tự mở quyền cho
+      OPERATOR.
+
+x-rabbitmq-contract:
+  notificationSchema: ../contracts/events/notification-v2.schema.json
+  domainSchema: ../contracts/events/domain-v1.schema.json
+  topology: ../contracts/events/topology.json
+  semantics: ../contracts/EVENTS.md

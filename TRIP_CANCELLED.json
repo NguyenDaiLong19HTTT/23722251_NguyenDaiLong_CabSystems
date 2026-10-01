@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 2,
+  "eventId": "00000000-0000-0000-0000-000000000009",
+  "source": "TRIP_SERVICE",
+  "eventType": "TRIP_CANCELLED",
+  "aggregateType": "TRIP",
+  "aggregateId": "AGG001",
+  "aggregateVersion": 1,
+  "referenceType": "TRIP",
+  "referenceId": "AGG001",
+  "recipientAccountIds": [
+    "ACC001",
+    "ACC002"
+  ],
+  "snapshot": {
+    "reasonCode": "OTHER",
+    "reasonText": "Lý do thử nghiệm"
+  },
+  "occurredAt": "2026-10-01T10:00:00Z",
+  "correlationId": "test-correlation"
+}

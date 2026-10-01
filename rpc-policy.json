@@ -1,0 +1,296 @@
+{
+  "default": "deny",
+  "identityPrefix": "spiffe://cab.local/service/",
+  "methods": {
+    "/cab.internal.v1.IdentityInternalService/VerifyUserIdentity": {
+      "callers": [
+        "customer-service",
+        "driver-service",
+        "booking-service",
+        "trip-service",
+        "payment-service",
+        "rating-service",
+        "notification-service"
+      ],
+      "scope": "identity:user:verify",
+      "userContext": "required",
+      "deadlineMs": 1000
+    },
+    "/cab.internal.v1.IdentityInternalService/VerifyRatingUserIdentity": {
+      "callers": [
+        "rating-service"
+      ],
+      "scope": "identity:rating:verify",
+      "userContext": "required",
+      "deadlineMs": 1000
+    },
+    "/cab.internal.v1.IdentityInternalService/VerifyAccountEligibility": {
+      "callers": [
+        "booking-service",
+        "driver-service"
+      ],
+      "scope": "identity:eligibility:read",
+      "userContext": "none",
+      "deadlineMs": 1000
+    },
+    "/cab.internal.v1.IdentityInternalService/GetAccountContact": {
+      "callers": [
+        "customer-service",
+        "driver-service",
+        "trip-service"
+      ],
+      "scope": "identity:contact:read",
+      "userContext": "required",
+      "deadlineMs": 1000
+    },
+    "/cab.internal.v1.CustomerInternalService/ProvisionCustomer": {
+      "callers": [
+        "identity-service"
+      ],
+      "scope": "profile:provision",
+      "userContext": "none",
+      "deadlineMs": 2000
+    },
+    "/cab.internal.v1.CustomerInternalService/CancelCustomerProvision": {
+      "callers": [
+        "identity-service"
+      ],
+      "scope": "profile:provision",
+      "userContext": "none",
+      "deadlineMs": 2000
+    },
+    "/cab.internal.v1.CustomerInternalService/GetCustomerProvision": {
+      "callers": [
+        "identity-service"
+      ],
+      "scope": "profile:provision:read",
+      "userContext": "none",
+      "deadlineMs": 1000
+    },
+    "/cab.internal.v1.DriverInternalService/ProvisionDriver": {
+      "callers": [
+        "identity-service"
+      ],
+      "scope": "profile:provision",
+      "userContext": "none",
+      "deadlineMs": 2000
+    },
+    "/cab.internal.v1.DriverInternalService/CancelDriverProvision": {
+      "callers": [
+        "identity-service"
+      ],
+      "scope": "profile:provision",
+      "userContext": "none",
+      "deadlineMs": 2000
+    },
+    "/cab.internal.v1.DriverInternalService/GetDriverProvision": {
+      "callers": [
+        "identity-service"
+      ],
+      "scope": "profile:provision:read",
+      "userContext": "none",
+      "deadlineMs": 1000
+    },
+    "/cab.internal.v1.CustomerInternalService/AcquireGuard": {
+      "callers": [
+        "booking-service"
+      ],
+      "scope": "customer:guard:write",
+      "userContext": "none",
+      "deadlineMs": 2000
+    },
+    "/cab.internal.v1.CustomerInternalService/BindGuard": {
+      "callers": [
+        "booking-service"
+      ],
+      "scope": "customer:guard:write",
+      "userContext": "none",
+      "deadlineMs": 2000
+    },
+    "/cab.internal.v1.CustomerInternalService/RestoreBookingGuard": {
+      "callers": [
+        "booking-service"
+      ],
+      "scope": "customer:guard:write",
+      "userContext": "none",
+      "deadlineMs": 2000
+    },
+    "/cab.internal.v1.CustomerInternalService/ReleaseGuard": {
+      "callers": [
+        "booking-service",
+        "trip-service"
+      ],
+      "scope": "customer:guard:release",
+      "userContext": "none",
+      "deadlineMs": 2000
+    },
+    "/cab.internal.v1.CustomerInternalService/GetGuard": {
+      "callers": [
+        "booking-service",
+        "trip-service"
+      ],
+      "scope": "customer:guard:read",
+      "userContext": "none",
+      "deadlineMs": 1000
+    },
+    "/cab.internal.v1.DriverInternalService/FindDispatchCandidates": {
+      "callers": [
+        "booking-service"
+      ],
+      "scope": "driver:dispatch:read",
+      "userContext": "none",
+      "deadlineMs": 1500
+    },
+    "/cab.internal.v1.DriverInternalService/ReserveDriver": {
+      "callers": [
+        "booking-service"
+      ],
+      "scope": "driver:reservation:write",
+      "userContext": "none",
+      "deadlineMs": 2000
+    },
+    "/cab.internal.v1.DriverInternalService/BindReservation": {
+      "callers": [
+        "booking-service"
+      ],
+      "scope": "driver:reservation:write",
+      "userContext": "none",
+      "deadlineMs": 2000
+    },
+    "/cab.internal.v1.DriverInternalService/ReleaseReservation": {
+      "callers": [
+        "booking-service",
+        "trip-service"
+      ],
+      "scope": "driver:reservation:release",
+      "userContext": "none",
+      "deadlineMs": 2000
+    },
+    "/cab.internal.v1.DriverInternalService/GetReservation": {
+      "callers": [
+        "booking-service",
+        "trip-service"
+      ],
+      "scope": "driver:reservation:read",
+      "userContext": "none",
+      "deadlineMs": 1000
+    },
+    "/cab.internal.v1.BookingInternalService/GetAssignmentDecision": {
+      "callers": [
+        "customer-service",
+        "driver-service",
+        "trip-service"
+      ],
+      "scope": "booking:assignment:read",
+      "userContext": "none",
+      "deadlineMs": 1000
+    },
+    "/cab.internal.v1.BookingInternalService/GetBookingGuardDecision": {
+      "callers": [
+        "customer-service"
+      ],
+      "scope": "booking:guard-decision:read",
+      "userContext": "none",
+      "deadlineMs": 1000
+    },
+    "/cab.internal.v1.TripInternalService/PrepareTrip": {
+      "callers": [
+        "booking-service"
+      ],
+      "scope": "trip:preparation:write",
+      "userContext": "none",
+      "deadlineMs": 2000
+    },
+    "/cab.internal.v1.TripInternalService/CancelTripPreparation": {
+      "callers": [
+        "booking-service"
+      ],
+      "scope": "trip:preparation:write",
+      "userContext": "none",
+      "deadlineMs": 2000
+    },
+    "/cab.internal.v1.TripInternalService/ActivateTrip": {
+      "callers": [
+        "booking-service"
+      ],
+      "scope": "trip:activate",
+      "userContext": "none",
+      "deadlineMs": 4000
+    },
+    "/cab.internal.v1.TripInternalService/GetTripPreparation": {
+      "callers": [
+        "booking-service",
+        "customer-service",
+        "driver-service"
+      ],
+      "scope": "trip:preparation:read",
+      "userContext": "none",
+      "deadlineMs": 1000
+    },
+    "/cab.internal.v1.TripInternalService/GetClosureContext": {
+      "callers": [
+        "customer-service",
+        "driver-service"
+      ],
+      "scope": "trip:closure:read",
+      "userContext": "none",
+      "deadlineMs": 1000
+    },
+    "/cab.internal.v1.TripInternalService/GetTripRatingContext": {
+      "callers": [
+        "rating-service"
+      ],
+      "scope": "rating:context:read",
+      "userContext": "required",
+      "deadlineMs": 1000
+    },
+    "/cab.internal.v1.TripInternalService/GetTripPaymentContext": {
+      "callers": [
+        "payment-service"
+      ],
+      "scope": "payment:context:read",
+      "userContext": "required",
+      "deadlineMs": 1000
+    },
+    "/cab.internal.v1.TripInternalService/GetActiveTripContactContext": {
+      "callers": [
+        "identity-service"
+      ],
+      "scope": "trip:contact:read",
+      "userContext": "required",
+      "deadlineMs": 1000
+    },
+    "/cab.internal.v1.TripInternalService/GetFareContext": {
+      "callers": [
+        "payment-service"
+      ],
+      "scope": "trip:fare:read",
+      "userContext": "none",
+      "deadlineMs": 1000
+    },
+    "/cab.internal.v1.PaymentInternalService/GetPricingSnapshot": {
+      "callers": [
+        "booking-service"
+      ],
+      "scope": "pricing:snapshot:capture",
+      "userContext": "none",
+      "deadlineMs": 2000
+    },
+    "/cab.internal.v1.DriverInternalService/CancelReservation": {
+      "callers": [
+        "booking-service"
+      ],
+      "scope": "driver:reservation:cancel",
+      "userContext": "none",
+      "deadlineMs": 2000
+    },
+    "/cab.internal.v1.CustomerInternalService/CancelBookingGuard": {
+      "callers": [
+        "booking-service"
+      ],
+      "scope": "customer:guard:cancel",
+      "userContext": "none",
+      "deadlineMs": 2000
+    }
+  }
+}

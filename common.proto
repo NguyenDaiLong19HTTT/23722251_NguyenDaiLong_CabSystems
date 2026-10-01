@@ -1,0 +1,23 @@
+syntax = "proto3";
+package cab.internal.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// IDs are nonempty opaque strings. Versions/generations start at 1.
+message Command { string command_id = 1; string operation_id = 2; }
+message EntityId { string id = 1; }
+message Decimal { string value = 1; } // canonical nonnegative base-10, no exponent; never double
+message Point { double latitude = 1; double longitude = 2; }
+message Location { Point point = 1; string address = 2; }
+enum VehicleType { VEHICLE_TYPE_UNSPECIFIED = 0; STANDARD = 1; PREMIUM = 2; MOTORBIKE = 3; VAN = 4; }
+enum Role { ROLE_UNSPECIFIED = 0; CUSTOMER = 1; DRIVER = 2; OPERATOR = 3; }
+message Principal { string account_id = 1; Role role = 2; optional string customer_id = 3; optional string driver_id = 4; string session_id = 5; google.protobuf.Timestamp verified_at = 6; uint64 account_version = 7; }
+message PricingSnapshot { string pricing_version_id = 1; VehicleType vehicle_type = 2; Decimal base_fare = 3; Decimal price_per_km = 4; Decimal price_per_minute = 5; string currency = 6; google.protobuf.Timestamp accepted_at = 7; }
+message GuardRef { string customer_id = 1; string guard_id = 2; uint64 generation = 3; string booking_id = 4; }
+message ReservationRef { string reservation_id = 1; uint64 generation = 2; string assignment_id = 3; string booking_id = 4; string driver_id = 5; string vehicle_id = 6; }
+enum TripStatus { TRIP_STATUS_UNSPECIFIED = 0; DRIVER_ASSIGNED = 1; ARRIVED_PICKUP = 2; PICKED_UP = 3; IN_PROGRESS = 4; COMPLETED = 5; CANCELLED = 6; ERROR = 7; }
+message TripParties { string customer_id = 1; string customer_account_id = 2; string driver_id = 3; string driver_account_id = 4; string vehicle_id = 5; }
+message MutationReceipt { string command_id = 1; uint64 entity_version = 2; google.protobuf.Timestamp committed_at = 3; }
+// Pack in google.rpc.Status.details. Authentication origin is mandatory for auth failures.
+message ErrorDetail { string reason = 1; string field = 2; bool retryable = 3; optional uint64 current_version = 4; AuthOrigin auth_origin = 5; }
+enum AuthOrigin { AUTH_ORIGIN_UNSPECIFIED = 0; END_USER = 1; SERVICE = 2; }
