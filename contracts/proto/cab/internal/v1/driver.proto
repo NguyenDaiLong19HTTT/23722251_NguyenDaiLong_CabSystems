@@ -1,0 +1,36 @@
+syntax = "proto3";
+package cab.internal.v1;
+
+import "google/protobuf/timestamp.proto";
+import "cab/internal/v1/common.proto";
+
+service DriverInternalService {
+ rpc ProvisionDriver(ProvisionDriverRequest) returns (DriverProvision);
+ rpc GetDriverProvision(EntityId) returns (DriverProvision);
+ rpc CancelDriverProvision(CancelDriverProvisionRequest) returns (DriverProvision);
+ rpc FindDispatchCandidates(FindDispatchCandidatesRequest) returns (DispatchCandidates);
+ rpc CancelReservation(CancelReservationRequest) returns (ReservationCancellation);
+ rpc ReserveDriver(ReserveDriverRequest) returns (DriverReservation);
+ rpc GetReservation(GetReservationRequest) returns (DriverReservation);
+ rpc BindReservation(BindReservationRequest) returns (DriverReservation);
+ rpc ReleaseReservation(ReleaseReservationRequest) returns (DriverReservation);
+}
+message ProposedVehicle { VehicleType type = 1; string plate_number = 2; }
+// PII over mTLS only; encrypt license at rest; no PII in idempotency/audit payload.
+message ProvisionDriverRequest { Command command = 1; string account_id = 2; string driver_id = 3; string application_id = 4; string license_number = 5; ProposedVehicle proposed_vehicle = 6; }
+message CancelDriverProvisionRequest { Command command = 1; string account_id = 2; string driver_id = 3; }
+enum DriverProvisionState { DRIVER_PROVISION_STATE_UNSPECIFIED = 0; DRIVER_PROVISIONED = 1; DRIVER_PROVISION_CANCELLED = 2; }
+message DriverProvision { string operation_id = 1; string account_id = 2; string driver_id = 3; string application_id = 4; DriverProvisionState state = 5; }
+message FindDispatchCandidatesRequest { string booking_id = 1; Point pickup = 2; VehicleType vehicle_type = 3; uint32 radius_meters = 4; uint32 limit = 5; repeated string excluded_driver_ids = 6; }
+message DispatchCandidate { string driver_id = 1; string driver_account_id = 2; string vehicle_id = 3; uint64 driver_version = 4; uint64 vehicle_version = 5; uint32 distance_meters = 6; google.protobuf.Timestamp location_recorded_at = 7; }
+message DispatchCandidates { repeated DispatchCandidate candidates = 1; google.protobuf.Timestamp as_of = 2; }
+message ReserveDriverRequest { Command command = 1; string assignment_id = 2; string booking_id = 3; string driver_id = 4; string vehicle_id = 5; VehicleType vehicle_type = 6; uint64 expected_driver_version = 7; uint64 expected_vehicle_version = 8; }
+message GetReservationRequest { string assignment_id = 1; }
+message BindReservationRequest { Command command = 1; ReservationRef reservation = 2; string trip_id = 3; }
+message ReleaseReservationRequest { Command command = 1; ReservationRef reservation = 2; optional string trip_id = 3; optional string closure_operation_id = 4; }
+enum ReservationState { RESERVATION_STATE_UNSPECIFIED = 0; HELD = 1; BOUND = 2; RELEASED = 3; }
+message DriverReservation { ReservationRef reservation = 1; ReservationState state = 2; optional string trip_id = 3; uint64 version = 4; google.protobuf.Timestamp updated_at = 5; }
+
+// Create tombstone even when ReserveDriver has not arrived; serialize on assignment_id.
+message CancelReservationRequest { Command command = 1; string assignment_id = 2; string booking_id = 3; string trip_id = 4; }
+message ReservationCancellation { string assignment_id = 1; string booking_id = 2; string trip_id = 3; google.protobuf.Timestamp cancelled_at = 4; }

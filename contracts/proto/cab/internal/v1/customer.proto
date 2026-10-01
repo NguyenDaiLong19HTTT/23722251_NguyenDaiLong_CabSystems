@@ -1,0 +1,32 @@
+syntax = "proto3";
+package cab.internal.v1;
+
+import "google/protobuf/timestamp.proto";
+import "cab/internal/v1/common.proto";
+
+service CustomerInternalService {
+ rpc ProvisionCustomer(ProvisionCustomerRequest) returns (CustomerProvision);
+ rpc GetCustomerProvision(EntityId) returns (CustomerProvision);
+ rpc CancelCustomerProvision(CancelProvisionRequest) returns (CustomerProvision);
+ rpc CancelBookingGuard(CancelBookingGuardRequest) returns (BookingGuardCancellation);
+ rpc AcquireGuard(AcquireGuardRequest) returns (CustomerGuard);
+ rpc GetGuard(GetGuardRequest) returns (CustomerGuard);
+ rpc BindGuard(BindGuardRequest) returns (CustomerGuard);
+ rpc RestoreBookingGuard(RestoreBookingGuardRequest) returns (CustomerGuard);
+ rpc ReleaseGuard(ReleaseGuardRequest) returns (CustomerGuard);
+}
+message ProvisionCustomerRequest { Command command = 1; string account_id = 2; string customer_id = 3; }
+message CancelProvisionRequest { Command command = 1; string account_id = 2; string profile_id = 3; }
+enum ProvisionState { PROVISION_STATE_UNSPECIFIED = 0; PROVISIONED = 1; PROVISION_CANCELLED = 2; }
+message CustomerProvision { string operation_id = 1; string account_id = 2; string customer_id = 3; ProvisionState state = 4; }
+message AcquireGuardRequest { Command command = 1; string customer_id = 2; string booking_id = 3; }
+message GetGuardRequest { GuardRef guard = 1; }
+message BindGuardRequest { Command command = 1; GuardRef guard = 2; string trip_id = 3; string assignment_id = 4; }
+message RestoreBookingGuardRequest { Command command = 1; GuardRef guard = 2; string trip_id = 3; string assignment_id = 4; }
+message ReleaseGuardRequest { Command command = 1; GuardRef guard = 2; optional string trip_id = 3; optional string closure_operation_id = 4; }
+enum GuardState { GUARD_STATE_UNSPECIFIED = 0; BOOKING_HELD = 1; TRIP_BOUND = 2; GUARD_RELEASED = 3; }
+message CustomerGuard { GuardRef guard = 1; GuardState state = 2; optional string trip_id = 3; optional string assignment_id = 4; uint64 version = 5; google.protobuf.Timestamp updated_at = 6; }
+
+// Fence a late AcquireGuard, even if there is no guard row yet.
+message CancelBookingGuardRequest { Command command = 1; string booking_id = 2; string customer_id = 3; }
+message BookingGuardCancellation { string booking_id = 1; string customer_id = 2; google.protobuf.Timestamp cancelled_at = 3; }

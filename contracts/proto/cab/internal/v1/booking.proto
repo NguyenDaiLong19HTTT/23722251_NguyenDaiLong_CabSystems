@@ -1,0 +1,15 @@
+syntax = "proto3";
+package cab.internal.v1;
+
+import "google/protobuf/timestamp.proto";
+import "cab/internal/v1/common.proto";
+
+service BookingInternalService {
+ rpc GetAssignmentDecision(GetAssignmentDecisionRequest) returns (AssignmentDecision);
+ rpc GetBookingGuardDecision(EntityId) returns (BookingGuardDecision);
+}
+message GetAssignmentDecisionRequest { string assignment_id = 1; }
+enum AssignmentState { ASSIGNMENT_STATE_UNSPECIFIED = 0; CLAIMED = 1; PREPARING = 2; ACTIVATING = 3; ASSIGNED = 4; COMPENSATING = 5; COMPENSATED = 6; }
+message AssignmentDecision { string assignment_id = 1; string booking_id = 2; string trip_request_id = 3; string trip_id = 4; string customer_id = 5; string driver_id = 6; string vehicle_id = 7; AssignmentState state = 8; google.protobuf.Timestamp claimed_at = 9; google.protobuf.Timestamp offer_expires_at = 10; google.protobuf.Timestamp dispatch_deadline_at = 11; bool cancel_requested = 12; uint64 version = 13; TripParties parties = 14; Location pickup = 15; Location destination = 16; PricingSnapshot pricing = 17; GuardRef guard = 18; }
+enum BookingGuardDisposition { BOOKING_GUARD_DISPOSITION_UNSPECIFIED = 0; KEEP_BOOKING_GUARD = 1; RELEASE_BOOKING_GUARD = 2; }
+message BookingGuardDecision { string booking_id = 1; string customer_id = 2; string operation_id = 3; BookingGuardDisposition disposition = 4; uint64 version = 5; }

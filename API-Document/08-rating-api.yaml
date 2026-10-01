@@ -107,15 +107,15 @@ info:
 
     6. Giao tiếp nội bộ
 
-    - Mỗi request nội bộ cần service JWT của Rating Service
+    - Mỗi request nội bộ cần mTLS xác minh SAN của Rating Service
       và user access token gốc của request đang xử lý.
-    - Service JWT dùng để xác thực dịch vụ gọi.
+    - Certificate mTLS và rpc-policy.json dùng để xác thực, phân quyền dịch vụ gọi.
 
     - User token dùng để xác minh người dùng mà dịch vụ đang phục vụ.
 
     - Không thay user token bằng accountId hoặc role do client tự khai báo.
 
-    - Identity/Trip xác minh service identity, audience riêng, scope tối thiểu và user context;
+    - Identity/Trip xác minh SAN dịch vụ và quyền RPC tối thiểu, cùng user context;
       Trip xác minh Account/Session qua Identity, không tin role/accountId tự khai báo.
     - Token chỉ truyền qua kết nối nội bộ được bảo vệ.
 
@@ -384,7 +384,7 @@ paths:
       description: |
         Chỉ DRIVER có Account ACTIVE và Session hợp lệ.
 
-        Rating Service gọi /internal/rating/identity để xác minh danh tính
+        Rating Service gọi IdentityInternalService.VerifyRatingUserIdentity qua gRPC để xác minh danh tính
         và lấy driverId từ liên kết hồ sơ đã được Identity xác nhận.
 
         Không nhận driverId, customerId hoặc accountId từ query.
@@ -959,16 +959,21 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
 x-internal-contracts:
-  status: design-only-proto-pending
-  description: Các mô tả sau thay hai REST nội bộ, không phải HTTP route và không phải .proto hoàn chỉnh. D04
-    phải định nghĩa protobuf, metadata, service identity, deadline và mapping lỗi trước triển khai. Không cài
-    HTTP endpoint cũ chỉ vì schema DTO vẫn được giữ.
+  status: protobuf-defined-implementation-pending
+  contractVersion: cab.internal.v1
+  protoFiles:
+    - ../contracts/proto/cab/internal/v1/identity.proto
+    - ../contracts/proto/cab/internal/v1/trip.proto
+  policyFile: ../contracts/rpc-policy.json
+  description: Hợp đồng wire được định nghĩa tại contracts/proto/cab/internal/v1; metadata, mTLS, deadline và lỗi
+    theo contracts/SECURITY.md và contracts/RPC.md. Các tên lowerCamel dưới đây là alias mô tả của RPC PascalCase.
+    Chưa triển khai runtime; không cài HTTP endpoint cũ chỉ vì schema DTO vẫn được giữ.
   verifyRatingUserIdentity:
     owner: identity-service
     transport: gRPC
     responseModel:
       $ref: "#/components/schemas/VerifiedRatingIdentity"
-    description: Rating gửi service identity dành cho Identity với scope xác minh danh tính tối thiểu và user
+    description: Rating dùng mTLS với allowlist RPC tại Identity và scope logic identity:rating:verify và user
       token của request hiện tại. Identity kiểm tra chữ ký/issuer/audience/expiry, Session, Account ACTIVE và
       hồ sơ đã cấp phát; trả role/accountId và mã hồ sơ đã xác nhận theo role, verifiedAt. Không cần đọc trực
       tiếp DB Customer/Driver; khi thiếu bằng chứng liên kết, xác minh qua RPC chủ sở hữu hoặc báo lỗi. Không
@@ -979,7 +984,7 @@ x-internal-contracts:
     transport: gRPC
     responseModel:
       $ref: "#/components/schemas/TripRatingContext"
-    description: Rating gửi tripId cùng service identity có audience Trip và scope rating:context:read đề xuất.
+    description: Rating gửi tripId qua mTLS xác minh đúng Trip, với quyền rating:context:read gắn SAN trong rpc-policy.json.
       Trip kiểm tra user context qua Identity, quyền CUSTOMER chủ Trip/DRIVER lịch sử/OPERATOR trước khi trả
       snapshot cục bộ tripId, tripVersion, customerId, driverId, tripStatus, completedAt nếu có. Không nhận
       principal từ client như dữ liệu đã tin. Ngoài quyền/không tồn tại cùng lỗi not-found; Trip chưa

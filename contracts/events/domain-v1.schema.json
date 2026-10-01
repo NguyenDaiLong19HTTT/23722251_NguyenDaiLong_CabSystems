@@ -1,0 +1,236 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "eventId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "source": {
+      "type": "string"
+    },
+    "eventType": {
+      "type": "string"
+    },
+    "aggregateType": {
+      "type": "string"
+    },
+    "aggregateId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "aggregateVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "causationId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "payload": {}
+  },
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "source",
+    "eventType",
+    "aggregateType",
+    "aggregateId",
+    "aggregateVersion",
+    "occurredAt",
+    "correlationId",
+    "causationId",
+    "payload"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cab:domain:1",
+  "oneOf": [
+    {
+      "properties": {
+        "source": {
+          "const": "IDENTITY_SERVICE"
+        },
+        "eventType": {
+          "const": "ACCOUNT_ACCESS_CHANGED"
+        },
+        "aggregateType": {
+          "const": "ACCOUNT"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "accountId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "accountStatus": {
+              "enum": [
+                "ACTIVE",
+                "INACTIVE",
+                "SUSPENDED"
+              ]
+            },
+            "sessionEpoch": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "accountId",
+            "accountStatus",
+            "sessionEpoch"
+          ]
+        }
+      }
+    },
+    {
+      "properties": {
+        "source": {
+          "const": "IDENTITY_SERVICE"
+        },
+        "eventType": {
+          "const": "ACCOUNT_PROVISIONED"
+        },
+        "aggregateType": {
+          "const": "ACCOUNT"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "accountId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "role": {
+              "enum": [
+                "CUSTOMER",
+                "DRIVER"
+              ]
+            },
+            "profileId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "registrationOperationId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "required": [
+            "accountId",
+            "role",
+            "profileId",
+            "registrationOperationId"
+          ]
+        }
+      }
+    },
+    {
+      "properties": {
+        "source": {
+          "const": "DRIVER_SERVICE"
+        },
+        "eventType": {
+          "const": "DRIVER_LOCATION_RECORDED"
+        },
+        "aggregateType": {
+          "const": "DRIVER"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "sampleId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "driverId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "recordedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "receivedAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "latitude": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            },
+            "longitude": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+            }
+          },
+          "required": [
+            "sampleId",
+            "driverId",
+            "recordedAt",
+            "receivedAt",
+            "latitude",
+            "longitude"
+          ]
+        }
+      }
+    },
+    {
+      "properties": {
+        "source": {
+          "const": "TRIP_SERVICE"
+        },
+        "eventType": {
+          "const": "JOURNEY_METRICS_CONFIRMED"
+        },
+        "aggregateType": {
+          "const": "TRIP"
+        },
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tripId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "metricsVersion": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "tripId",
+            "metricsVersion"
+          ]
+        }
+      }
+    }
+  ]
+}
