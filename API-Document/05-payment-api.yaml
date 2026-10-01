@@ -2,17 +2,33 @@ openapi: 3.0.3
 
 info:
   title: CAB System - Fare & Payment API
-  version: 1.2.0
+  version: 1.3.0
   description: |
-    API tính cước và thanh toán của CAB System.
+    API tính cước và thanh toán của CAB System, đối chiếu bản SRS 8 MS 1.3
+    và Micro_Service_Design 1.3. Kế thừa API 1.2.0, đây là bản xem trước cần duyệt.
+    Giữ các endpoint công khai, schema nghiệp vụ, công thức, enum và phân quyền.
+    Không bổ sung MS Billing riêng; Pricing & Payment là một trong tám MS.
+    POST reconcile nội bộ chuyển thành ca sử dụng Payment trong x-internal-workflows.
+    API này đã có GET Payment/attempt để theo dõi nên không thêm API operation trùng.
+    Nhà cung cấp và webhook vẫn là hợp đồng dự kiến, chưa xác nhận tích hợp.
+    Truy vết chính: FR10/FR11/FR12, UC07, AC05/AC06 và rubric 19/30;
+    đối chiếu thêm các mã tương ứng trong SRS khi hoàn tất bộ tài liệu.
 
     1. Phạm vi và kiến trúc
-    - Billing/Fare & Payment là module thuộc CAB Core.
-    - Trip, Fare, Payment và PaymentAttempt sử dụng cơ sở dữ liệu cab_core.
-    - Các cập nhật nghiệp vụ liên quan phải bảo đảm transaction trong CAB Core.
+    - payment-service sở hữu PricingConfig, Fare, Payment, PaymentAttempt,
+      ProviderEvent, idempotency, audit và outbox trong cab_payment.
+    - trip-service sở hữu Trip và JourneyMetrics có thẩm quyền.
+    - booking-service sở hữu snapshot giá đã chấp nhận cho Booking.
+    - Identity sở hữu Account/Session; Driver sở hữu hồ sơ tài xế.
+    - Không đọc/join database của MS khác, không có transaction xuyên DB.
+    - Các cập nhật Fare/Payment/Attempt/audit/outbox dùng transaction cab_payment.
+    - Gateway chuyển REST sang gRPC; liên dịch vụ phải có service identity,
+      scope, deadline và định danh/version theo hợp đồng D04.
+    - x-owner-service chỉ là chú thích thiết kế, không tự thực thi routing.
     - Mọi HTTP request từ bên ngoài, kể cả webhook thanh toán, đi qua API Gateway.
-    - Endpoint reconcile chỉ dành cho dịch vụ nội bộ, không công khai qua Gateway.
-    - CAB Core ghi sự kiện vào transactional outbox.
+    - Đối soát do worker Payment thực hiện qua ca sử dụng nội bộ; không có REST
+      reconcile tại Gateway hoặc cổng CAB Core riêng.
+    - Payment ghi sự kiện vào transactional outbox trong DB của mình.
     - Worker chuyển sự kiện qua RabbitMQ để Notification Service xử lý.
     - Notification lỗi không được làm mất hoặc đảo ngược thanh toán đã ghi nhận.
 
@@ -26,6 +42,18 @@ info:
     - Không thay dữ liệu hành trình còn thiếu bằng số 0.
     - Fare giữ thông tin phiên bản giá và phiên bản JourneyMetrics để truy vết.
     - Fare đã phát hành không được âm thầm sửa khi dữ liệu nguồn thay đổi.
+    - Payment nhận sự kiện Trip/JourneyMetrics qua inbox chống trùng, có source,
+      schemaVersion và aggregateVersion; không dùng event chưa xác thực làm nguồn giá.
+    - Worker lấy ngữ cảnh Trip COMPLETED và metrics CONFIRMED qua hợp đồng có
+      thẩm quyền của Trip; lấy snapshot Booking đã chấp nhận theo bookingId.
+    - Đối chiếu tripId/bookingId/customerId/driverId, metricsVersion và pricingVersionId;
+      lưu bộ đầu vào bất biến cùng Fare để có thể tính lại phục vụ kiểm tra.
+    - Dữ liệu đến sai thứ tự/thiếu thì giữ công việc phục hồi, không tạo Fare giả.
+    - Unique tripId/Fare và inbox/outbox tại Payment ngăn tạo cước/sự kiện lần hai.
+    - Nếu dữ liệu có thẩm quyền mới mâu thuẫn với Fare đã phát hành, giữ bằng chứng
+      và chặn thu mới để review; không sửa tiền âm thầm hoặc hạ Payment SUCCESS.
+    - Trip closure còn giải phóng tài nguyên không tự chặn Fare khi đủ COMPLETED
+      và metrics CONFIRMED; closure SUCCEEDED không phải bằng chứng cước sẵn sàng.
 
     3. Tiền tệ và làm tròn
     - Tiền tệ của phiên bản này là VND.
@@ -99,6 +127,16 @@ info:
     - JWT phải được kiểm tra chữ ký, thuật toán cho phép, issuer, audience,
       thời hạn, session và trạng thái tài khoản.
     - JWT bị sửa hoặc session hết hiệu lực trả 401.
+    - Payment xác minh Account/Session hiện tại qua Identity theo D04; quyền trên
+      Trip lấy từ Trip qua gRPC hoặc bản ghi quyền lịch sử đã xác nhận, không tin client.
+    - driverId lịch sử của Trip phải ánh xạ đúng accountId người gọi đã xác minh;
+      không dùng Driver/VehicleAssignment hiện tại của chuyến khác.
+    - Endpoint theo tripId xác minh quyền trước khi tiết lộ Fare/Payment có tồn tại.
+    - Không đủ dữ liệu xác minh quyền thì trả 503, không mặc định có quyền.
+    - Không yêu cầu user JWT cho webhook/đối soát của provider; Account bị khóa
+      không làm bỏ kết quả giao dịch đã gửi ra ngoài. User API vẫn kiểm tra quyền.
+    - Account lock cạnh tranh lệnh đã cấp quyền thuộc D07 cần chốt, không hứa
+      transaction atomic giữa Identity và Payment.
 
     9. Bảo mật và vận hành
     - Các response sử dụng Cache-Control: no-store.
@@ -120,6 +158,9 @@ info:
     - Header/chữ ký, thuật toán xác minh và payload webhook.
     - Mã trạng thái nhà cung cấp được ánh xạ sang trạng thái CAB.
     - Nội dung acknowledgement và chính sách retry webhook.
+    - D04: .proto và vận chuyển raw body/chữ ký từ Gateway đến Payment.
+    - D08: lưu idempotency, ProviderEvent và bằng chứng đối soát; không dọn khi
+      giao dịch còn có thể callback hoặc chưa rõ kết quả.
     - Giới hạn số tiền, thời hạn checkout và quy trình xử lý đối soát.
     - Endpoint webhook trong tài liệu này là hợp đồng dự kiến,
       cần cụ thể hóa theo nhà cung cấp trước khi triển khai.
@@ -135,24 +176,62 @@ tags:
     description: Tạo và đọc thanh toán
   - name: PaymentAttempt
     description: Lịch sử và thao tác trên các lần thanh toán
-  - name: PaymentInternal
-    description: Đối soát nội bộ CAB Core
   - name: PaymentWebhook
     description: Callback từ nhà cung cấp thanh toán
 
 security:
   - bearerAuth: []
 
+x-internal-workflows:
+  reconcilePayment:
+    owner: payment-service
+    formerOperationId: reconcilePayment
+    formerHttpPath: POST /payments/{paymentId}/reconcile
+    transport: LOCAL_USE_CASE
+    description: >-
+      Worker/scheduler có quyền trong Payment gọi reconcilePayment(paymentId) qua công việc bền
+      vững; không có REST route cho user. Không nhận status/amount/kết quả đối soát từ client. Nếu
+      một MS khác thực sự cần gọi, phải bổ sung gRPC service identity/scope payment:reconcile theo
+      D04; không mặc nhiên mở quyền cho OPERATOR.
+
+      Chạy khi Payment/attempt UNKNOWN, online PROCESSING cần tra cứu hoặc requiresReview có giao
+      dịch cần đối chiếu. Đọc tất cả attempt liên quan nếu kết quả mâu thuẫn, không chỉ
+      currentAttemptId. Giữ job/lease bền vững để tránh xử lý cạnh tranh; lease hết không chứng minh
+      provider chưa thu tiền.
+
+      Gọi API tra cứu provider ngoài transaction. Xác minh merchant/reference/amount/currency; mở
+      transaction cab_payment, kiểm tra lại version/attempt/ProviderEvent và áp dụng kết quả mà
+      không ghi đè callback mới hơn hoặc hạ SUCCESS. Ghi audit/outbox nếu thay đổi, không phát
+      PaymentSucceeded lần hai.
+
+      Không tìm thấy/timeout chỉ là FAILED nếu hợp đồng provider đủ căn cứ khẳng định không thể thu
+      tiền; nếu chưa đủ giữ UNKNOWN. Không tạo attempt, không gửi yêu cầu thu tiền, không hoàn tiền
+      tự động. Không xóa requiresReview khi mâu thuẫn chưa giải quyết. Kết quả nội bộ vẫn có thể
+      UNKNOWN/requiresReview; hoàn tất một lần tra cứu không có nghĩa thanh toán thành công. Không
+      trả checkout trong kết quả nội bộ.
+
+      Job trùng không thay merchantReference hoặc tạo giao dịch mới. Retry có backoff, deadline cảnh
+      báo và đối soát vận hành; cấu hình cụ thể D02/D08 cần duyệt. Theo dõi bằng GET Payment/attempt
+      hiện có; không tạo API tiến trình trùng.
+    businessErrors:
+      - PAYMENT_NOT_RECONCILABLE
+      - REQUEST_IN_PROGRESS
+
 paths:
   /trips/{tripId}/fare:
     get:
       tags: [Fare]
       operationId: getTripFare
+      x-owner-service: payment-service
       summary: Lấy cước cuối cùng của chuyến đi
       description: |
         Cho phép CUSTOMER sở hữu chuyến, DRIVER được giao chuyến và OPERATOR.
 
         Đây là API chỉ đọc; GET không tự tạo hoặc tính lại Fare.
+        Payment phục vụ endpoint này dù URL bắt đầu bằng /trips.
+        Không join DB Trip; lấy ngữ cảnh cần thiết qua gRPC có quyền.
+        Không xác minh được Trip/metrics thì trả 503, không suy diễn
+        TRIP_NOT_COMPLETED hoặc FARE_NOT_READY từ dữ liệu cache không xác định.
 
         Fare được tạo khi Trip COMPLETED và JourneyMetrics đã được xác nhận.
         Nếu sự kiện hoàn tất đã được ghi nhưng tác vụ tính cước chưa hoàn thành,
@@ -206,6 +285,7 @@ paths:
     post:
       tags: [Payment]
       operationId: createTripPayment
+      x-owner-service: payment-service
       summary: Tạo thanh toán cho chuyến đi
       description: |
         Chỉ CUSTOMER sở hữu chuyến được thực hiện.
@@ -217,9 +297,12 @@ paths:
         - Phương thức được yêu cầu có cấu hình hợp lệ và có thể sử dụng.
 
         Server lấy customerId, fareId, amount và currency từ dữ liệu đã xác nhận.
+        Quyền Trip được xác minh trước khi tạo; Fare và các ràng buộc chống thu trùng
+        được kiểm tra lại trong transaction Payment. Không giữ transaction DB
+        trong lúc chờ gRPC Trip/Identity.
         Client không được truyền các trường này.
 
-        Trong một transaction:
+        Trong một transaction cục bộ tại cab_payment:
         - Tạo Payment.
         - Tạo PaymentAttempt đầu tiên, attemptNumber=1.
         - Thiết lập currentAttemptId.
@@ -300,6 +383,7 @@ paths:
     get:
       tags: [Payment]
       operationId: getPaymentByTrip
+      x-owner-service: payment-service
       summary: Lấy thanh toán theo chuyến đi
       description: |
         Cho phép CUSTOMER sở hữu chuyến, DRIVER được giao chuyến và OPERATOR.
@@ -336,6 +420,7 @@ paths:
     get:
       tags: [Payment]
       operationId: getPayment
+      x-owner-service: payment-service
       summary: Lấy trạng thái thanh toán hiện tại
       description: |
         Cho phép CUSTOMER sở hữu Payment, DRIVER được giao chuyến và OPERATOR.
@@ -376,6 +461,7 @@ paths:
     get:
       tags: [PaymentAttempt]
       operationId: listPaymentAttempts
+      x-owner-service: payment-service
       summary: Xem các lần thanh toán của một Payment
       description: |
         Cho phép CUSTOMER sở hữu Payment và OPERATOR.
@@ -425,9 +511,12 @@ paths:
     post:
       tags: [PaymentAttempt]
       operationId: confirmCashPayment
+      x-owner-service: payment-service
       summary: Tài xế xác nhận đã nhận đủ tiền mặt
       description: |
         Chỉ DRIVER được giao Trip của Payment được thực hiện.
+        Đối chiếu accountId đã xác minh với Driver lịch sử của Trip qua hợp đồng
+        có thẩm quyền; không chỉ kiểm tra role DRIVER hoặc trạng thái hiện tại.
         CUSTOMER và OPERATOR trả 403.
 
         Tài xế chỉ xác nhận sau khi thực tế đã nhận đủ tiền.
@@ -441,7 +530,7 @@ paths:
         - requiresReview=false.
         - expectedVersion bằng version hiện tại.
 
-        Trong một transaction:
+        Trong một transaction cục bộ tại cab_payment:
         - Kiểm tra và khóa dữ liệu liên quan.
         - Cập nhật attempt thành SUCCESS.
         - Cập nhật Payment thành SUCCESS.
@@ -505,6 +594,7 @@ paths:
     post:
       tags: [PaymentAttempt]
       operationId: retryPayment
+      x-owner-service: payment-service
       summary: Tạo lần thanh toán tiếp theo sau thất bại đã xác định
       description: |
         Chỉ CUSTOMER sở hữu Payment được thực hiện.
@@ -523,7 +613,7 @@ paths:
         Có thể chọn lại phương thức, kể cả CASH, sau khi đáp ứng đầy đủ
         điều kiện thất bại cuối cùng.
 
-        Trong một transaction:
+        Trong một transaction cục bộ tại cab_payment:
         - Giữ nguyên Payment, Fare, amount và currency.
         - Tạo attempt mới với attemptNumber tăng một.
         - Cập nhật currentAttemptId và method theo attempt mới.
@@ -580,93 +670,22 @@ paths:
         default:
           $ref: '#/components/responses/UnexpectedError'
 
-  /payments/{paymentId}/reconcile:
-    post:
-      tags: [PaymentInternal]
-      operationId: reconcilePayment
-      summary: Đối soát kết quả thanh toán online
-      x-internal: true
-      servers:
-        - url: http://{coreHost}:{corePort}/v1
-          description: |
-            Địa chỉ nội bộ dự kiến của CAB Core.
-            Tên host và port phải khớp cấu hình Docker Compose thực tế.
-          variables:
-            coreHost:
-              default: cab-core-api
-            corePort:
-              default: '3000'
-      security:
-        - serviceBearer: []
-      description: |
-        Chỉ danh tính dịch vụ nội bộ có scope payment:reconcile được thực hiện.
-        User JWT không được thay thế service JWT.
-        Gateway phải chặn route này; x-internal không tự thực thi việc chặn.
-
-        Endpoint không nhận request body.
-        Không nhận status, amount, providerTransactionId hoặc kết quả đối soát
-        do người dùng tự cung cấp.
-
-        Được dùng khi:
-        - Payment hoặc attempt có trạng thái UNKNOWN.
-        - Thanh toán online PROCESSING cần kiểm tra kết quả.
-        - Có requiresReview và có dữ liệu giao dịch cần đối chiếu.
-
-        Tra cứu dựa trên các reference đã lưu của PaymentAttempt.
-        Nếu có kết quả mâu thuẫn giữa nhiều attempt, phải kiểm tra các attempt
-        liên quan, không chỉ nhìn currentAttemptId.
-
-        Quy trình:
-        - Đọc thông tin giao dịch cần đối soát.
-        - Gọi API tra cứu của nhà cung cấp ngoài transaction cơ sở dữ liệu.
-        - Xác minh merchant, reference, amount, currency và kết quả.
-        - Mở transaction và kiểm tra lại dữ liệu hiện tại.
-        - Áp dụng kết quả hợp lệ mà không ghi đè callback mới hơn hoặc SUCCESS.
-        - Ghi audit và outbox nếu có thay đổi nghiệp vụ.
-
-        Không tìm thấy giao dịch hoặc timeout chỉ được coi là FAILED
-        nếu hợp đồng nhà cung cấp đủ cơ sở khẳng định không thể thu tiền.
-        Nếu chưa đủ cơ sở, giữ hoặc chuyển UNKNOWN.
-
-        Không tạo attempt, không gửi yêu cầu thu tiền và không tự hoàn tiền.
-        Không tự xóa requiresReview khi vẫn còn mâu thuẫn chưa giải quyết.
-        Response không chứa checkout.
-
-        Có thể trả 200 nhưng kết quả vẫn UNKNOWN hoặc requiresReview=true.
-        200 chỉ xác nhận lần đối soát đã được xử lý.
-
-        Các lỗi 409:
-        - PAYMENT_NOT_RECONCILABLE.
-        - REQUEST_IN_PROGRESS.
-      parameters:
-        - $ref: '#/components/parameters/PaymentId'
-      responses:
-        '200':
-          $ref: '#/components/responses/PaymentReadSucceeded'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/ServiceUnauthenticated'
-        '403':
-          $ref: '#/components/responses/ServiceForbidden'
-        '404':
-          $ref: '#/components/responses/PaymentNotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-        default:
-          $ref: '#/components/responses/UnexpectedError'
-
   /payments/webhooks/{provider}:
     post:
       tags: [PaymentWebhook]
       operationId: receivePaymentWebhook
+      x-owner-service: payment-service
       summary: Nhận kết quả từ nhà cung cấp thanh toán
       security: []
       x-provider-contract-status: pending-provider-selection
       description: |
-        Callback đi từ nhà cung cấp qua API Gateway đến CAB Core.
+        Callback đi từ nhà cung cấp qua API Gateway đến payment-service.
+        Gateway giữ raw body dạng bytes và các header chữ ký cần thiết; chuyển
+        nguyên trạng trong envelope gRPC xác thực tới Payment, không parse rồi
+        serialize JSON lại trước khi xác minh. Không để client tự giả mạo metadata
+        nội bộ. Payment xác minh chữ ký provider trước khi dùng payload.
+        Transport gRPC không thay thế chữ ký provider; D04 phải có contract test
+        raw bytes/header và D02 phải chốt adapter cụ thể.
 
         security=[] chỉ bỏ yêu cầu user Bearer JWT.
         Endpoint vẫn bắt buộc xác thực theo cơ chế chữ ký của nhà cung cấp.
@@ -698,7 +717,8 @@ paths:
         - Một provider transaction không được gán cho nhiều attempt.
 
         Ghi nhận kết quả:
-        - Cập nhật PaymentAttempt, Payment, audit và outbox trong transaction.
+        - Cập nhật ProviderEvent/inbox, PaymentAttempt, Payment, audit và outbox
+          trong transaction cab_payment; không cập nhật DB Trip/Driver.
         - SUCCESS chỉ được ghi nhận sau khi kết quả đã được xác minh đầy đủ.
         - FAILED chỉ dùng cho kết quả thất bại cuối cùng.
         - Callback đang chờ xử lý không được làm SUCCESS bị hạ trạng thái.
@@ -802,15 +822,6 @@ components:
         Access token của CUSTOMER, DRIVER hoặc OPERATOR.
         Kiểm tra chữ ký, issuer, audience, thời hạn và session.
         Tài khoản phải còn quyền sử dụng API tại thời điểm xử lý.
-
-    serviceBearer:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-      description: |
-        Token danh tính dịch vụ nội bộ.
-        Phải có audience dành cho CAB Core và scope payment:reconcile.
-        Không chấp nhận user access token thay thế.
 
   parameters:
     TripId:
@@ -1412,30 +1423,6 @@ components:
         FORBIDDEN.
         Vai trò hoặc trạng thái tài khoản không được phép thực hiện thao tác.
         Đúng vai trò nhưng đối tượng ngoài phạm vi truy cập sử dụng 404.
-      headers:
-        Cache-Control:
-          $ref: '#/components/headers/NoStore'
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-
-    ServiceUnauthenticated:
-      description: |
-        UNAUTHENTICATED_SERVICE.
-        Thiếu hoặc không xác minh được danh tính dịch vụ nội bộ.
-      headers:
-        Cache-Control:
-          $ref: '#/components/headers/NoStore'
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-
-    ServiceForbidden:
-      description: |
-        FORBIDDEN_SERVICE.
-        Danh tính dịch vụ không có scope payment:reconcile.
       headers:
         Cache-Control:
           $ref: '#/components/headers/NoStore'
