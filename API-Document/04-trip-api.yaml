@@ -2,11 +2,16 @@ openapi: 3.0.3
 
 info:
   title: CAB System - Trip Execution & Tracking API
-  version: "1.2.0"
+  version: "1.3.0"
   description: |
     Đặc tả thực hiện chuyến, lịch sử, tracking, GPS và báo sự cố
-    theo SRS CAB System phiên bản 1.2,
-    đối chiếu rubric và Micro_Service_Design phiên bản 1.2.
+    theo bản SRS 8 MS phiên bản 1.3 và Micro_Service_Design phiên bản 1.3.
+    Kế thừa API 1.2.0; đây là bản xem trước cần duyệt trước khi áp dụng.
+    Giữ endpoint cũ, enum Trip, quyền, expectedVersion và dữ liệu request.
+    Bổ sung GET /trips/{tripId}/closure để theo dõi giải phóng tài nguyên.
+    Phản hồi 200 đóng Trip chỉ xác nhận trạng thái Trip và ClosureOperation
+    đã commit; không khẳng định Driver/Customer đã giải phóng hoặc Fare đã sẵn sàng.
+    Đây là thay đổi ý nghĩa hậu điều kiện cần đồng bộ SRS/test trước triển khai.
 
     Truy xuất yêu cầu:
     - BR03, BR04, BR09.
@@ -16,6 +21,7 @@ info:
     - UC04, UC06, UC09, UC11, UC12, UC13.
     - AC04, AC05, AC08, AC09, AC10, AC11, AC20.
     - NFR03, NFR04, NFR05, NFR06, NFR09, NFR11, NFR17.
+    - FR28, UC22, AC21, NFR18: phục hồi và theo dõi tiến trình đóng chuyến.
 
     Luồng trạng thái thông thường:
     DRIVER_ASSIGNED -> ARRIVED_PICKUP -> PICKED_UP
@@ -36,7 +42,10 @@ info:
     - Trip COMPLETED không đồng nghĩa Payment SUCCESS.
 
     Quy tắc:
-    - Trip được tạo bởi ca sử dụng accept của Dispatch.
+    - Booking điều phối accept; Trip MS chuẩn bị và kích hoạt Trip theo AssignmentSaga.
+    - TripPreparation chưa kích hoạt không xuất hiện trong GET/list/tracking công khai.
+    - Lệnh chuẩn bị/kích hoạt/hủy chuẩn bị dùng gRPC, assignmentId và generation;
+      tombstone ngăn kích hoạt trễ sau khi đã bù. Chi tiết .proto thuộc D04/D06.
     - Không có endpoint công khai để client tự tạo Trip.
     - Một Booking có tối đa một Trip.
     - Chỉ Driver được phân công cập nhật trạng thái thông thường.
@@ -46,8 +55,15 @@ info:
     - Booking giữ DRIVER_ASSIGNED sau khi Trip hoàn thành hoặc bị hủy.
 
     Kiến trúc:
-    - Trip, Booking, Fleet và Incident thuộc CAB Core.
-    - Các thay đổi cần nhất quán chạy trong transaction của cab_core.
+    - Trip sở hữu Trip, TripStatusHistory, Incident, TripRoutePoint,
+      JourneyMetrics, ClosureOperation và dữ liệu tracking gắn đúng Trip.
+    - Driver sở hữu DriverLocation mới nhất và quyền giữ Driver/Vehicle.
+    - Customer sở hữu CustomerActivityGuard; Payment sở hữu Fare/Payment.
+    - Identity sở hữu fullName/phone và xác minh Account/Session.
+    - Gateway nhận REST và chuyển sang gRPC; mỗi MS chỉ ghi DB của mình.
+    - Thay đổi Trip/Incident/lịch sử/outbox/idempotency dùng transaction cab_trip.
+    - Không có transaction xuyên DB Trip/Driver/Customer/Payment.
+    - x-owner-service mô tả trách nhiệm thiết kế, không thực thi routing.
     - Ghi dữ liệu nghiệp vụ, lịch sử, audit, công việc nền,
       outbox và kết quả idempotency trước khi trả thành công.
     - Worker phát sự kiện qua RabbitMQ sau commit.
@@ -62,7 +78,9 @@ info:
     - Xác thực, quyền và cấu trúc request được kiểm tra trước replay.
     - Replay hợp lệ được xử lý trước kiểm tra expectedVersion.
     - Cùng key/khác body trả 409 IDEMPOTENCY_CONFLICT.
-    - Cùng key đang xử lý trả 409 REQUEST_IN_PROGRESS.
+    - Cùng key đang xử lý transaction cục bộ trả 409 REQUEST_IN_PROGRESS.
+    - Khi đóng Trip đã commit, replay 200 đã lưu dù giải phóng tài nguyên còn chờ;
+      client theo dõi /trips/{tripId}/closure. Không dùng 202 cho trạng thái đã commit.
     - Với thao tác mới, expectedVersion cũ trả 409 TRIP_VERSION_CONFLICT.
     - Không lưu kết quả chống lặp chỉ trong Redis.
 
@@ -98,7 +116,7 @@ servers:
   - url: /v1
     description: |
       Đường dẫn cơ sở trên API Gateway.
-      Client không gọi trực tiếp cổng của CAB Core.
+      Client không gọi trực tiếp cổng microservice.
 
 tags:
   - name: Trip
@@ -116,6 +134,7 @@ paths:
     get:
       tags: [Trip]
       operationId: listMyTrips
+      x-owner-service: trip-service
       summary: Xem danh sách chuyến của tài khoản đang đăng nhập
       description: |
         FR20, UC13, AC11.
@@ -222,6 +241,7 @@ paths:
     get:
       tags: [Trip]
       operationId: getTrip
+      x-owner-service: trip-service
       summary: Xem chi tiết chuyến
       description: |
         FR08, FR20, UC06, UC13.
@@ -249,6 +269,8 @@ paths:
 
         version được dùng làm expectedVersion cho thao tác mới.
         GPS không làm thay đổi version này.
+        closedAt không chứng minh Driver/Customer đã giải phóng.
+        Xem GET /trips/{tripId}/closure để xác định tiến độ giải phóng.
 
         Lịch sử chỉ chứa chuyển trạng thái nghiệp vụ.
         Không chứa toàn bộ GPS hoặc dữ liệu thanh toán nhạy cảm.
@@ -283,6 +305,7 @@ paths:
     get:
       tags: [Tracking]
       operationId: getTripTracking
+      x-owner-service: trip-service
       summary: Xem trạng thái, vị trí và ETA của chuyến
       description: |
         FR09, UC04, AC04.
@@ -295,9 +318,15 @@ paths:
         Đây là snapshot tại thời điểm truy vấn,
         không tự mở kết nối cập nhật liên tục.
 
-        Đọc trạng thái Trip và dữ liệu vị trí trong một ảnh chụp nhất quán.
-        Không kiểm tra Trip ở một thời điểm rồi lấy GPS của chuyến mới
-        sau khi tài xế đã được giải phóng.
+        Trip đọc trạng thái và mẫu tracking đã gắn đúng tripId/assignmentId trong
+        snapshot cục bộ của cab_trip. Không lấy DriverLocation hiện tại chỉ theo
+        driverId rồi coi đó là vị trí của Trip đang được hỏi.
+        Driver bàn giao mẫu bền vững; Trip kiểm tra liên kết/thời gian trước khi lưu.
+        Snapshot này không phải transaction chung với DB Driver/Identity.
+        Sau khi lấy thông tin bổ sung/ETA qua gRPC, kiểm tra lại Trip/version trong
+        lần đọc cuối; nếu đã đóng, loại bỏ GPS/phone/ETA trước khi dựng response.
+        Mốc quyền hiển thị là snapshot cuối; không có cam kết đóng Trip và truyền
+        response trên mạng xảy ra nguyên tử. Không bao giờ gắn GPS chuyến sau vào Trip cũ.
 
         trackingStatus:
         - LIVE: Trip chưa đóng và có vị trí hợp lệ còn mới.
@@ -332,6 +361,10 @@ paths:
         Phone của tài xế là trường tùy chọn,
         chỉ trả khi liên hệ cho Trip đang hoạt động được phép.
         Không dùng endpoint tracking làm danh bạ tài xế.
+        fullName/phone lấy từ Identity theo accountId đã xác nhận của Driver;
+        thông tin xe lấy từ Driver theo vehicleId gắn Trip qua gRPC. Không join DB.
+        Không lấy được fullName/xe bắt buộc thì trả 503; thiếu phone tùy chọn thì bỏ.
+        Không lưu bản fullName/phone có thể chỉnh sửa độc lập tại Trip.
 
         Thông tin xe lấy theo vehicleId gắn với Trip,
         không theo xe đang được phân công cho tài xế ở một Trip khác.
@@ -374,6 +407,7 @@ paths:
     patch:
       tags: [Trip]
       operationId: updateTripStatus
+      x-owner-service: trip-service
       summary: Tài xế cập nhật quá trình thực hiện chuyến
       description: |
         FR08, UC06, BRu05, AC05.
@@ -403,7 +437,7 @@ paths:
         - Tăng version.
         - Ghi đúng một TripStatusHistory.
         - Ghi audit, công việc liên quan và outbox.
-        - Lưu response idempotency trong cùng transaction.
+        - Lưu response idempotency trong cùng transaction cab_trip.
         - Commit trước khi trả thành công.
 
         Timestamp:
@@ -415,13 +449,29 @@ paths:
         Không nhận các timestamp này từ client.
         Không ghi đè mốc đã có khi Trip được khôi phục từ ERROR.
 
-        Khi COMPLETED, trong cùng transaction:
-        - Đóng Trip.
-        - Giải phóng CustomerActivityGuard nếu vẫn trỏ đúng Trip.
-        - Giải phóng Driver khỏi Trip này.
-        - Driver AVAILABLE chỉ khi còn đủ điều kiện, nếu không thì OFFLINE.
-        - Ghi công việc xác nhận JourneyMetrics và tính cước.
-        - Không tự đánh dấu thanh toán thành công.
+        Khi COMPLETED, trong cùng transaction cab_trip:
+        - Đóng Trip, ghi completedAt/closedAt, version, lịch sử và outbox.
+        - Tạo ClosureOperation duy nhất cho lần đóng, lưu đích giải phóng và
+          tripId/assignmentId/version có thẩm quyền trong dữ liệu nội bộ.
+        - Ghi công việc xác nhận JourneyMetrics và kết quả idempotency.
+        - Trả 200 sau commit này; không đợi Driver/Customer/Payment hoàn tất.
+
+        Sau commit, worker phục hồi ClosureOperation:
+        - Gọi Customer giải phóng đúng guard của Trip/version đã được xác nhận.
+        - Gọi Driver giải phóng đúng Driver/Vehicle assignment/generation.
+        - Mỗi MS cập nhật nguyên tử DB của mình và trả xác nhận bền vững.
+        - Driver tự quyết định AVAILABLE nếu còn đủ điều kiện, nếu không OFFLINE.
+        - Lệnh trùng/trễ không giải phóng quyền của chuyến mới; xác nhận đã xử lý
+          phải dựa vào bằng chứng lịch sử đúng operation, không chỉ thấy Driver rảnh.
+        - Mất phản hồi thì retry/tra cứu cùng operation; không mở lại Trip đã đóng.
+        - Chưa xác nhận giải phóng thì quyền còn bị giữ, ngăn phân công/đặt mới chồng lấn.
+        - Theo dõi GET /trips/{tripId}/closure; quá deadline phải cảnh báo/đối soát.
+
+        JourneyMetrics do Trip xác nhận PENDING/CONFIRMED/REVIEW_REQUIRED.
+        Chỉ khi Trip COMPLETED và metrics CONFIRMED mới phát dữ liệu có version
+        để Payment tạo Fare idempotently theo snapshot giá của Booking.
+        Không tự đánh dấu thanh toán thành công. Closure SUCCEEDED không đồng nghĩa
+        metrics CONFIRMED, Fare đã tạo hoặc Payment SUCCESS.
 
         Chưa đủ dữ liệu tính cước:
         - Trip vẫn COMPLETED.
@@ -484,6 +534,7 @@ paths:
     post:
       tags: [Trip]
       operationId: cancelTrip
+      x-owner-service: trip-service
       summary: Hủy chuyến trước khi đón khách
       description: |
         FR19, UC12, BRu16, AC10.
@@ -518,14 +569,19 @@ paths:
         - Với key mới, kiểm tra quyền dùng reasonCode và expectedVersion.
         - Sau đó xét trạng thái hiện tại.
 
-        Khi hủy mới thành công trong cùng transaction:
-        - Trip CANCELLED.
-        - Ghi cancellation và closedAt.
-        - Tăng version, ghi lịch sử, audit và outbox.
-        - Giải phóng CustomerActivityGuard nếu vẫn trỏ đúng Trip.
-        - Giải phóng Driver khỏi Trip này.
-        - Chuyển Driver AVAILABLE nếu đủ điều kiện, nếu không thì OFFLINE.
-        - Với VEHICLE_ISSUE, không tự coi Driver/xe đủ điều kiện nhận chuyến mới.
+        Khi hủy mới thành công trong cùng transaction cab_trip:
+        - Trip CANCELLED, ghi cancellation và closedAt.
+        - Tăng version, ghi lịch sử, audit, outbox và kết quả idempotency.
+        - Tạo ClosureOperation duy nhất để giải phóng tài nguyên sau commit.
+        - Trả 200 xác nhận Trip đã hủy; chưa khẳng định tài nguyên đã được giải phóng.
+
+        Worker yêu cầu Customer và Driver giải phóng đúng tripId/version/generation
+        như luồng COMPLETED; mỗi bên ghi xác nhận bền vững trong DB riêng.
+        Driver chỉ AVAILABLE khi còn đủ điều kiện, nếu không OFFLINE.
+        Với VEHICLE_ISSUE, lệnh giải phóng phải kèm quyết định không cho tự nhận chuyến
+        mới; Driver ghi trạng thái chặn cùng transaction giải phóng, không chờ một
+        event chậm khác mới chặn xe lỗi. Hợp đồng gRPC phải cụ thể hóa theo D04/D06.
+        Xem /trips/{tripId}/closure để theo dõi; retry không tạo ClosureOperation khác.
 
         Không tính phí hủy tự động.
         Không ghi completedAt.
@@ -566,7 +622,7 @@ paths:
               reason: "Tôi không còn nhu cầu di chuyển."
       responses:
         "200":
-          description: Trip đã CANCELLED; có thể là kết quả hủy đã lưu.
+          description: Trip đã CANCELLED và tiến trình giải phóng đã ghi bền vững; có thể là replay. Không khẳng định Driver/Customer đã giải phóng; xem API closure.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
@@ -605,6 +661,7 @@ paths:
     post:
       tags: [TripIncident]
       operationId: reportTripIncident
+      x-owner-service: trip-service
       summary: Tài xế báo sự cố làm gián đoạn chuyến
       description: |
         FR15, UC06, UC09, BRu05.
@@ -620,7 +677,11 @@ paths:
         - IN_PROGRESS.
         - ERROR nhưng chưa closedAt.
 
-        Tạo IncidentRecord và thay đổi Trip trong cùng transaction.
+        Tạo IncidentRecord và thay đổi Trip trong cùng transaction cab_trip.
+        ERROR chưa đóng không phát lệnh giải phóng. Operations API 07 gọi Trip MS
+        để khôi phục/đóng ERROR bằng version; không tự ghi DB Trip hoặc Driver.
+        CLOSE_ABNORMALLY tạo ClosureOperation trong transaction đóng tại Trip,
+        vẫn giữ ERROR và closedAt, không tạo Fare; không thêm trạng thái mới.
 
         Khi Trip chưa ERROR:
         - Tạo IncidentRecord OPEN.
@@ -708,6 +769,7 @@ paths:
     put:
       tags: [Tracking]
       operationId: updateMyDriverLocation
+      x-owner-service: driver-service
       summary: Tài xế cập nhật vị trí hiện tại
       description: |
         FR18, UC11, BRu19, AC09.
@@ -732,12 +794,13 @@ paths:
         - Tọa độ hợp lệ.
         - recordedAt có múi giờ.
         - recordedAt không lớn hơn thời điểm máy chủ tiếp nhận.
-        - So sánh với vị trí đã lưu một cách nguyên tử.
+        - Driver MS so sánh với vị trí đã lưu một cách nguyên tử trong cab_driver.
 
         Nếu chưa có vị trí hoặc recordedAt mới hơn:
         - Cập nhật vị trí mới nhất.
         - Ghi receivedAt của lần tiếp nhận này.
         - locationUpdated=true.
+        - Ghi công việc bàn giao mẫu hành trình cần thiết cùng transaction Driver.
 
         Nếu recordedAt cũ hơn:
         - Không ghi đè vị trí mới nhất.
@@ -770,15 +833,34 @@ paths:
 
         Dữ liệu vị trí mới nhất và TripRoutePoint là hai mục đích khác nhau.
 
-        Nếu mẫu được dùng làm dữ liệu hành trình:
-        - Máy chủ xác định Trip phù hợp, không nhận tripId từ client.
-        - Kiểm tra thời gian mẫu thuộc khoảng hành trình của Trip.
-        - Không gắn mẫu cũ của Trip trước vào Trip mới.
-        - Chống lưu trùng điểm hành trình.
-        - Không coi locationUpdated=true là bằng chứng JourneyMetrics CONFIRMED.
+        Driver lưu envelope mẫu cần bàn giao và outbox/công việc bền vững cùng
+        transaction tiếp nhận, kể cả mẫu cũ hợp lệ cần rà soát hành trình nhưng
+        không cập nhật DriverLocation. Mỗi mẫu có định danh ổn định phía máy chủ;
+        mẫu gửi lại không tạo envelope/event mới hoặc đổi receivedAt gốc.
+        Nếu phát hiện cùng recordedAt khác tọa độ trong dữ liệu mẫu đã lưu,
+        trả LOCATION_TIMESTAMP_CONFLICT dù mẫu đó không còn là DriverLocation mới nhất.
+        Chống lặp bàn giao theo driverId/recordedAt và payload, không chỉ so mẫu mới nhất.
+
+        Nếu mẫu được dùng làm tracking/hành trình:
+        - Driver gắn ngữ cảnh assignment lịch sử đáng tin cậy theo thời gian mẫu;
+          không lấy Trip hiện tại tại lúc worker gửi lại để gắn mẫu cũ.
+        - Trip nhận event/lệnh nội bộ có service identity, kiểm tra driverId,
+          assignmentId, tripId, recordedAt và giai đoạn chuyến theo dữ liệu của mình.
+        - Không xác định duy nhất Trip phù hợp thì giữ mẫu để rà soát hoặc loại khỏi
+          hành trình, không tự gắn sang chuyến mới. Client không tự cung cấp tripId.
+        - Trip lưu inbox/TripRoutePoint và dữ liệu tracking theo Trip trong DB riêng.
+        - Mẫu trước startedAt có thể phục vụ theo dõi đón khách nếu đúng assignment,
+          nhưng không mặc nhiên là đoạn hành trình được tính cước.
+        - Mẫu đến muộn sau đóng không mở lại tracking LIVE, không sửa Fare đã phát hành.
+        - Driver trả 200 chỉ xác nhận tiếp nhận theo quy tắc GPS và bàn giao bền vững;
+          không khẳng định Trip đã tiêu thụ mẫu hoặc JourneyMetrics CONFIRMED.
+        - locationUpdated chỉ phản ánh DriverLocation mới nhất, không phải trạng thái
+          lưu TripRoutePoint. Lỗi broker/Trip được worker retry, không mất mẫu đã nhận.
 
         Mẫu gửi chậm không được tự cộng vào cước chỉ vì được nhận sau.
-        Quy tắc xác nhận hành trình và xử lý thiếu mẫu nằm trong thiết kế tính cước.
+        Quy tắc xác nhận hành trình và xử lý thiếu mẫu thuộc JourneyMetrics tại Trip.
+        D03 còn cần chốt thuật toán/ngưỡng chất lượng, thời gian ERROR và rà soát;
+        không dùng quãng đường thẳng hoặc số 0 thay dữ liệu thiếu.
       requestBody:
         required: true
         content:
@@ -816,6 +898,70 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           description: LOCATION_TIMESTAMP_CONFLICT.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/UnexpectedError"
+
+  /trips/{tripId}/closure:
+    get:
+      tags:
+        - Trip
+      operationId: getTripClosure
+      x-owner-service: trip-service
+      summary: Theo dõi giải phóng tài nguyên sau khi Trip đóng
+      description: >-
+        FR28, UC22, AC21. CUSTOMER của Trip, DRIVER được phân công và OPERATOR có quyền vận hành được
+        tra cứu; phải có Account ACTIVE và Session hợp lệ. Xác minh quyền trước khi tiết lộ tiến
+        trình. Không tồn tại/ngoài phạm vi trả 404 TRIP_NOT_FOUND. Trip được phép đọc nhưng chưa đóng
+        trả 409 TRIP_NOT_CLOSED. Trip đã đóng nhưng thiếu ClosureOperation bắt buộc là lỗi nhất quán
+        503, không trả kết quả giả.
+  
+        GET 200 là đọc tiến trình thành công, không có nghĩa status SUCCEEDED. PROCESSING nghĩa một
+        hoặc cả hai xác nhận giải phóng còn chờ; SUCCEEDED chỉ sau cả Driver (gồm Vehicle) và Customer
+        xác nhận đúng operation/assignment/version. Xác nhận có thể mất phản hồi; worker retry cùng
+        ID, không suy diễn từ trạng thái rảnh hiện tại.
+  
+        Closure không bao gồm thông báo, JourneyMetrics, Fare hoặc thanh toán. Không có endpoint
+        client tự đánh dấu giải phóng hoặc bỏ qua kiểm tra. Lease hết không tự giải phóng. Giữ
+        operation đang xử lý, retry có backoff và cảnh báo theo deadline phục hồi; không kết thúc
+        FAILED rồi bỏ tài nguyên chưa giải phóng. Retention kết quả và bằng chứng release theo D08
+        phải chốt, không dọn khi còn xử lý hoặc có lệnh trễ có thể gây tác động.
+  
+        Không trả reservationId/generation, payload nội bộ hoặc dữ liệu cá nhân. Cập nhật xác nhận
+        ClosureOperation không tăng Trip.version vì không thay đổi trạng thái điều khiển Trip.
+        CLOSE_ABNORMALLY tại API 07 dùng cùng cơ chế; API 07 cần đồng bộ.
+      parameters:
+        - $ref: "#/components/parameters/TripId"
+      responses:
+        "200":
+          description: Tiến trình giải phóng sau đóng Trip được phép đọc.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TripClosure"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/TripNotFound"
+        "409":
+          description: TRIP_NOT_CLOSED. Chuyến chưa đóng, chưa có tiến trình giải phóng.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
@@ -1535,9 +1681,78 @@ components:
               not:
                 required: [closedAt]
       description: |
-        Incident và Trip thuộc cùng kết quả transaction.
+        Incident và Trip thuộc cùng kết quả transaction cục bộ tại Trip MS.
         incident.tripId phải bằng trip.tripId.
         Replay trả snapshot đã lưu, không tự dựng lại hiện trạng.
+
+    TripClosure:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - tripId
+        - status
+        - driverRelease
+        - customerRelease
+        - createdAt
+        - updatedAt
+      properties:
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        tripId:
+          $ref: "#/components/schemas/Identifier"
+        status:
+          type: string
+          enum:
+            - PROCESSING
+            - SUCCEEDED
+        driverRelease:
+          type: string
+          enum:
+            - PENDING
+            - CONFIRMED
+          description: Xác nhận Driver MS đã giải phóng đúng Driver và Vehicle; CONFIRMED không có nghĩa tài
+            xế AVAILABLE.
+        customerRelease:
+          type: string
+          enum:
+            - PENDING
+            - CONFIRMED
+          description: Xác nhận Customer MS đã giải phóng đúng quyền của Trip này, không tác động quyền chuyến khác.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      oneOf:
+        - properties:
+            status:
+              enum:
+                - PROCESSING
+          anyOf:
+            - properties:
+                driverRelease:
+                  enum:
+                    - PENDING
+            - properties:
+                customerRelease:
+                  enum:
+                    - PENDING
+        - properties:
+            status:
+              enum:
+                - SUCCEEDED
+            driverRelease:
+              enum:
+                - CONFIRMED
+            customerRelease:
+              enum:
+                - CONFIRMED
+      description: Tiến trình hậu xử lý độc lập TripStatus. Không phát sinh PAID hoặc thay enum Trip. Kết
+        quả phản ánh xác nhận được lưu bền vững tại Trip, không phản ánh khả năng nhận chuyến hiện tại.
 
     FieldError:
       type: object
@@ -1575,6 +1790,8 @@ components:
         Đã xử lý hoặc replay kết quả cùng thao tác.
         Không tạo lại tác động nghiệp vụ.
         Dùng GET Trip nếu cần hiện trạng mới nhất.
+        Khi kết quả là COMPLETED, closure đã ghi bền vững nhưng có thể còn PROCESSING;
+        đọc GET /trips/{tripId}/closure. 200 không chứng minh Fare hoặc Payment sẵn sàng.
       headers:
         Cache-Control:
           $ref: "#/components/headers/NoStore"
