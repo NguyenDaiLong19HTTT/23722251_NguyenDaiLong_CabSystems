@@ -1,144 +1,261 @@
 openapi: 3.0.3
-
 info:
   title: CAB System - Operations and Fleet API
-  version: 1.2.0
-  description: |
+  version: 1.3.0
+  description: >
     API đăng ký tài xế, xét duyệt hồ sơ, vận hành và quản lý đội xe CAB System.
 
+
     1. Kiến trúc
-    - Identity, Operations, Fleet, Booking, Dispatch và Trip thuộc CAB Core.
-    - Các module này dùng cơ sở dữ liệu cab_core.
-    - Thao tác cần cập nhật đồng thời được thực hiện trong transaction CAB Core.
-    - Notification Service và Rating Service có cơ sở dữ liệu riêng.
+
+    - Operations là nhóm API theo vai trò, không phải MS thứ chín.
+
+    - Identity sở hữu Account/Session/OTP/RegistrationOperation; Driver sở hữu hồ sơ, xe và phân công.
+
+    - Trip sở hữu chuyến và Incident; Payment sở hữu Pricing/Fare/Payment.
+
+    - Gateway chuyển REST đến gRPC đúng chủ sở hữu; không ghi database nghiệp vụ.
+
+    - Tám MS có database logic riêng; chỉ cập nhật nguyên tử trong DB của cùng chủ sở hữu.
+
+    - x-owner-service chỉ mô tả trách nhiệm, không phải cấu hình routing thực thi.
+
     - Không truy vấn chéo cơ sở dữ liệu của các service để xử lý nghiệp vụ.
+
     - Thay đổi nghiệp vụ và outbox được ghi trong cùng transaction.
-    - Core worker chuyển sự kiện qua RabbitMQ.
+
+    - Worker từng MS chuyển outbox qua RabbitMQ; eventType/source theo API 06 v2.
+
     - Notification Service tiếp nhận sự kiện và tạo thông báo.
+
     - Lỗi gửi thông báo không đảo ngược kết quả nghiệp vụ đã commit.
+
     - Mọi HTTP request bên ngoài đi qua API Gateway.
 
+
     2. Phân quyền
+
     - /operations/* chỉ dành cho OPERATOR.
+
     - /drivers/me và /drivers/me/availability chỉ dành cho DRIVER.
+
     - POST /driver-applications là đăng ký công khai có verificationToken.
+
     - GET /driver-applications/me chỉ dành cho DRIVER sở hữu hồ sơ.
+
     - GET /drivers/{driverId} kiểm tra quyền theo quan hệ với tài xế.
+
     - /health và /ready công khai, chỉ trả trạng thái tối thiểu.
+
     - /health/services chỉ dành cho OPERATOR.
+
     - Không tạo hoặc quản lý tài khoản OPERATOR qua tài liệu này.
+
     - Không cho client tự đổi role.
+
     - JWT phải được kiểm tra chữ ký, thuật toán cho phép, issuer,
       audience, thời hạn, session và trạng thái tài khoản.
     - Token bị sửa hoặc session không hợp lệ trả 401.
+
     - Sai vai trò trả 403.
+
     - Đúng vai trò nhưng đối tượng ngoài phạm vi truy cập trả 404.
 
+
     3. Các nhóm trạng thái
+
     - Account: ACTIVE, INACTIVE, SUSPENDED.
+
     - Driver approvalStatus: PENDING_APPROVAL, APPROVED, REJECTED.
+
     - Driver driverStatus: AVAILABLE, BUSY, OFFLINE.
+
     - DriverApplication: SUBMITTED, APPROVED, REJECTED.
+
     - Vehicle: ACTIVE, INACTIVE.
+
     - Các trạng thái này có ý nghĩa riêng.
 
+
     4. Luồng đăng ký và duyệt tài xế
+
     - Người đăng ký xin và xác minh OTP qua API Auth.
+
     - API Auth cấp verificationToken có mục đích DRIVER_REGISTRATION.
+
     - POST /driver-applications sử dụng token đó để đăng ký.
-    - Tạo Account ACTIVE, Driver PENDING_APPROVAL/OFFLINE
-      và DriverApplication SUBMITTED trong một transaction.
-    - Người đăng ký có thể đăng nhập để xem hồ sơ và thông báo.
+
+    - Identity tạo Account và operation cục bộ; Driver tạo Driver PENDING_APPROVAL/OFFLINE
+      cùng Application SUBMITTED trong transaction cab_driver. Identity xác nhận đủ hồ sơ rồi hoàn tất.
+    - Chỉ khi cấp phát hoàn tất mới đăng nhập xem hồ sơ/thông báo; không tự cấp Session từ API đăng ký.
+
     - PENDING_APPROVAL hoặc REJECTED không tự làm Account mất quyền đăng nhập.
+
     - Chỉ hồ sơ APPROVED mới có thể đáp ứng điều kiện online và nhận chuyến.
+
     - Quyết định duyệt chỉ thực hiện qua API review DriverApplication.
+
     - Không duyệt bằng cách sửa trực tiếp Driver.approvalStatus.
+
     - Phiên bản này chỉ có một hồ sơ đăng ký ban đầu cho mỗi Driver.
+
     - Chỉnh sửa sau khi nộp, nộp lại hồ sơ bị từ chối và tái xét duyệt
       sau khi thay giấy phép chưa thuộc phạm vi API này.
     - Dùng trạng thái Account để chặn quyền khẩn cấp khi cần.
 
+
     5. Thông tin định danh và dữ liệu nhạy cảm
+
     - Email được trim và chuyển chữ thường.
+
     - Phone dùng E.164 theo API Auth.
+
     - Email và phone duy nhất trong toàn bộ Account.
+
     - licenseNumber được trim, chuyển chữ hoa và kiểm tra duy nhất.
+
     - Email, phone và licenseNumber được mã hóa khi lưu trữ.
+
     - Dùng HMAC lookup với khóa riêng để kiểm tra duy nhất theo giá trị chuẩn hóa.
+
     - Không giữ thêm cột plaintext để phục vụ tìm kiếm hoặc báo cáo.
+
     - Mật khẩu được hash bằng Argon2id, không mã hóa có thể giải ngược.
+
     - Khóa mã hóa, khóa HMAC và secret nằm ngoài repository.
+
     - Không trả password hash, OTP, verificationToken hoặc refresh token.
+
     - Chỉ giải mã dữ liệu cần thiết sau khi đã kiểm tra quyền.
+
     - Không ghi mật khẩu, token hoặc dữ liệu bí mật vào audit và log.
 
+
     6. Phân công xe
+
     - VehicleAssignment là nguồn dữ liệu chính của phân công hiện tại.
+
     - Driver.vehicleId và Vehicle.assignedDriverId là dữ liệu đọc suy ra.
+
     - Một Driver có tối đa một phân công xe đang hiệu lực.
+
     - Một Vehicle có tối đa một tài xế được phân công.
+
     - Ràng buộc vẫn giữ khi Driver OFFLINE hoặc Account bị khóa.
+
     - Thay phân công không thay vehicleId hoặc snapshot xe của Trip lịch sử.
+
     - Trip ERROR chưa đóng vẫn là chuyến đang hoạt động.
 
+
     7. Điều kiện AVAILABLE và nhận chuyến
+
     - Account ACTIVE.
+
     - Driver APPROVED.
+
     - Có VehicleAssignment hợp lệ và Vehicle ACTIVE.
+
     - Không có Trip đang hoạt động.
+
     - GPS hợp lệ và còn mới theo cấu hình dùng chung với Dispatch.
+
     - Ngưỡng GPS hiện tại là 30 giây tính từ recordedAt.
+
     - GPS nhận lại muộn không được làm mới tuổi của vị trí cũ.
+
     - Nhận chuyến còn phải kiểm tra loại xe, bán kính, Booking và TripRequest.
+
     - Client không được tự đặt BUSY.
 
+
     8. Idempotency và version
+
     - Các API ghi yêu cầu Idempotency-Key.
+
     - Với API đã đăng nhập, phạm vi key gồm accountId, operation và resource.
+
     - Đăng ký công khai dùng phạm vi verificationToken digest và operation.
+
     - Cùng key, cùng nội dung chuẩn hóa trả status code và body đã lưu.
+
     - Cùng key, nội dung khác trả 409 IDEMPOTENCY_CONFLICT.
-    - Request cùng key đang xử lý trả 409 REQUEST_IN_PROGRESS.
+
+    - Request cùng key đang xử lý transaction cục bộ trả 409 REQUEST_IN_PROGRESS; riêng đăng ký Driver đã có
+    operation bền vững trả 202.
+
     - Kiểm tra quyền hiện tại trước khi replay API đã đăng nhập.
+
     - Kiểm tra replay hợp lệ trước expectedVersion và điều kiện có thể thay đổi.
+
     - Response replay là snapshot ban đầu; dùng GET để đọc hiện trạng.
+
     - Không lưu plaintext mật khẩu hoặc verificationToken trong idempotency.
+
     - Fingerprint request có bí mật phải dùng cơ chế bảo vệ phù hợp,
       không dùng hash không khóa của mật khẩu để tạo thêm dữ liệu dễ dò.
     - Account, Driver, DriverApplication, Vehicle và Trip có version riêng.
+
     - Version bắt đầu từ 1 và tăng khi dữ liệu nghiệp vụ thay đổi.
+
     - GPS không tăng Driver.version hoặc Trip.version.
+
     - Version không thay thế Idempotency-Key.
+
     - Kiểm tra điều kiện, khóa dữ liệu và cập nhật phải an toàn khi chạy đồng thời.
 
+
     9. Quy tắc chung
+
     - Request body không nhận trường ngoài schema.
+
     - Query parameter ngoài hợp đồng trả 400.
+
     - Chuỗi chỉ có khoảng trắng không hợp lệ với trường bắt buộc có nội dung.
+
     - Không trim hoặc tự biến đổi mật khẩu.
+
     - Dùng query tham số hóa để ngăn SQL injection.
+
     - Nội dung văn bản phải được encode đúng ngữ cảnh khi hiển thị.
+
     - Không thực thi lý do, ghi chú hoặc tên người dùng như HTML/script.
+
     - Mọi response sử dụng Cache-Control: no-store.
+
     - API công khai có rate limit; vượt hạn mức trả 429.
+
     - Hạn mức healthcheck phải phù hợp tần suất probe.
+
     - Phân trang keyset, cursor gắn với người gọi, endpoint, bộ lọc và limit.
+
     - Phân trang không đóng băng trạng thái nghiệp vụ đang thay đổi.
 
+
     10. Audit
+
     - Ghi actor, thao tác, đối tượng, thời điểm, lý do và correlationId.
+
     - Thay đổi quản trị có dữ liệu trước/sau phù hợp.
+
     - Đăng ký công khai ghi nguồn đăng ký và liên kết kết quả,
       không giả lập một OPERATOR thực hiện.
     - Replay không tạo thêm thay đổi, audit nghiệp vụ hoặc outbox event.
 
+
+    Bản xem trước theo SRS 8 MS 1.3 và Micro_Service_Design 1.3, kế thừa API 1.2.0. Chưa sửa repository hoặc
+    xác nhận backend hoạt động. Thay đổi cần duyệt: đăng ký 202/tra cứu tiến trình, schema kết quả khóa
+    Account/resolve-error, health 12 thành phần và báo cáo ngoài MVP. D04/D05/D07/D08 còn cần hoàn tất trước
+    triển khai.
+
+    Dữ liệu Account chung fullName/email/phone do Identity sở hữu; DTO tổng hợp không tạo bản có thể sửa độc
+    lập ở Driver. Các trường snapshot hồ sơ là dữ liệu lịch sử có nhãn, không là nguồn cập nhật Account. Xác
+    minh Account/Session qua gRPC Identity, không tin header client.
 servers:
   - url: /v1
     description: API công khai thông qua API Gateway
-
 security:
   - bearerAuth: []
-
 tags:
   - name: Driver Applications
     description: Đăng ký và xét duyệt hồ sơ tài xế
@@ -158,71 +275,105 @@ tags:
     description: Báo cáo vận hành
   - name: Health
     description: Kiểm tra sức khỏe hệ thống
-
 paths:
   /driver-applications:
     post:
-      tags: [Driver Applications]
+      tags:
+        - Driver Applications
       operationId: submitDriverApplication
       summary: Đăng ký tài xế bằng số điện thoại đã xác minh OTP
       security: []
-      description: |
+      description: >
         Endpoint công khai nhưng bắt buộc verificationToken hợp lệ từ
+
         POST /auth/driver-registration/otp/verify.
 
+
         Không nhận phone, role, accountStatus, approvalStatus hoặc driverStatus.
+
         Phone lấy từ bằng chứng xác minh gắn với verificationToken.
 
+
         Tạo mới yêu cầu:
+
         - Token đúng mục đích DRIVER_REGISTRATION.
+
         - Token còn hạn và chưa được sử dụng.
+
         - Email, phone và licenseNumber chưa bị sử dụng.
+
         - Dữ liệu cá nhân và thông tin xe hợp lệ.
 
-        Trong cùng transaction:
-        - Khóa và tiêu thụ verificationToken một lần.
-        - Tạo Account role=DRIVER, accountStatus=ACTIVE.
-        - Tạo Driver approvalStatus=PENDING_APPROVAL, driverStatus=OFFLINE.
-        - Driver.vehicleId=null.
-        - Tạo DriverApplication status=SUBMITTED.
-        - Lưu snapshot thông tin đã nộp và thời điểm xác minh phone.
-        - Chưa tạo Vehicle hoặc VehicleAssignment từ xe khai báo.
-        - Lưu kết quả idempotency.
-        - Ghi outbox DRIVER_APPLICATION_SUBMITTED.
 
-        Không trả 201 nếu chỉ tạo được một phần.
-        Nếu transaction thất bại, không tiêu thụ token một cách độc lập.
-        Không tự cấp access token hoặc refresh token.
-        Người đăng ký đăng nhập qua API Auth sau khi tạo thành công.
+        Identity là coordinator, dù đường dẫn thuộc nhóm hồ sơ Driver.
+
+        Trong transaction Identity: khóa/tiêu thụ verificationToken, ghi Account role DRIVER/ACTIVE với cấp
+        phát nội bộ chưa hoàn tất, RegistrationOperation, idempotency và dữ liệu phục hồi. Không cấp Session
+        khi hồ sơ chưa đủ.
+
+        Gọi Driver qua gRPC cùng operationId/accountId. Driver kiểm tra unique licenseNumber, tạo Driver
+        PENDING_APPROVAL/OFFLINE, vehicleId=null, Application SUBMITTED và outbox DRIVER_APPLICATION_SUBMITTED
+        trong cab_driver; chưa tạo Vehicle/VehicleAssignment.
+
+        Snapshot hồ sơ được lưu như dữ liệu lịch sử tối thiểu, mã hóa PII; không chuyển
+        password/verificationToken cho Driver. Identity chỉ gửi thông tin hồ sơ cần thiết và bằng chứng xác
+        minh phone, không gửi bí mật OTP.
+
+        Identity xác nhận hồ sơ đúng Account rồi hoàn tất operation và trả 201; còn xử lý trả 202 cùng
+        operationId/Location. Mất phản hồi retry cùng token/key/payload, không tiêu thụ token hoặc tạo hồ sơ
+        lần hai. Token hết hạn sau tiếp nhận không hủy operation đã bền vững.
+
+        Nếu lỗi đã xác định trước tạo hồ sơ, thực hiện bù có version/tombstone, ngăn cấp phát đến muộn, vô
+        hiệu Account chưa hoàn tất; chỉ kết thúc FAILED khi bù đã rõ. Không xóa/vô hiệu Account khi chưa biết
+        Driver đã tạo hồ sơ hay chưa. Không trả thành công một phần.
+
+        Không tự cấp access/refresh token. Sau SUCCEEDED người đăng ký login qua API 01.
+
 
         Biển số khai báo chưa phải bằng chứng xe đã được duyệt.
+
         Quyền sử dụng xe và tính hợp lệ được OPERATOR kiểm tra trước khi duyệt.
+
         Ràng buộc xe chính thức được kiểm tra lại trong transaction review.
 
+
         Replay công khai:
+
         - Phải gửi lại cùng verificationToken, Idempotency-Key và nội dung.
+
         - Server xác định token qua digest và bản ghi kết quả đã liên kết.
+
         - Replay kết quả thành công đã lưu được kiểm tra trước việc token
           đã bị tiêu thụ hoặc hết hạn sau lần đăng ký thành công.
         - Ngoại lệ này chỉ trả lại kết quả cũ, không tạo tài khoản khác.
+
         - Key mới với token đã sử dụng trả VERIFICATION_TOKEN_USED.
+
         - Không cho phép chỉ biết Idempotency-Key là đọc được kết quả.
 
+
         Các lỗi 409 gồm CONTACT_ALREADY_EXISTS, LICENSE_ALREADY_EXISTS,
-        VERIFICATION_TOKEN_USED, IDEMPOTENCY_CONFLICT và REQUEST_IN_PROGRESS.
+
+        VERIFICATION_TOKEN_USED, IDEMPOTENCY_CONFLICT, REGISTRATION_FAILED hoặc IDEMPOTENCY_KEY_EXPIRED.
+
+        Cùng operation đang chạy trả 202; kết quả FAILED được replay, không tạo operation mới.
+
+        Fingerprint payload dùng HMAC có khóa, không lưu password plaintext; password Account vẫn hash chuyên
+        dụng.
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SubmitDriverApplicationRequest'
+              $ref: "#/components/schemas/SubmitDriverApplicationRequest"
       responses:
-        '201':
+        "201":
           description: Đã tạo tài khoản và hồ sơ đăng ký chờ xét duyệt
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
             Location:
               description: Đường dẫn xem hồ sơ sau khi đăng nhập
               schema:
@@ -231,165 +382,296 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DriverRegistrationResult'
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+                $ref: "#/components/schemas/DriverRegistrationResult"
+        "202":
+          description: Đăng ký đã tiếp nhận bền vững, cấp phát hồ sơ chưa hoàn tất; chưa đăng nhập được.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+            Location:
+              schema:
+                type: string
+              example: /v1/driver-registration-operations/REG_example
+              description: Đường dẫn tra cứu cần verification token và idempotency key gốc.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/DriverRegistrationOperation"
+                  - type: object
+                    properties:
+                      status:
+                        type: string
+                        enum:
+                          - PROCESSING
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: identity-service
   /driver-applications/me:
     get:
-      tags: [Driver Applications]
+      tags:
+        - Driver Applications
       operationId: getMyDriverApplication
       summary: Tài xế xem hồ sơ đăng ký của mình
-      description: |
+      description: >
         Chỉ DRIVER có Account ACTIVE và session hợp lệ.
-        Cho phép Driver PENDING_APPROVAL, APPROVED hoặc REJECTED.
-        Xác định driverId từ tài khoản đăng nhập.
-        Không nhận driverId hoặc accountId từ query.
-        Trả snapshot hồ sơ đã nộp và kết quả xét duyệt nếu có.
-        Không trả verificationToken hoặc dữ liệu OTP.
-      responses:
-        '200': { $ref: '#/components/responses/ApplicationRead' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
 
+        Cho phép Driver PENDING_APPROVAL, APPROVED hoặc REJECTED.
+
+        Xác định driverId từ tài khoản đăng nhập.
+
+        Không nhận driverId hoặc accountId từ query.
+
+        Trả snapshot hồ sơ đã nộp và kết quả xét duyệt nếu có.
+
+        Không trả verificationToken hoặc dữ liệu OTP.
+
+
+        Driver MS sở hữu hồ sơ và xe; fullName/email/phone hiện tại lấy Identity qua gRPC, kiểm tra quyền
+        trước khi tổng hợp. Không đọc DB khác. Trường bắt buộc không xác minh được trả 503, không dựng dữ liệu
+        giả. Snapshot hồ sơ đã nộp nếu có phải được phân biệt dữ liệu Account hiện tại.
+      responses:
+        "200":
+          $ref: "#/components/responses/ApplicationRead"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: driver-service
   /operations/driver-applications:
     get:
-      tags: [Driver Applications]
+      tags:
+        - Driver Applications
       operationId: listDriverApplications
       summary: Điều hành viên xem danh sách hồ sơ đăng ký
-      description: |
+      description: >
         Chỉ OPERATOR.
+
         Sắp xếp submittedAt giảm dần, sau đó applicationId giảm dần.
+
         Hồ sơ đã quyết định vẫn được giữ để truy vết.
+
+
+        Driver MS sở hữu hồ sơ và xe; fullName/email/phone hiện tại lấy Identity qua gRPC, kiểm tra quyền
+        trước khi tổng hợp. Không đọc DB khác. Trường bắt buộc không xác minh được trả 503, không dựng dữ liệu
+        giả. Snapshot hồ sơ đã nộp nếu có phải được phân biệt dữ liệu Account hiện tại.
       parameters:
         - name: status
           in: query
-          schema: { $ref: '#/components/schemas/ApplicationStatus' }
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
+          schema:
+            $ref: "#/components/schemas/ApplicationStatus"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: Danh sách hồ sơ đăng ký
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ApplicationPage' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+              schema:
+                $ref: "#/components/schemas/ApplicationPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: driver-service
   /operations/driver-applications/{applicationId}:
     get:
-      tags: [Driver Applications]
+      tags:
+        - Driver Applications
       operationId: getDriverApplication
       summary: Điều hành viên xem chi tiết hồ sơ đăng ký
-      description: |
+      description: >
         Chỉ OPERATOR.
-        Dữ liệu snapshot phục vụ xét duyệt, không tự chứng minh
-        giấy phép hoặc quyền sử dụng xe đã được kiểm tra.
-        Thông tin Account hiện tại có thể khác snapshot hồ sơ đã nộp.
-      parameters:
-        - $ref: '#/components/parameters/ApplicationId'
-      responses:
-        '200': { $ref: '#/components/responses/ApplicationRead' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
 
+        Dữ liệu snapshot phục vụ xét duyệt, không tự chứng minh
+
+        giấy phép hoặc quyền sử dụng xe đã được kiểm tra.
+
+        Thông tin Account hiện tại có thể khác snapshot hồ sơ đã nộp.
+
+
+        Driver MS sở hữu hồ sơ và xe; fullName/email/phone hiện tại lấy Identity qua gRPC, kiểm tra quyền
+        trước khi tổng hợp. Không đọc DB khác. Trường bắt buộc không xác minh được trả 503, không dựng dữ liệu
+        giả. Snapshot hồ sơ đã nộp nếu có phải được phân biệt dữ liệu Account hiện tại.
+      parameters:
+        - $ref: "#/components/parameters/ApplicationId"
+      responses:
+        "200":
+          $ref: "#/components/responses/ApplicationRead"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: driver-service
   /operations/driver-applications/{applicationId}/review:
     post:
-      tags: [Driver Applications]
+      tags:
+        - Driver Applications
       operationId: reviewDriverApplication
       summary: Duyệt hoặc từ chối hồ sơ đăng ký tài xế
-      description: |
+      description: >
         Chỉ OPERATOR.
 
+
         Điều kiện:
+
         - Application đang SUBMITTED.
+
         - expectedVersion khớp Application.version.
+
         - expectedDriverVersion khớp Driver.version.
+
         - Driver đang PENDING_APPROVAL, OFFLINE và chưa có phân công xe.
+
         - Driver không có Trip hoạt động.
 
+
         APPROVED:
+
         - Account của tài xế phải ACTIVE.
+
         - OPERATOR đã kiểm tra thông tin cá nhân, giấy phép và xe.
+
         - Nếu không truyền vehicleId, tạo Vehicle từ thông tin xe đã nộp.
+
         - Xe mới có vehicleStatus=ACTIVE.
+
         - Nếu biển số đã tồn tại, không tự gán xe đó; trả PLATE_ALREADY_EXISTS.
+
         - Để dùng xe đã tồn tại, truyền vehicleId và expectedVehicleVersion.
+
         - Xe được chọn phải ACTIVE, chưa phân công, không có Trip hoạt động.
+
         - Biển số chuẩn hóa và vehicleType phải khớp thông tin hồ sơ.
+
         - Cập nhật Application=APPROVED, Driver.approvalStatus=APPROVED.
+
         - Tạo VehicleAssignment trong cùng transaction.
+
         - Giữ Driver OFFLINE.
+
         - Ghi reviewedAt, reviewedByAccountId và outbox
           DRIVER_APPLICATION_APPROVED.
 
         REJECTED:
+
         - Bắt buộc rejectionReason an toàn để hiển thị cho người đăng ký.
+
         - Không nhận vehicleId hoặc expectedVehicleVersion.
+
         - Cập nhật Application=REJECTED, Driver.approvalStatus=REJECTED.
+
         - Driver giữ OFFLINE và không có phân công xe.
+
         - Không tự khóa Account.
+
         - Lưu rejectionReason trên kết quả xét duyệt và dữ liệu Driver tương ứng.
+
         - Ghi reviewedAt, reviewedByAccountId và outbox
           DRIVER_APPLICATION_REJECTED.
 
         Cả hai quyết định:
+
         - Tăng Application.version và Driver.version.
+
         - Ghi audit và kết quả idempotency cùng transaction.
+
         - Không commit một phần giữa Application, Driver và phân công xe.
+
         - Kiểm tra lại ràng buộc duy nhất và version khi khóa dữ liệu.
+
         - Concurrent review chỉ được có một quyết định thành công.
 
+
         Replay cùng key trả kết quả đã lưu.
+
         Key mới trên hồ sơ đã quyết định trả APPLICATION_ALREADY_REVIEWED.
+
         API này không mở lại hồ sơ đã APPROVED hoặc REJECTED.
+
+
+        Toàn bộ review/Application/Driver/Vehicle/VehicleAssignment thuộc cab_driver nên giữ transaction cục
+        bộ. Chỉ đưa hồ sơ đủ điều kiện cấp phát vào review; Identity xác nhận hoàn tất hoặc Driver có bằng
+        chứng xác nhận tương ứng qua gRPC. Không thay Account/Session trong transaction review.
       parameters:
-        - $ref: '#/components/parameters/ApplicationId'
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/ApplicationId"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ReviewApplicationRequest' }
+            schema:
+              $ref: "#/components/schemas/ReviewApplicationRequest"
       responses:
-        '200':
+        "200":
           description: Kết quả xét duyệt và các bản ghi liên quan
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ApplicationReviewResult' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+              schema:
+                $ref: "#/components/schemas/ApplicationReviewResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: driver-service
   /operations/accounts:
     get:
-      tags: [Accounts]
+      tags:
+        - Accounts
       operationId: listOperationalAccounts
       summary: Liệt kê tài khoản khách hàng và tài xế
       description: |
@@ -402,310 +684,518 @@ paths:
           in: query
           schema:
             type: string
-            enum: [CUSTOMER, DRIVER]
+            enum:
+              - CUSTOMER
+              - DRIVER
         - name: accountStatus
           in: query
-          schema: { $ref: '#/components/schemas/AccountStatus' }
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
+          schema:
+            $ref: "#/components/schemas/AccountStatus"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: Danh sách tài khoản
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AccountPage' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+              schema:
+                $ref: "#/components/schemas/AccountPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: identity-service
   /operations/accounts/{accountId}/status:
     patch:
-      tags: [Accounts]
+      tags:
+        - Accounts
       operationId: changeOperationalAccountStatus
       summary: Thay đổi trạng thái tài khoản khách hàng hoặc tài xế
-      description: |
+      description: >
         Chỉ OPERATOR. Không áp dụng cho tài khoản OPERATOR.
+
         Chỉ thay accountStatus; không đổi role hoặc thông tin đăng nhập.
 
+
         INACTIVE hoặc SUSPENDED:
+
         - Thu hồi toàn bộ Session.
+
         - Chặn request mới sử dụng Session đã thu hồi.
-        - Nếu là Driver, ngăn phân công mới và vô hiệu hóa đề nghị đang chờ.
+
+        - Ghi outbox AccountStatusChanged; Driver/Booking nhận để ngăn phân công mới và vô hiệu offer.
+
         - Tiếp tục điều phối Booking liên quan nếu còn điều kiện.
+
         - Driver không có Trip hoạt động chuyển OFFLINE.
+
         - Driver có Trip hoạt động giữ BUSY.
+
         - Không tự chuyển Booking hoặc Trip thành CANCELLED, ERROR hay COMPLETED.
+
         - Không tự giải phóng CustomerActivityGuard của công việc chưa đóng.
 
+
         ACTIVE:
+
         - Không khôi phục Session cũ.
+
         - Không tự duyệt hồ sơ, kích hoạt xe hoặc chuyển Driver AVAILABLE.
 
-        Thay trạng thái Account và nhận chuyến phải được kiểm soát đồng thời.
-        Nếu khóa Account của Driver đã có hiệu lực trước, không được nhận chuyến.
+
+        Account và thu hồi Session commit nguyên tử tại Identity. MS khác xác minh quyền hiện tại qua gRPC
+        trước bước nhạy cảm; event không bảo đảm atomic xuyên DB. Chính sách lệnh đã được cấp quyền nhưng chưa
+        commit khi khóa Account xảy ra thuộc D07 phải chốt; không tuyên bố đã giải quyết chỉ bằng outbox.
+
 
         Nếu trạng thái đã đúng, kiểm tra expectedVersion rồi trả 200,
+
         không tăng version hoặc lặp tác dụng phụ.
 
+
         Trả công việc đang hoạt động để OPERATOR xử lý bằng API nghiệp vụ.
+
+
+        200 xác nhận Identity đã commit Account/Session/outbox, không khẳng định Driver/Booking đã xử lý mọi
+        tác dụng phụ. Danh sách công việc lấy qua gRPC Booking/Trip theo quyền; không join DB. Nếu không lấy
+        được đầy đủ thì workLookupStatus=UNAVAILABLE và cả hai mảng là null, không giả mảng rỗng. checkedAt là
+        thời điểm lần thu thập, không snapshot atomic nhiều MS. Replay trả snapshot đã lưu; dùng API đọc tương
+        ứng lấy hiện trạng. Worker phục hồi event, không rollback khóa vì tra cứu công việc lỗi.
       parameters:
-        - $ref: '#/components/parameters/AccountId'
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/AccountId"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/AccountStatusChangeRequest' }
+            schema:
+              $ref: "#/components/schemas/AccountStatusChangeRequest"
       responses:
-        '200':
+        "200":
           description: Tài khoản và công việc liên quan sau thao tác
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AccountStatusChangeResult' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+              schema:
+                $ref: "#/components/schemas/AccountStatusChangeResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: identity-service
   /operations/drivers:
     get:
-      tags: [Drivers]
+      tags:
+        - Drivers
       operationId: listOperationalDrivers
       summary: Liệt kê hồ sơ tài xế
-      description: |
+      description: >
         Chỉ OPERATOR.
+
         Sắp xếp createdAt giảm dần, sau đó driverId giảm dần.
+
         Không sử dụng endpoint này để thay quyết định DriverApplication.
+
+
+        Driver MS sở hữu hồ sơ và xe; fullName/email/phone hiện tại lấy Identity qua gRPC, kiểm tra quyền
+        trước khi tổng hợp. Không đọc DB khác. Trường bắt buộc không xác minh được trả 503, không dựng dữ liệu
+        giả. Snapshot hồ sơ đã nộp nếu có phải được phân biệt dữ liệu Account hiện tại.
       parameters:
         - name: approvalStatus
           in: query
-          schema: { $ref: '#/components/schemas/DriverApprovalStatus' }
+          schema:
+            $ref: "#/components/schemas/DriverApprovalStatus"
         - name: driverStatus
           in: query
-          schema: { $ref: '#/components/schemas/DriverStatus' }
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
+          schema:
+            $ref: "#/components/schemas/DriverStatus"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: Danh sách tài xế
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/DriverPage' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+              schema:
+                $ref: "#/components/schemas/DriverPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: driver-service
   /operations/drivers/{driverId}:
     get:
-      tags: [Drivers]
+      tags:
+        - Drivers
       operationId: getOperationalDriver
       summary: Điều hành viên xem chi tiết tài xế
-      description: |
+      description: >
         Chỉ OPERATOR.
-        Trả Driver và xe đang phân công nếu có.
-        Thông tin Account và hồ sơ đã nộp được đọc qua API tương ứng.
-      parameters:
-        - $ref: '#/components/parameters/DriverId'
-      responses:
-        '200': { $ref: '#/components/responses/DriverProfileRead' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
 
+        Trả Driver và xe đang phân công nếu có.
+
+        Thông tin Account và hồ sơ đã nộp được đọc qua API tương ứng.
+
+
+        Driver MS sở hữu hồ sơ và xe; fullName/email/phone hiện tại lấy Identity qua gRPC, kiểm tra quyền
+        trước khi tổng hợp. Không đọc DB khác. Trường bắt buộc không xác minh được trả 503, không dựng dữ liệu
+        giả. Snapshot hồ sơ đã nộp nếu có phải được phân biệt dữ liệu Account hiện tại.
+      parameters:
+        - $ref: "#/components/parameters/DriverId"
+      responses:
+        "200":
+          $ref: "#/components/responses/DriverProfileRead"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: driver-service
   /drivers/me:
     get:
-      tags: [Drivers]
+      tags:
+        - Drivers
       operationId: getMyDriverProfile
       summary: Tài xế xem hồ sơ của mình
-      description: |
+      description: >
         Chỉ DRIVER có Account ACTIVE và Session hợp lệ.
-        Cho phép PENDING_APPROVAL, APPROVED hoặc REJECTED.
-        driverId lấy từ tài khoản đã xác thực.
-        Account hiện tại lấy qua GET /accounts/me.
-        Hồ sơ đăng ký lấy qua GET /driver-applications/me.
-        GPS cập nhật qua PUT /drivers/me/location trong Trip API.
-        Dữ liệu trả về không thay thế kiểm tra điều kiện khi online hoặc nhận chuyến.
-      responses:
-        '200': { $ref: '#/components/responses/DriverProfileRead' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
 
+        Cho phép PENDING_APPROVAL, APPROVED hoặc REJECTED.
+
+        driverId lấy từ tài khoản đã xác thực.
+
+        Account hiện tại lấy qua GET /accounts/me.
+
+        Hồ sơ đăng ký lấy qua GET /driver-applications/me.
+
+        GPS cập nhật qua PUT /drivers/me/location trong Trip API.
+
+        Dữ liệu trả về không thay thế kiểm tra điều kiện khi online hoặc nhận chuyến.
+
+
+        Driver MS sở hữu hồ sơ và xe; fullName/email/phone hiện tại lấy Identity qua gRPC, kiểm tra quyền
+        trước khi tổng hợp. Không đọc DB khác. Trường bắt buộc không xác minh được trả 503, không dựng dữ liệu
+        giả. Snapshot hồ sơ đã nộp nếu có phải được phân biệt dữ liệu Account hiện tại.
+      responses:
+        "200":
+          $ref: "#/components/responses/DriverProfileRead"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: driver-service
   /drivers/{driverId}:
     get:
-      tags: [Drivers]
+      tags:
+        - Drivers
       operationId: getDriverById
       summary: Lấy thông tin tài xế theo ID trong phạm vi được phép
-      description: |
+      description: >
         CUSTOMER:
+
         - Chỉ được xem tài xế đã được giao ít nhất một Trip của mình.
+
         - Quyền này cho phép hiển thị lại tên tài xế trong lịch sử chuyến.
+
         - Chỉ trả driverId và fullName.
+
         - Không trả số điện thoại, email, giấy phép hoặc vị trí GPS.
+
         - Liên hệ trong chuyến đang hoạt động sử dụng dữ liệu có kiểm soát
           từ API tracking.
 
         DRIVER:
+
         - Chỉ được xem driverId của chính mình qua endpoint này.
+
         - Hồ sơ đầy đủ của mình dùng GET /drivers/me.
 
+
         OPERATOR:
+
         - Được xem tài xế bất kỳ.
+
         - Hồ sơ vận hành đầy đủ dùng GET /operations/drivers/{driverId}.
 
+
         Không tồn tại hoặc ngoài phạm vi truy cập đều trả 404.
+
         Không biến endpoint thành danh bạ tài xế công khai.
+
         Route /drivers/me phải được nhận diện riêng, không coi me là driverId.
+
+
+        Driver MS sở hữu hồ sơ và xe; fullName/email/phone hiện tại lấy Identity qua gRPC, kiểm tra quyền
+        trước khi tổng hợp. Không đọc DB khác. Trường bắt buộc không xác minh được trả 503, không dựng dữ liệu
+        giả. Snapshot hồ sơ đã nộp nếu có phải được phân biệt dữ liệu Account hiện tại.
       parameters:
-        - $ref: '#/components/parameters/DriverId'
+        - $ref: "#/components/parameters/DriverId"
       responses:
-        '200':
+        "200":
           description: Thông tin hiển thị tối thiểu của tài xế
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 type: object
                 additionalProperties: false
-                required: [driverId, fullName]
+                required:
+                  - driverId
+                  - fullName
                 properties:
-                  driverId: { $ref: '#/components/schemas/Identifier' }
-                  fullName: { type: string }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+                  driverId:
+                    $ref: "#/components/schemas/Identifier"
+                  fullName:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: driver-service
   /drivers/me/availability:
     put:
-      tags: [Drivers]
+      tags:
+        - Drivers
       operationId: setMyDriverAvailability
       summary: Tài xế chuyển AVAILABLE hoặc OFFLINE
-      description: |
+      description: >
         Chỉ DRIVER thao tác trên chính mình.
+
         Không nhận driverId và không cho client đặt BUSY.
 
+
         AVAILABLE:
+
         - Account ACTIVE, hồ sơ APPROVED.
+
         - Phân công xe hợp lệ, xe ACTIVE.
+
         - Không có Trip hoạt động.
+
         - GPS hợp lệ, không quá 30 giây tính từ recordedAt.
+
         - Dùng cùng cấu hình và quy tắc GPS với Dispatch.
 
+
         OFFLINE:
+
         - Không có Trip hoạt động.
+
         - Vô hiệu hóa TripRequest PENDING của tài xế.
+
         - Ghi công việc tiếp tục điều phối nếu Booking còn điều kiện.
+
         - Không gỡ VehicleAssignment.
 
+
         Trip ERROR chưa đóng vẫn chặn OFFLINE.
+
         OFFLINE và accept phải có một kết quả nhất quán:
+
         - OFFLINE trước thì accept không được thành công.
+
         - Accept trước thì yêu cầu OFFLINE trả 409.
 
+
         Kiểm tra expectedVersion.
+
         Nếu đã đúng trạng thái, vẫn kiểm tra điều kiện hiện tại,
+
         nhưng không tăng version khi không có thay đổi.
+
         GPS cập nhật không tự chuyển OFFLINE sang AVAILABLE.
+
+
+        Driver MS kiểm tra nguyên tử Driver/VehicleAssignment/Vehicle và reservation trong cab_driver. Không
+        chỉ dựa BUSY hoặc đọc Trip cache: reservation đang giữ, đang gắn Trip hoặc chờ giải phóng đều ngăn
+        thay đổi làm mất quyền của Saga/chuyến. Khi bị giữ trả 409 RESOURCE_RESERVED; không giải phóng bằng
+        TTL. Account/Session kiểm tra qua Identity; D07 vẫn cần chốt với thao tác in-flight.
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/SetAvailabilityRequest' }
+            schema:
+              $ref: "#/components/schemas/SetAvailabilityRequest"
       responses:
-        '200': { $ref: '#/components/responses/DriverRead' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+        "200":
+          $ref: "#/components/responses/DriverRead"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: driver-service
   /operations/drivers/{driverId}/vehicle:
     put:
-      tags: [Vehicles]
+      tags:
+        - Vehicles
       operationId: setDriverVehicle
       summary: Phân công, thay hoặc gỡ xe của tài xế
-      description: |
+      description: >
         Chỉ OPERATOR.
+
         Kiểm tra expectedDriverVersion.
+
         Driver phải OFFLINE và không có Trip hoạt động.
 
+
         vehicleId khác null:
+
         - Bắt buộc expectedVehicleVersion.
+
         - Account ACTIVE, Driver APPROVED.
+
         - Xe đích ACTIVE, không thuộc tài xế khác.
+
         - Xe đích không phục vụ Trip hoạt động.
 
+
         vehicleId=null:
+
         - Gỡ phân công hiện tại.
+
         - Không nhận expectedVehicleVersion.
 
+
         Mọi trường hợp:
+
         - Xe hiện tại không được đang phục vụ Trip hoạt động.
+
         - Khóa Driver, phân công và các Vehicle liên quan theo thứ tự nhất quán.
+
         - Đóng phân công cũ và tạo phân công mới trong cùng transaction.
+
         - Giữ unique constraint cho phân công đang hiệu lực.
+
         - Tăng Driver.version và version của các Vehicle có liên kết thay đổi.
+
         - Giữ Driver OFFLINE.
+
         - Không sửa Trip lịch sử.
 
+
         Liên kết đã đúng thì kiểm tra version và điều kiện rồi trả 200,
+
         không tăng version nếu không có thay đổi.
+
+
+        Driver MS kiểm tra nguyên tử Driver/VehicleAssignment/Vehicle và reservation trong cab_driver. Không
+        chỉ dựa BUSY hoặc đọc Trip cache: reservation đang giữ, đang gắn Trip hoặc chờ giải phóng đều ngăn
+        thay đổi làm mất quyền của Saga/chuyến. Khi bị giữ trả 409 RESOURCE_RESERVED; không giải phóng bằng
+        TTL. Account/Session kiểm tra qua Identity; D07 vẫn cần chốt với thao tác in-flight.
       parameters:
-        - $ref: '#/components/parameters/DriverId'
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/DriverId"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/SetDriverVehicleRequest' }
+            schema:
+              $ref: "#/components/schemas/SetDriverVehicleRequest"
       responses:
-        '200': { $ref: '#/components/responses/DriverRead' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+        "200":
+          $ref: "#/components/responses/DriverRead"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: driver-service
   /operations/vehicles:
     get:
-      tags: [Vehicles]
+      tags:
+        - Vehicles
       operationId: listOperationalVehicles
       summary: Liệt kê xe
       description: |
@@ -715,29 +1205,40 @@ paths:
       parameters:
         - name: vehicleType
           in: query
-          schema: { $ref: '#/components/schemas/VehicleType' }
+          schema:
+            $ref: "#/components/schemas/VehicleType"
         - name: vehicleStatus
           in: query
-          schema: { $ref: '#/components/schemas/VehicleStatus' }
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
+          schema:
+            $ref: "#/components/schemas/VehicleStatus"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: Danh sách xe
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/VehiclePage' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+              schema:
+                $ref: "#/components/schemas/VehiclePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: driver-service
     post:
-      tags: [Vehicles]
+      tags:
+        - Vehicles
       operationId: createVehicle
       summary: Tạo hồ sơ xe
       description: |
@@ -752,83 +1253,131 @@ paths:
 
         Không nhận assignedDriverId hoặc vehicleStatus khi tạo.
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CreateVehicleRequest' }
+            schema:
+              $ref: "#/components/schemas/CreateVehicleRequest"
       responses:
-        '201': { $ref: '#/components/responses/VehicleRead' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+        "201":
+          $ref: "#/components/responses/VehicleRead"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: driver-service
   /operations/vehicles/{vehicleId}:
     get:
-      tags: [Vehicles]
+      tags:
+        - Vehicles
       operationId: getOperationalVehicle
       summary: Xem chi tiết xe và version hiện tại
       description: Chỉ OPERATOR.
       parameters:
-        - $ref: '#/components/parameters/VehicleId'
+        - $ref: "#/components/parameters/VehicleId"
       responses:
-        '200': { $ref: '#/components/responses/VehicleRead' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+        "200":
+          $ref: "#/components/responses/VehicleRead"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: driver-service
     patch:
-      tags: [Vehicles]
+      tags:
+        - Vehicles
       operationId: updateVehicle
       summary: Cập nhật thông tin hoặc trạng thái xe
-      description: |
+      description: >
         Chỉ OPERATOR.
+
         Không nhận assignedDriverId.
+
         Phân công xe dùng API phân công riêng.
 
+
         Không cập nhật khi xe đang phục vụ Trip hoạt động,
+
         bao gồm ERROR chưa đóng.
+
         Nếu xe đang được phân công, Driver phải OFFLINE.
 
+
         Xe INACTIVE có thể giữ phân công nhưng không được dùng để online
+
         hoặc nhận chuyến.
+
         Biển số áp dụng quy tắc chuẩn hóa và duy nhất như khi tạo.
+
         Đổi loại xe không sửa Booking, Trip hoặc snapshot xe lịch sử.
 
+
         Kiểm tra expectedVersion.
+
         Bắt buộc ít nhất một trường cập nhật.
+
         Không thay đổi thực tế thì không tăng version.
+
+
+        Driver MS kiểm tra nguyên tử Driver/VehicleAssignment/Vehicle và reservation trong cab_driver. Không
+        chỉ dựa BUSY hoặc đọc Trip cache: reservation đang giữ, đang gắn Trip hoặc chờ giải phóng đều ngăn
+        thay đổi làm mất quyền của Saga/chuyến. Khi bị giữ trả 409 RESOURCE_RESERVED; không giải phóng bằng
+        TTL. Account/Session kiểm tra qua Identity; D07 vẫn cần chốt với thao tác in-flight.
       parameters:
-        - $ref: '#/components/parameters/VehicleId'
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/VehicleId"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/UpdateVehicleRequest' }
+            schema:
+              $ref: "#/components/schemas/UpdateVehicleRequest"
       responses:
-        '200': { $ref: '#/components/responses/VehicleRead' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+        "200":
+          $ref: "#/components/responses/VehicleRead"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: driver-service
   /operations/trips:
     get:
-      tags: [Operations]
+      tags:
+        - Operations
       operationId: listOperationalTrips
       summary: Liệt kê chuyến phục vụ vận hành
       description: |
@@ -845,38 +1394,51 @@ paths:
       parameters:
         - name: tripStatus
           in: query
-          schema: { $ref: '#/components/schemas/TripStatus' }
+          schema:
+            $ref: "#/components/schemas/TripStatus"
         - name: activeOnly
           in: query
-          schema: { type: boolean }
+          schema:
+            type: boolean
         - name: customerId
           in: query
-          schema: { $ref: '#/components/schemas/Identifier' }
+          schema:
+            $ref: "#/components/schemas/Identifier"
         - name: driverId
           in: query
-          schema: { $ref: '#/components/schemas/Identifier' }
-        - $ref: '#/components/parameters/OptionalFrom'
-        - $ref: '#/components/parameters/OptionalTo'
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
+          schema:
+            $ref: "#/components/schemas/Identifier"
+        - $ref: "#/components/parameters/OptionalFrom"
+        - $ref: "#/components/parameters/OptionalTo"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: Danh sách chuyến
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/TripPage' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+              schema:
+                $ref: "#/components/schemas/TripPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: trip-service
   /operations/incidents:
     get:
-      tags: [Operations]
+      tags:
+        - Operations
       operationId: listOperationalIncidents
       summary: Liệt kê sự cố chuyến đi
       description: |
@@ -888,233 +1450,377 @@ paths:
       parameters:
         - name: status
           in: query
-          schema: { $ref: '#/components/schemas/IncidentStatus' }
+          schema:
+            $ref: "#/components/schemas/IncidentStatus"
         - name: tripId
           in: query
-          schema: { $ref: '#/components/schemas/Identifier' }
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
+          schema:
+            $ref: "#/components/schemas/Identifier"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: Danh sách sự cố
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/IncidentPage' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+              schema:
+                $ref: "#/components/schemas/IncidentPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: trip-service
     post:
-      tags: [Operations]
+      tags:
+        - Operations
       operationId: createOperationalIncident
       summary: Điều hành viên ghi nhận sự cố chuyến đang hoạt động
-      description: |
+      description: >
         Chỉ OPERATOR.
+
         Kiểm tra expectedTripVersion.
+
         Chỉ áp dụng cho Trip chưa đóng.
 
+
         Trip chưa ERROR:
+
         - Tạo Incident OPEN.
+
         - Lưu statusBeforeError.
+
         - Chuyển Trip ERROR và tăng version.
+
         - Ghi TripStatusHistory, audit và outbox TRIP_ERROR.
 
+
         Trip đã ERROR:
+
         - Tạo thêm Incident OPEN.
+
         - Giữ statusBeforeError.
+
         - Tăng Trip.version.
+
         - Không ghi ERROR -> ERROR hoặc phát lại TRIP_ERROR.
 
+
         Giữ Driver BUSY và CustomerActivityGuard của chuyến.
+
         reportedByAccountId lấy từ OPERATOR đăng nhập.
+
         Incident, Trip, audit và outbox commit cùng transaction.
+
         Không chuyển Trip đã đóng trở lại ERROR.
+
         Không dùng endpoint để thay Fare hoặc Payment.
+
+
+        Incident/Trip/audit/outbox thuộc cùng cab_trip; giữ transaction này. Không phát lệnh giải phóng khi
+        ERROR chưa đóng.
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CreateIncidentRequest' }
+            schema:
+              $ref: "#/components/schemas/CreateIncidentRequest"
       responses:
-        '201':
+        "201":
           description: Đã ghi nhận sự cố và cập nhật Trip
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/IncidentCreationResult' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+              schema:
+                $ref: "#/components/schemas/IncidentCreationResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: trip-service
   /operations/trips/{tripId}/resolve-error:
     post:
-      tags: [Operations]
+      tags:
+        - Operations
       operationId: resolveTripError
       summary: Khôi phục hoặc đóng bất thường chuyến ERROR
-      description: |
+      description: >
         Chỉ OPERATOR.
+
         Yêu cầu Trip ERROR, chưa có closedAt, expectedTripVersion khớp
+
         và có Incident OPEN cần giải quyết.
+
         OPERATOR phải kiểm tra toàn bộ Incident OPEN hiện tại.
+
         Bắt buộc resolutionNote.
 
+
         RESTORE_PREVIOUS_STATUS:
+
         - Chỉ khôi phục đúng statusBeforeError do server lưu.
+
         - Không nhận trạng thái đích từ client.
+
         - Account của Driver ACTIVE, hồ sơ APPROVED.
+
         - Xe của Trip và phân công còn hợp lệ.
+
         - Driver không có Trip hoạt động khác.
+
         - Giữ Driver BUSY và CustomerActivityGuard.
+
         - Không đặt lại arrivedAt, pickedUpAt hoặc startedAt.
+
         - Bỏ statusBeforeError khỏi trạng thái hiện tại sau khôi phục.
+
         - Ghi lịch sử chuyển trạng thái và outbox TRIP_RECOVERED.
 
+
         CLOSE_ABNORMALLY:
+
         - Giữ tripStatus=ERROR.
+
         - Ghi closedAt và closeReason từ resolutionNote.
+
         - Giữ statusBeforeError để truy vết.
+
         - Không tạo completedAt.
+
         - Không tự tạo Fare hoặc Payment cho chuyến gián đoạn.
-        - Giải phóng CustomerActivityGuard chỉ khi guard còn trỏ
-          đúng Booking/Trip đang đóng.
-        - Giải phóng Driver khỏi đúng chuyến này.
+
+        - Ghi ClosureOperation bền vững cùng transaction đóng Trip, sau đó worker gọi Customer/Driver giải
+        phóng đúng tripId/version/generation.
+
         - Chỉ AVAILABLE nếu đáp ứng đầy đủ điều kiện hoạt động;
           trường hợp còn vấn đề về xe hoặc chưa đủ điều kiện thì OFFLINE.
         - Không coi việc đóng sự cố là bằng chứng xe đã được sửa.
+
         - Ghi audit đóng chuyến và outbox TRIP_CLOSED_ABNORMALLY.
+
         - Không tạo lịch sử ERROR -> ERROR chỉ để biểu diễn đóng chuyến.
 
-        Trong cùng transaction:
+
+        Trong cùng transaction cab_trip:
+
         - Tăng Trip.version.
-        - Cập nhật Driver khi có thay đổi.
+
+        - Không cập nhật DB Driver; trạng thái Driver do Driver MS quản lý.
+
         - Chuyển toàn bộ Incident OPEN hiện tại sang RESOLVED.
+
         - Ghi cùng action, note, người xử lý và thời điểm cho các Incident.
+
         - Ghi audit, outbox và kết quả idempotency.
 
+
         Incident mới được tạo đồng thời làm thay đổi Trip.version,
+
         vì vậy request dùng version cũ phải bị từ chối.
 
+
         Replay cùng key trả snapshot kết quả cũ và không giải phóng
+
         guard hoặc Driver của một chuyến mới phát sinh sau đó.
+
         Key mới trên Trip đã khôi phục hoặc đóng trả TRIP_NOT_RESOLVABLE.
+
+
+        RESTORE xác minh Account/Driver/xe/guard hiện hữu qua gRPC có thẩm quyền; không giải phóng khi ERROR
+        chưa đóng. Không giữ transaction DB chờ RPC; kiểm tra Trip.version lúc commit. CLOSE_ABNORMALLY trả
+        200 khi Trip/Incident/ClosureOperation đã commit, chưa chứng minh tài nguyên đã giải phóng. Theo dõi
+        GET /trips/{tripId}/closure ở API 04. Driver chỉ AVAILABLE sau release an toàn, xe lỗi phải bị chặn
+        trong transaction release tại Driver. Trường driver trong response là tùy chọn: bỏ khi không có
+        snapshot xác minh, không dùng nó chứng minh release đã xong; tra cứu Driver riêng để lấy hiện trạng.
       parameters:
-        - $ref: '#/components/parameters/TripId'
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/TripId"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ResolveTripErrorRequest' }
+            schema:
+              $ref: "#/components/schemas/ResolveTripErrorRequest"
       responses:
-        '200':
+        "200":
           description: Kết quả xử lý Trip và Incident liên quan
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ResolveTripErrorResult' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+              schema:
+                $ref: "#/components/schemas/ResolveTripErrorResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: trip-service
   /operations/pricing:
     get:
-      tags: [Pricing]
+      tags:
+        - Pricing
       operationId: listPricingVersions
       summary: Xem các phiên bản giá
-      description: |
+      description: >
         Chỉ OPERATOR.
+
         Trả phiên bản cũ, đang áp dụng và có hiệu lực trong tương lai.
+
         Sắp xếp effectiveFrom giảm dần, sau đó pricingVersionId giảm dần.
+
         Phiên bản áp dụng là phiên bản cùng vehicleType có effectiveFrom
+
         lớn nhất nhưng không vượt thời điểm chọn giá.
+
+
+        PricingConfig do Payment sở hữu; thao tác chỉ trong cab_payment. Booking lấy snapshot bất biến qua
+        gRPC; giá mới không sửa snapshot Booking/Fare cũ.
       parameters:
         - name: vehicleType
           in: query
-          schema: { $ref: '#/components/schemas/VehicleType' }
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
+          schema:
+            $ref: "#/components/schemas/VehicleType"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: Danh sách phiên bản giá
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/PricingPage' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+              schema:
+                $ref: "#/components/schemas/PricingPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: payment-service
     post:
-      tags: [Pricing]
+      tags:
+        - Pricing
       operationId: createPricingVersion
       summary: Ban hành phiên bản giá mới
-      description: |
+      description: >
         Chỉ OPERATOR.
+
         Tạo bản mới bất biến, không sửa hoặc xóa bản cũ.
 
+
         effectiveFrom:
+
         - Bỏ qua thì server đặt thời điểm ghi nhận.
+
         - Nếu truyền phải ở tương lai tại thời điểm kiểm tra.
+
         - Không hồi tố.
+
         - Không trùng cùng vehicleType và effectiveFrom.
 
+
         Chọn giá và tạo Booking phải nhất quán khi có cập nhật giá đồng thời.
+
         Booking giữ pricingVersionId và pricingSnapshot.
+
         Không có giá hợp lệ thì không dùng giá giả định.
 
+
         Các giá trị tiền xử lý bằng decimal chính xác.
+
         Chỉ làm tròn tổng cuối cùng theo Payment API.
+
         Giá mới không tính lại Booking hoặc Fare cũ.
+
         Không thêm phí hủy, khuyến mãi hoặc giá theo nhu cầu trong phiên bản này.
+
+
+        PricingConfig do Payment sở hữu; thao tác chỉ trong cab_payment. Booking lấy snapshot bất biến qua
+        gRPC; giá mới không sửa snapshot Booking/Fare cũ.
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CreatePricingRequest' }
+            schema:
+              $ref: "#/components/schemas/CreatePricingRequest"
       responses:
-        '201':
+        "201":
           description: Phiên bản giá đã được tạo
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/PricingConfig' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+              schema:
+                $ref: "#/components/schemas/PricingConfig"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: payment-service
   /operations/payments:
     get:
-      tags: [Payment Monitoring]
+      tags:
+        - Payment Monitoring
       operationId: listOperationalPayments
       summary: Liệt kê thanh toán cần theo dõi
       description: |
@@ -1133,100 +1839,156 @@ paths:
       parameters:
         - name: paymentStatus
           in: query
-          schema: { $ref: '#/components/schemas/PaymentStatus' }
+          schema:
+            $ref: "#/components/schemas/PaymentStatus"
         - name: requiresReview
           in: query
-          schema: { type: boolean }
+          schema:
+            type: boolean
         - name: tripId
           in: query
-          schema: { $ref: '#/components/schemas/Identifier' }
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
+          schema:
+            $ref: "#/components/schemas/Identifier"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
       responses:
-        '200':
+        "200":
           description: Danh sách thanh toán
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/PaymentPage' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+              schema:
+                $ref: "#/components/schemas/PaymentPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: payment-service
   /operations/reports/summary:
     get:
-      tags: [Reports]
+      tags:
+        - Reports
       operationId: getOperationalSummary
       summary: Xem báo cáo vận hành cơ bản
-      description: |
+      description: >
+        NGOÀI MVP: giữ hợp đồng để truy vết FR22/UC16, không triển khai route trong baseline 8 MS. Không tạo
+        Analytics MS thứ chín. Khi mở rộng phải duyệt mô hình tổng hợp/projection/watermark và phân quyền
+        riêng; không query chéo DB hoặc giả snapshot atomic. Các định nghĩa chỉ số dưới đây là tham khảo lịch
+        sử.
+
+
         Chỉ OPERATOR.
+
         Báo cáo cơ bản thuộc nhóm mở rộng của SRS.
+
 
         Khoảng [from, to), from < to và có thông tin múi giờ.
 
+
         totalTrips:
+
         - Trip có createdAt trong khoảng.
 
+
         completedTrips, cancelledTrips, abnormalClosedTrips:
+
         - Đếm trong cùng tập Trip có createdAt trong khoảng.
+
         - Dùng trạng thái trong snapshot cơ sở dữ liệu của báo cáo.
+
         - abnormalClosedTrips là ERROR có closedAt.
 
+
         cancellationRate = cancelledTrips / totalTrips.
+
         totalTrips=0 thì cancellationRate=null, không trả 0 giả định.
 
+
         noDriverFoundBookings:
+
         - Booking có createdAt trong khoảng và trạng thái NO_DRIVER_FOUND.
+
         - Không cộng vào tổng Trip hoặc số Trip bị hủy.
 
+
         successfulPayments và collectedRevenue:
+
         - Chỉ Payment SUCCESS có paidAt trong khoảng.
+
         - Mỗi Payment tính một lần, không đếm lại theo PaymentAttempt/callback.
+
         - CASH chỉ tính sau khi xác nhận nhận đủ tiền.
+
         - Không tính PENDING, PROCESSING, FAILED hoặc UNKNOWN.
+
         - Không phụ thuộc Trip được tạo trong khoảng nào.
+
         - Payment SUCCESS có requiresReview vẫn là bản ghi đã ghi nhận thu;
           cần theo dõi cờ review riêng, không tự đổi trạng thái hoặc trừ tiền.
 
         collectedRevenue là tiền ghi nhận đã thu, không phải lợi nhuận
+
         hoặc số dư đã quyết toán ngân hàng.
 
-        Tổng hợp trong một transaction đọc có snapshot nhất quán của cab_core.
-        snapshotAt mô tả thời điểm snapshot, không dùng chuỗi truy vấn độc lập
-        rồi gắn cùng timestamp để giả lập tính nhất quán.
+
+        Nếu triển khai sau MVP, phải đặc tả snapshotAt/watermark và độ trễ nguồn rõ ràng; không mặc định
+        transaction đọc chung nhiều MS.
+
         Không đủ dữ liệu hoặc không tạo được snapshot thì trả lỗi,
+
         không thay dữ liệu thiếu bằng số 0.
       parameters:
         - name: from
           in: query
           required: true
-          schema: { type: string, format: date-time }
+          schema:
+            type: string
+            format: date-time
         - name: to
           in: query
           required: true
-          schema: { type: string, format: date-time }
+          schema:
+            type: string
+            format: date-time
       responses:
-        '200':
+        "200":
           description: Báo cáo trong khoảng yêu cầu
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/OperationalSummary' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503': { $ref: '#/components/responses/ServiceUnavailable' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+              schema:
+                $ref: "#/components/schemas/OperationalSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: outside-mvp
+      x-scope: outside-mvp
+      x-enabled-by-default: false
   /health:
     get:
-      tags: [Health]
+      tags:
+        - Health
       operationId: getGatewayLiveness
       summary: Kiểm tra API Gateway còn hoạt động
       servers:
@@ -1240,135 +2002,260 @@ paths:
         Không suy ra toàn bộ nghiệp vụ hoặc cơ sở dữ liệu đang sẵn sàng.
         Không trả cấu hình, host nội bộ, phiên bản secret hoặc stack trace.
       responses:
-        '200':
+        "200":
           description: Gateway đang hoạt động
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 type: object
                 additionalProperties: false
-                required: [status]
+                required:
+                  - status
                 properties:
-                  status: { type: string, enum: [UP] }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+                  status:
+                    type: string
+                    enum:
+                      - UP
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: gateway
   /ready:
     get:
-      tags: [Health]
+      tags:
+        - Health
       operationId: getSystemReadiness
       summary: Kiểm tra hệ thống sẵn sàng phục vụ theo cấu hình triển khai
       servers:
         - url: /
           description: Route gốc của API Gateway
       security: []
-      description: |
+      description: >
         Trả trạng thái tối thiểu, không công khai chi tiết dependency.
 
+
         Kiểm tra các thành phần bắt buộc của bản triển khai:
-        - CAB Core API và worker.
-        - Rating Service và Notification Service.
+
+        - Identity, Customer, Driver, Booking, Trip, Payment, Rating và Notification.
+
+        - Worker bắt buộc của từng MS có heartbeat/progress đủ mới; không xem chỉ API sống là worker hoạt
+        động.
+
         - Khả năng truy cập dữ liệu cần thiết của từng service.
+
         - Redis dùng cho rate limit.
+
         - RabbitMQ và đường xử lý sự kiện theo cấu hình.
 
+
         Mỗi probe có timeout và giới hạn tuổi kết quả.
+
         Không trả READY từ kết quả cũ quá giới hạn cho phép.
+
         Không kết nối được hoặc không xác định được dependency bắt buộc
+
         thì trả 503 NOT_READY.
 
+
         Các service cung cấp probe nội bộ; không mở thêm cổng công khai.
+
         Kiểm tra worker bằng tín hiệu hoạt động thực tế có thời hạn,
+
         không giả định worker là HTTP server.
 
+
         NOT_READY không bắt buộc handler mọi API ngừng phục vụ.
+
         Ví dụ hộp thư đã công bố vẫn có thể đọc nếu các dependency
+
         cần cho chính thao tác đọc vẫn hoạt động.
       responses:
-        '200':
+        "200":
           description: Các thành phần bắt buộc đã sẵn sàng
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 type: object
                 additionalProperties: false
-                required: [status]
+                required:
+                  - status
                 properties:
-                  status: { type: string, enum: [READY] }
-        '503':
+                  status:
+                    type: string
+                    enum:
+                      - READY
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
           description: Có thành phần bắt buộc chưa sẵn sàng hoặc chưa xác định được
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 type: object
                 additionalProperties: false
-                required: [status]
+                required:
+                  - status
                 properties:
-                  status: { type: string, enum: [NOT_READY] }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        default: { $ref: '#/components/responses/ServerError' }
-
+                  status:
+                    type: string
+                    enum:
+                      - NOT_READY
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: gateway
   /health/services:
     get:
-      tags: [Health]
+      tags:
+        - Health
       operationId: getServiceHealthDetails
       summary: Điều hành viên xem sức khỏe các thành phần
       servers:
         - url: /
           description: Route gốc của API Gateway
-      description: |
+      description: >
         Chỉ OPERATOR có tài khoản và session hợp lệ.
 
+
         Kiểm tra tối thiểu các thành phần:
-        gateway, cab-core-api, cab-core-worker, rating, notification,
-        postgres, redis và rabbitmq.
+
+        gateway, identity-service, customer-service, driver-service, booking-service, trip-service,
+        payment-service, rating-service, notification-service, postgres, redis, rabbitmq.
+
 
         Trạng thái phản ánh probe thực tế, không hard-code UP.
+
         Probe database theo khả năng truy cập mà service thực sự cần.
+
         Không chỉ kiểm tra cổng PostgreSQL đang mở.
+
         Worker cần heartbeat hoặc bằng chứng xử lý còn hiệu lực.
+
         Timeout hoặc kết quả quá cũ phải thể hiện UNKNOWN hoặc DOWN.
 
+
         Mỗi thành phần có checkedAt riêng.
+
         Đây là tập quan sát trong một đợt kiểm tra, không phải snapshot
+
         nguyên tử của nhiều máy.
 
+
         Không trả password, connection string, token, host nhạy cảm
+
         hoặc raw exception.
+
         Dependency lỗi có thể trả 503 kèm báo cáo chi tiết này.
+
         Nếu không xác thực được OPERATOR thì không trả báo cáo chi tiết.
+
+
+        Danh sách bắt buộc 12 thành phần theo enum mới; probe DB của mỗi MS qua readiness của MS, Gateway
+        không đăng nhập trực tiếp DB nghiệp vụ. PostgreSQL chung vật lý không thay thế kiểm tra
+        credential/schema từng DB logic. Worker có heartbeat và độ trễ công việc; probe quá hạn là
+        UNKNOWN/DOWN, không UP từ cache cũ.
       responses:
-        '200':
+        "200":
           description: Các thành phần bắt buộc đang hoạt động
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/SystemHealth' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '429': { $ref: '#/components/responses/TooManyRequests' }
-        '503':
+              schema:
+                $ref: "#/components/schemas/SystemHealth"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
           description: |
             Có thành phần lỗi, chưa xác định được hoặc không thể hoàn tất kiểm tra.
             Nếu bước xác thực phụ thuộc dịch vụ đang lỗi, trả ErrorResponse
             thay vì dữ liệu sức khỏe chi tiết.
           headers:
-            Cache-Control: { $ref: '#/components/headers/NoStore' }
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 oneOf:
-                  - $ref: '#/components/schemas/SystemHealth'
-                  - $ref: '#/components/schemas/ErrorResponse'
-        default: { $ref: '#/components/responses/ServerError' }
-
+                  - $ref: "#/components/schemas/SystemHealth"
+                  - $ref: "#/components/schemas/ErrorResponse"
+        default:
+          $ref: "#/components/responses/ServerError"
+      x-owner-service: gateway
+  /driver-registration-operations/{operationId}:
+    get:
+      tags:
+        - Driver Applications
+      operationId: getDriverRegistrationOperation
+      x-owner-service: identity-service
+      summary: Tra cứu tiến trình đăng ký Driver
+      security:
+        - driverRegistrationProof: []
+      description: Không cần Session. Đối chiếu token digest và Idempotency-Key với operation; chỉ biết ID/key không
+        đủ quyền. Token gốc hết hạn/đã tiêu thụ vẫn được dùng đọc đúng operation trong cửa sổ phục hồi, không
+        khởi tạo operation mới. Thiếu proof trả 401; sai proof/key, mã không tồn tại hoặc hết lưu giữ đều trả
+        404 giống nhau. Mất POST đầu thì replay cùng token/key/body để tìm lại ID. GET 200 là tra cứu, chỉ
+        SUCCEEDED có kết quả đăng ký 201 đã lưu. PROCESSING không lộ hồ sơ từng phần. Đề xuất giữ operation
+        đang chạy và thêm 7 ngày sau kết quả cuối; giữ tombstone/digest tối thiểu ngăn tái tạo key, D08 phải
+        chốt dọn. Không lưu PII trong tombstone. Hết cửa sổ replay trả IDEMPOTENCY_KEY_EXPIRED, không mở lại
+        token.
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Tiến trình đăng ký được phép đọc.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DriverRegistrationOperation"
+        "401":
+          description: REGISTRATION_PROOF_REQUIRED.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: REGISTRATION_OPERATION_NOT_FOUND.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        default:
+          $ref: "#/components/responses/ServerError"
 components:
   securitySchemes:
     bearerAuth:
@@ -1378,15 +2265,24 @@ components:
       description: |
         User JWT đã xác minh, Account ACTIVE và Session hợp lệ.
         Role và accountId không lấy từ request body.
-
+    driverRegistrationProof:
+      type: apiKey
+      in: header
+      name: Driver-Registration-Token
+      description: verificationToken gốc của đúng operation, dùng cùng Idempotency-Key gốc. Không phải JWT; không
+        đưa vào URL/log. Chỉ tra cứu/replay operation đã tiếp nhận, không cấp quyền đăng ký mới sau hết hạn.
   headers:
     NoStore:
       description: Không lưu response vào bộ nhớ đệm
-      schema: { type: string, enum: [no-store] }
+      schema:
+        type: string
+        enum:
+          - no-store
     RetryAfter:
       description: Số giây tối thiểu nên chờ trước khi thử lại
-      schema: { type: integer, minimum: 1 }
-
+      schema:
+        type: integer
+        minimum: 1
   parameters:
     IdempotencyKey:
       name: Idempotency-Key
@@ -1400,110 +2296,131 @@ components:
         type: string
         minLength: 1
         maxLength: 128
-        pattern: '^[A-Za-z0-9._:-]+$'
+        pattern: ^[A-Za-z0-9._:-]+$
     AccountId:
       name: accountId
       in: path
       required: true
-      schema: { $ref: '#/components/schemas/Identifier' }
+      schema:
+        $ref: "#/components/schemas/Identifier"
     DriverId:
       name: driverId
       in: path
       required: true
-      schema: { $ref: '#/components/schemas/Identifier' }
+      schema:
+        $ref: "#/components/schemas/Identifier"
     ApplicationId:
       name: applicationId
       in: path
       required: true
-      schema: { $ref: '#/components/schemas/Identifier' }
+      schema:
+        $ref: "#/components/schemas/Identifier"
     VehicleId:
       name: vehicleId
       in: path
       required: true
-      schema: { $ref: '#/components/schemas/Identifier' }
+      schema:
+        $ref: "#/components/schemas/Identifier"
     TripId:
       name: tripId
       in: path
       required: true
-      schema: { $ref: '#/components/schemas/Identifier' }
+      schema:
+        $ref: "#/components/schemas/Identifier"
     Limit:
       name: limit
       in: query
-      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
     Cursor:
       name: cursor
       in: query
       description: |
         Cursor opaque gắn với người gọi, endpoint, bộ lọc và limit.
         Không hợp lệ hoặc hết hạn trả 400.
-      schema: { type: string, minLength: 1, maxLength: 2048 }
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 2048
     OptionalFrom:
       name: from
       in: query
-      schema: { type: string, format: date-time }
+      schema:
+        type: string
+        format: date-time
     OptionalTo:
       name: to
       in: query
-      schema: { type: string, format: date-time }
-
+      schema:
+        type: string
+        format: date-time
   schemas:
     Identifier:
       type: string
       minLength: 1
       maxLength: 128
-
     Version:
       type: integer
       format: int64
       minimum: 1
-
     NonBlankText:
       type: string
       minLength: 1
       maxLength: 2000
-      pattern: '\S'
-
+      pattern: \S
     ReviewReason:
       type: string
       minLength: 1
       maxLength: 1000
-      pattern: '\S'
+      pattern: \S
       description: Lý do văn bản thuần, an toàn để thông báo cho người đăng ký
-
     Phone:
       type: string
-      pattern: '^\+[1-9][0-9]{7,14}$'
-
+      pattern: ^\+[1-9][0-9]{7,14}$
     LicenseNumber:
       type: string
       minLength: 1
       maxLength: 100
-      pattern: '\S'
-
+      pattern: \S
     AccountStatus:
       type: string
-      enum: [ACTIVE, INACTIVE, SUSPENDED]
-
+      enum:
+        - ACTIVE
+        - INACTIVE
+        - SUSPENDED
     DriverApprovalStatus:
       type: string
-      enum: [PENDING_APPROVAL, APPROVED, REJECTED]
-
+      enum:
+        - PENDING_APPROVAL
+        - APPROVED
+        - REJECTED
     ApplicationStatus:
       type: string
-      enum: [SUBMITTED, APPROVED, REJECTED]
-
+      enum:
+        - SUBMITTED
+        - APPROVED
+        - REJECTED
     DriverStatus:
       type: string
-      enum: [AVAILABLE, BUSY, OFFLINE]
-
+      enum:
+        - AVAILABLE
+        - BUSY
+        - OFFLINE
     VehicleStatus:
       type: string
-      enum: [ACTIVE, INACTIVE]
-
+      enum:
+        - ACTIVE
+        - INACTIVE
     VehicleType:
       type: string
-      enum: [STANDARD, PREMIUM, MOTORBIKE, VAN]
-
+      enum:
+        - STANDARD
+        - PREMIUM
+        - MOTORBIKE
+        - VAN
     TripStatus:
       type: string
       enum:
@@ -1514,39 +2431,51 @@ components:
         - COMPLETED
         - CANCELLED
         - ERROR
-
     IncidentStatus:
       type: string
-      enum: [OPEN, RESOLVED]
-
+      enum:
+        - OPEN
+        - RESOLVED
     IncidentIssueType:
       type: string
-      enum: [VEHICLE_BREAKDOWN, ACCIDENT, PASSENGER_ISSUE, OTHER]
-
+      enum:
+        - VEHICLE_BREAKDOWN
+        - ACCIDENT
+        - PASSENGER_ISSUE
+        - OTHER
     ResolutionAction:
       type: string
-      enum: [RESTORE_PREVIOUS_STATUS, CLOSE_ABNORMALLY]
-
+      enum:
+        - RESTORE_PREVIOUS_STATUS
+        - CLOSE_ABNORMALLY
     PaymentStatus:
       type: string
-      enum: [PENDING, PROCESSING, SUCCESS, FAILED, UNKNOWN]
-
+      enum:
+        - PENDING
+        - PROCESSING
+        - SUCCESS
+        - FAILED
+        - UNKNOWN
     PaymentMethod:
       type: string
-      enum: [CASH, E_WALLET, CREDIT_CARD]
-
+      enum:
+        - CASH
+        - E_WALLET
+        - CREDIT_CARD
     CreateVehicleRequest:
       type: object
       additionalProperties: false
-      required: [plateNumber, vehicleType]
+      required:
+        - plateNumber
+        - vehicleType
       properties:
         plateNumber:
           type: string
           minLength: 1
           maxLength: 30
-          pattern: '\S'
-        vehicleType: { $ref: '#/components/schemas/VehicleType' }
-
+          pattern: \S
+        vehicleType:
+          $ref: "#/components/schemas/VehicleType"
     SubmitDriverApplicationRequest:
       type: object
       additionalProperties: false
@@ -1567,7 +2496,7 @@ components:
           type: string
           minLength: 1
           maxLength: 200
-          pattern: '\S'
+          pattern: \S
         email:
           type: string
           format: email
@@ -1577,11 +2506,12 @@ components:
           format: password
           writeOnly: true
           minLength: 8
-          pattern: '\S'
+          pattern: \S
           description: Áp dụng chính sách mật khẩu API Auth; không trim hoặc ghi log
-        licenseNumber: { $ref: '#/components/schemas/LicenseNumber' }
-        vehicle: { $ref: '#/components/schemas/CreateVehicleRequest' }
-
+        licenseNumber:
+          $ref: "#/components/schemas/LicenseNumber"
+        vehicle:
+          $ref: "#/components/schemas/CreateVehicleRequest"
     DriverRegistrationResult:
       type: object
       additionalProperties: false
@@ -1595,30 +2525,57 @@ components:
         - applicationStatus
         - submittedAt
       properties:
-        accountId: { $ref: '#/components/schemas/Identifier' }
-        driverId: { $ref: '#/components/schemas/Identifier' }
-        applicationId: { $ref: '#/components/schemas/Identifier' }
-        accountStatus: { type: string, enum: [ACTIVE] }
-        approvalStatus: { type: string, enum: [PENDING_APPROVAL] }
-        driverStatus: { type: string, enum: [OFFLINE] }
-        applicationStatus: { type: string, enum: [SUBMITTED] }
-        submittedAt: { type: string, format: date-time }
-
+        accountId:
+          $ref: "#/components/schemas/Identifier"
+        driverId:
+          $ref: "#/components/schemas/Identifier"
+        applicationId:
+          $ref: "#/components/schemas/Identifier"
+        accountStatus:
+          type: string
+          enum:
+            - ACTIVE
+        approvalStatus:
+          type: string
+          enum:
+            - PENDING_APPROVAL
+        driverStatus:
+          type: string
+          enum:
+            - OFFLINE
+        applicationStatus:
+          type: string
+          enum:
+            - SUBMITTED
+        submittedAt:
+          type: string
+          format: date-time
     ApplicantSnapshot:
       type: object
       additionalProperties: false
-      required: [fullName, email, phone, phoneVerifiedAt, licenseNumber]
+      required:
+        - fullName
+        - email
+        - phone
+        - phoneVerifiedAt
+        - licenseNumber
       properties:
-        fullName: { type: string }
-        email: { type: string, format: email }
-        phone: { $ref: '#/components/schemas/Phone' }
-        phoneVerifiedAt: { type: string, format: date-time }
-        licenseNumber: { $ref: '#/components/schemas/LicenseNumber' }
+        fullName:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          $ref: "#/components/schemas/Phone"
+        phoneVerifiedAt:
+          type: string
+          format: date-time
+        licenseNumber:
+          $ref: "#/components/schemas/LicenseNumber"
       description: |
         Snapshot tại lúc nộp hồ sơ; dữ liệu nhạy cảm được mã hóa khi lưu.
         PhoneVerifiedAt chỉ xác nhận phone trong snapshot đã qua OTP.
         Không tự chứng minh một phone mới được sửa sau này cũng đã xác minh.
-
     DriverApplication:
       type: object
       additionalProperties: false
@@ -1633,85 +2590,149 @@ components:
         - submittedAt
         - updatedAt
       properties:
-        applicationId: { $ref: '#/components/schemas/Identifier' }
-        accountId: { $ref: '#/components/schemas/Identifier' }
-        driverId: { $ref: '#/components/schemas/Identifier' }
-        status: { $ref: '#/components/schemas/ApplicationStatus' }
-        applicant: { $ref: '#/components/schemas/ApplicantSnapshot' }
-        submittedVehicle: { $ref: '#/components/schemas/CreateVehicleRequest' }
-        version: { $ref: '#/components/schemas/Version' }
-        submittedAt: { type: string, format: date-time }
-        updatedAt: { type: string, format: date-time }
-        reviewedAt: { type: string, format: date-time }
-        reviewedByAccountId: { $ref: '#/components/schemas/Identifier' }
-        rejectionReason: { $ref: '#/components/schemas/ReviewReason' }
+        applicationId:
+          $ref: "#/components/schemas/Identifier"
+        accountId:
+          $ref: "#/components/schemas/Identifier"
+        driverId:
+          $ref: "#/components/schemas/Identifier"
+        status:
+          $ref: "#/components/schemas/ApplicationStatus"
+        applicant:
+          $ref: "#/components/schemas/ApplicantSnapshot"
+        submittedVehicle:
+          $ref: "#/components/schemas/CreateVehicleRequest"
+        version:
+          $ref: "#/components/schemas/Version"
+        submittedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        reviewedAt:
+          type: string
+          format: date-time
+        reviewedByAccountId:
+          $ref: "#/components/schemas/Identifier"
+        rejectionReason:
+          $ref: "#/components/schemas/ReviewReason"
         approvedVehicleId:
           allOf:
-            - $ref: '#/components/schemas/Identifier'
+            - $ref: "#/components/schemas/Identifier"
           description: Xe được ghi nhận tại lúc duyệt; không đổi theo phân công về sau
       oneOf:
         - properties:
-            status: { type: string, enum: [SUBMITTED] }
+            status:
+              type: string
+              enum:
+                - SUBMITTED
           not:
             anyOf:
-              - required: [reviewedAt]
-              - required: [reviewedByAccountId]
-              - required: [rejectionReason]
-              - required: [approvedVehicleId]
-        - required: [reviewedAt, reviewedByAccountId, approvedVehicleId]
+              - required:
+                  - reviewedAt
+              - required:
+                  - reviewedByAccountId
+              - required:
+                  - rejectionReason
+              - required:
+                  - approvedVehicleId
+        - required:
+            - reviewedAt
+            - reviewedByAccountId
+            - approvedVehicleId
           properties:
-            status: { type: string, enum: [APPROVED] }
+            status:
+              type: string
+              enum:
+                - APPROVED
           not:
-            required: [rejectionReason]
-        - required: [reviewedAt, reviewedByAccountId, rejectionReason]
+            required:
+              - rejectionReason
+        - required:
+            - reviewedAt
+            - reviewedByAccountId
+            - rejectionReason
           properties:
-            status: { type: string, enum: [REJECTED] }
+            status:
+              type: string
+              enum:
+                - REJECTED
           not:
-            required: [approvedVehicleId]
-
+            required:
+              - approvedVehicleId
     ReviewApplicationRequest:
       type: object
       additionalProperties: false
-      required: [expectedVersion, expectedDriverVersion, decision]
+      required:
+        - expectedVersion
+        - expectedDriverVersion
+        - decision
       properties:
-        expectedVersion: { $ref: '#/components/schemas/Version' }
-        expectedDriverVersion: { $ref: '#/components/schemas/Version' }
-        decision: { type: string, enum: [APPROVED, REJECTED] }
-        rejectionReason: { $ref: '#/components/schemas/ReviewReason' }
-        vehicleId: { $ref: '#/components/schemas/Identifier' }
-        expectedVehicleVersion: { $ref: '#/components/schemas/Version' }
+        expectedVersion:
+          $ref: "#/components/schemas/Version"
+        expectedDriverVersion:
+          $ref: "#/components/schemas/Version"
+        decision:
+          type: string
+          enum:
+            - APPROVED
+            - REJECTED
+        rejectionReason:
+          $ref: "#/components/schemas/ReviewReason"
+        vehicleId:
+          $ref: "#/components/schemas/Identifier"
+        expectedVehicleVersion:
+          $ref: "#/components/schemas/Version"
       oneOf:
         - properties:
-            decision: { type: string, enum: [APPROVED] }
+            decision:
+              type: string
+              enum:
+                - APPROVED
           not:
-            required: [rejectionReason]
+            required:
+              - rejectionReason
           oneOf:
-            - required: [vehicleId, expectedVehicleVersion]
+            - required:
+                - vehicleId
+                - expectedVehicleVersion
             - not:
                 anyOf:
-                  - required: [vehicleId]
-                  - required: [expectedVehicleVersion]
-        - required: [rejectionReason]
+                  - required:
+                      - vehicleId
+                  - required:
+                      - expectedVehicleVersion
+        - required:
+            - rejectionReason
           properties:
-            decision: { type: string, enum: [REJECTED] }
+            decision:
+              type: string
+              enum:
+                - REJECTED
           not:
             anyOf:
-              - required: [vehicleId]
-              - required: [expectedVehicleVersion]
-
+              - required:
+                  - vehicleId
+              - required:
+                  - expectedVehicleVersion
     ApplicationReviewResult:
       type: object
       additionalProperties: false
-      required: [application, driver]
+      required:
+        - application
+        - driver
       properties:
-        application: { $ref: '#/components/schemas/DriverApplication' }
-        driver: { $ref: '#/components/schemas/Driver' }
-        vehicle: { $ref: '#/components/schemas/Vehicle' }
+        application:
+          $ref: "#/components/schemas/DriverApplication"
+        driver:
+          $ref: "#/components/schemas/Driver"
+        vehicle:
+          $ref: "#/components/schemas/Vehicle"
       description: |
         APPROVED có vehicle và Driver.vehicleId tương ứng.
         REJECTED không có vehicle, Driver.vehicleId=null.
         Tất cả là snapshot của cùng transaction xét duyệt.
-
     AccountSummary:
       type: object
       additionalProperties: false
@@ -1726,43 +2747,103 @@ components:
         - createdAt
         - updatedAt
       properties:
-        accountId: { $ref: '#/components/schemas/Identifier' }
-        fullName: { type: string }
-        email: { type: string, format: email }
-        phone: { $ref: '#/components/schemas/Phone' }
-        role: { type: string, enum: [CUSTOMER, DRIVER] }
-        accountStatus: { $ref: '#/components/schemas/AccountStatus' }
-        version: { $ref: '#/components/schemas/Version' }
-        createdAt: { type: string, format: date-time }
-        updatedAt: { type: string, format: date-time }
-
+        accountId:
+          $ref: "#/components/schemas/Identifier"
+        fullName:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          $ref: "#/components/schemas/Phone"
+        role:
+          type: string
+          enum:
+            - CUSTOMER
+            - DRIVER
+        accountStatus:
+          $ref: "#/components/schemas/AccountStatus"
+        version:
+          $ref: "#/components/schemas/Version"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
     AccountStatusChangeRequest:
       type: object
       additionalProperties: false
-      required: [expectedVersion, accountStatus, reason]
+      required:
+        - expectedVersion
+        - accountStatus
+        - reason
       properties:
-        expectedVersion: { $ref: '#/components/schemas/Version' }
-        accountStatus: { $ref: '#/components/schemas/AccountStatus' }
-        reason: { $ref: '#/components/schemas/NonBlankText' }
-
+        expectedVersion:
+          $ref: "#/components/schemas/Version"
+        accountStatus:
+          $ref: "#/components/schemas/AccountStatus"
+        reason:
+          $ref: "#/components/schemas/NonBlankText"
     AccountStatusChangeResult:
       type: object
       additionalProperties: false
-      required: [account, activeBookingIds, activeTripIds, checkedAt]
+      required:
+        - account
+        - activeBookingIds
+        - activeTripIds
+        - checkedAt
+        - workLookupStatus
       properties:
-        account: { $ref: '#/components/schemas/AccountSummary' }
+        account:
+          $ref: "#/components/schemas/AccountSummary"
         activeBookingIds:
           type: array
-          items: { $ref: '#/components/schemas/Identifier' }
+          items:
+            $ref: "#/components/schemas/Identifier"
           description: |
             Booking PENDING hoặc FINDING_DRIVER của Customer.
             Account DRIVER trả mảng rỗng.
+          nullable: true
         activeTripIds:
           type: array
-          items: { $ref: '#/components/schemas/Identifier' }
+          items:
+            $ref: "#/components/schemas/Identifier"
           description: Trip chưa đóng liên quan đến tài khoản
-        checkedAt: { type: string, format: date-time }
-
+          nullable: true
+        checkedAt:
+          type: string
+          format: date-time
+        workLookupStatus:
+          type: string
+          enum:
+            - COMPLETE
+            - UNAVAILABLE
+      oneOf:
+        - properties:
+            workLookupStatus:
+              enum:
+                - COMPLETE
+            activeBookingIds:
+              type: array
+              nullable: false
+            activeTripIds:
+              type: array
+              nullable: false
+        - properties:
+            workLookupStatus:
+              enum:
+                - UNAVAILABLE
+            activeBookingIds:
+              type: array
+              nullable: true
+              enum:
+                - null
+            activeTripIds:
+              type: array
+              nullable: true
+              enum:
+                - null
     Driver:
       type: object
       additionalProperties: false
@@ -1777,62 +2858,94 @@ components:
         - createdAt
         - updatedAt
       properties:
-        driverId: { $ref: '#/components/schemas/Identifier' }
-        accountId: { $ref: '#/components/schemas/Identifier' }
-        licenseNumber: { $ref: '#/components/schemas/LicenseNumber' }
-        approvalStatus: { $ref: '#/components/schemas/DriverApprovalStatus' }
-        rejectionReason: { $ref: '#/components/schemas/ReviewReason' }
-        driverStatus: { $ref: '#/components/schemas/DriverStatus' }
+        driverId:
+          $ref: "#/components/schemas/Identifier"
+        accountId:
+          $ref: "#/components/schemas/Identifier"
+        licenseNumber:
+          $ref: "#/components/schemas/LicenseNumber"
+        approvalStatus:
+          $ref: "#/components/schemas/DriverApprovalStatus"
+        rejectionReason:
+          $ref: "#/components/schemas/ReviewReason"
+        driverStatus:
+          $ref: "#/components/schemas/DriverStatus"
         vehicleId:
           type: string
           nullable: true
           description: Suy ra từ VehicleAssignment đang hiệu lực
-        version: { $ref: '#/components/schemas/Version' }
-        createdAt: { type: string, format: date-time }
-        updatedAt: { type: string, format: date-time }
+        version:
+          $ref: "#/components/schemas/Version"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
       oneOf:
-        - required: [rejectionReason]
+        - required:
+            - rejectionReason
           properties:
-            approvalStatus: { type: string, enum: [REJECTED] }
+            approvalStatus:
+              type: string
+              enum:
+                - REJECTED
         - properties:
-            approvalStatus: { type: string, enum: [PENDING_APPROVAL, APPROVED] }
+            approvalStatus:
+              type: string
+              enum:
+                - PENDING_APPROVAL
+                - APPROVED
           not:
-            required: [rejectionReason]
-
+            required:
+              - rejectionReason
     DriverProfile:
       type: object
       additionalProperties: false
-      required: [driver]
+      required:
+        - driver
       properties:
-        driver: { $ref: '#/components/schemas/Driver' }
-        vehicle: { $ref: '#/components/schemas/Vehicle' }
+        driver:
+          $ref: "#/components/schemas/Driver"
+        vehicle:
+          $ref: "#/components/schemas/Vehicle"
       description: |
         vehicle có khi Driver.vehicleId khác null.
         Đọc Driver và phân công xe từ một snapshot nhất quán.
         Chưa phân công thì bỏ vehicle, không tạo xe giả.
-
     SetAvailabilityRequest:
       type: object
       additionalProperties: false
-      required: [expectedVersion, driverStatus]
+      required:
+        - expectedVersion
+        - driverStatus
       properties:
-        expectedVersion: { $ref: '#/components/schemas/Version' }
-        driverStatus: { type: string, enum: [AVAILABLE, OFFLINE] }
-
+        expectedVersion:
+          $ref: "#/components/schemas/Version"
+        driverStatus:
+          type: string
+          enum:
+            - AVAILABLE
+            - OFFLINE
     SetDriverVehicleRequest:
       type: object
       additionalProperties: false
-      required: [expectedDriverVersion, vehicleId]
+      required:
+        - expectedDriverVersion
+        - vehicleId
       properties:
-        expectedDriverVersion: { $ref: '#/components/schemas/Version' }
+        expectedDriverVersion:
+          $ref: "#/components/schemas/Version"
         vehicleId:
           type: string
           minLength: 1
           maxLength: 128
           nullable: true
-        expectedVehicleVersion: { $ref: '#/components/schemas/Version' }
+        expectedVehicleVersion:
+          $ref: "#/components/schemas/Version"
       oneOf:
-        - required: [expectedVehicleVersion]
+        - required:
+            - expectedVehicleVersion
           properties:
             vehicleId:
               type: string
@@ -1842,28 +2955,35 @@ components:
             vehicleId:
               type: string
               nullable: true
-              enum: [null]
+              enum:
+                - null
           not:
-            required: [expectedVehicleVersion]
-
+            required:
+              - expectedVehicleVersion
     UpdateVehicleRequest:
       type: object
       additionalProperties: false
-      required: [expectedVersion]
+      required:
+        - expectedVersion
       properties:
-        expectedVersion: { $ref: '#/components/schemas/Version' }
+        expectedVersion:
+          $ref: "#/components/schemas/Version"
         plateNumber:
           type: string
           minLength: 1
           maxLength: 30
-          pattern: '\S'
-        vehicleType: { $ref: '#/components/schemas/VehicleType' }
-        vehicleStatus: { $ref: '#/components/schemas/VehicleStatus' }
+          pattern: \S
+        vehicleType:
+          $ref: "#/components/schemas/VehicleType"
+        vehicleStatus:
+          $ref: "#/components/schemas/VehicleStatus"
       anyOf:
-        - required: [plateNumber]
-        - required: [vehicleType]
-        - required: [vehicleStatus]
-
+        - required:
+            - plateNumber
+        - required:
+            - vehicleType
+        - required:
+            - vehicleStatus
     Vehicle:
       type: object
       additionalProperties: false
@@ -1877,18 +2997,26 @@ components:
         - createdAt
         - updatedAt
       properties:
-        vehicleId: { $ref: '#/components/schemas/Identifier' }
-        plateNumber: { type: string }
-        vehicleType: { $ref: '#/components/schemas/VehicleType' }
-        vehicleStatus: { $ref: '#/components/schemas/VehicleStatus' }
+        vehicleId:
+          $ref: "#/components/schemas/Identifier"
+        plateNumber:
+          type: string
+        vehicleType:
+          $ref: "#/components/schemas/VehicleType"
+        vehicleStatus:
+          $ref: "#/components/schemas/VehicleStatus"
         assignedDriverId:
           type: string
           nullable: true
           description: Suy ra từ VehicleAssignment hiện tại
-        version: { $ref: '#/components/schemas/Version' }
-        createdAt: { type: string, format: date-time }
-        updatedAt: { type: string, format: date-time }
-
+        version:
+          $ref: "#/components/schemas/Version"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
     OperationalTripSummary:
       type: object
       additionalProperties: false
@@ -1903,30 +3031,47 @@ components:
         - createdAt
         - updatedAt
       properties:
-        tripId: { $ref: '#/components/schemas/Identifier' }
-        bookingId: { $ref: '#/components/schemas/Identifier' }
-        customerId: { $ref: '#/components/schemas/Identifier' }
-        driverId: { $ref: '#/components/schemas/Identifier' }
-        vehicleId: { $ref: '#/components/schemas/Identifier' }
-        tripStatus: { $ref: '#/components/schemas/TripStatus' }
-        version: { $ref: '#/components/schemas/Version' }
+        tripId:
+          $ref: "#/components/schemas/Identifier"
+        bookingId:
+          $ref: "#/components/schemas/Identifier"
+        customerId:
+          $ref: "#/components/schemas/Identifier"
+        driverId:
+          $ref: "#/components/schemas/Identifier"
+        vehicleId:
+          $ref: "#/components/schemas/Identifier"
+        tripStatus:
+          $ref: "#/components/schemas/TripStatus"
+        version:
+          $ref: "#/components/schemas/Version"
         closedAt:
           type: string
           format: date-time
           description: Có với COMPLETED, CANCELLED hoặc ERROR đã đóng
-        createdAt: { type: string, format: date-time }
-        updatedAt: { type: string, format: date-time }
-
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
     CreateIncidentRequest:
       type: object
       additionalProperties: false
-      required: [tripId, expectedTripVersion, issueType, description]
+      required:
+        - tripId
+        - expectedTripVersion
+        - issueType
+        - description
       properties:
-        tripId: { $ref: '#/components/schemas/Identifier' }
-        expectedTripVersion: { $ref: '#/components/schemas/Version' }
-        issueType: { $ref: '#/components/schemas/IncidentIssueType' }
-        description: { $ref: '#/components/schemas/NonBlankText' }
-
+        tripId:
+          $ref: "#/components/schemas/Identifier"
+        expectedTripVersion:
+          $ref: "#/components/schemas/Version"
+        issueType:
+          $ref: "#/components/schemas/IncidentIssueType"
+        description:
+          $ref: "#/components/schemas/NonBlankText"
     Incident:
       type: object
       additionalProperties: false
@@ -1939,95 +3084,147 @@ components:
         - reportedByAccountId
         - createdAt
       properties:
-        incidentId: { $ref: '#/components/schemas/Identifier' }
-        tripId: { $ref: '#/components/schemas/Identifier' }
-        issueType: { $ref: '#/components/schemas/IncidentIssueType' }
-        description: { type: string }
-        status: { $ref: '#/components/schemas/IncidentStatus' }
-        reportedByAccountId: { $ref: '#/components/schemas/Identifier' }
-        createdAt: { type: string, format: date-time }
-        resolutionAction: { $ref: '#/components/schemas/ResolutionAction' }
-        resolutionNote: { type: string }
-        resolvedByAccountId: { $ref: '#/components/schemas/Identifier' }
-        resolvedAt: { type: string, format: date-time }
+        incidentId:
+          $ref: "#/components/schemas/Identifier"
+        tripId:
+          $ref: "#/components/schemas/Identifier"
+        issueType:
+          $ref: "#/components/schemas/IncidentIssueType"
+        description:
+          type: string
+        status:
+          $ref: "#/components/schemas/IncidentStatus"
+        reportedByAccountId:
+          $ref: "#/components/schemas/Identifier"
+        createdAt:
+          type: string
+          format: date-time
+        resolutionAction:
+          $ref: "#/components/schemas/ResolutionAction"
+        resolutionNote:
+          type: string
+        resolvedByAccountId:
+          $ref: "#/components/schemas/Identifier"
+        resolvedAt:
+          type: string
+          format: date-time
       oneOf:
         - properties:
-            status: { type: string, enum: [OPEN] }
+            status:
+              type: string
+              enum:
+                - OPEN
           not:
             anyOf:
-              - required: [resolutionAction]
-              - required: [resolutionNote]
-              - required: [resolvedByAccountId]
-              - required: [resolvedAt]
+              - required:
+                  - resolutionAction
+              - required:
+                  - resolutionNote
+              - required:
+                  - resolvedByAccountId
+              - required:
+                  - resolvedAt
         - required:
             - resolutionAction
             - resolutionNote
             - resolvedByAccountId
             - resolvedAt
           properties:
-            status: { type: string, enum: [RESOLVED] }
-
+            status:
+              type: string
+              enum:
+                - RESOLVED
     TripStateSnapshot:
       type: object
       additionalProperties: false
-      required: [tripId, tripStatus, version, updatedAt]
+      required:
+        - tripId
+        - tripStatus
+        - version
+        - updatedAt
       properties:
-        tripId: { $ref: '#/components/schemas/Identifier' }
-        tripStatus: { $ref: '#/components/schemas/TripStatus' }
-        version: { $ref: '#/components/schemas/Version' }
+        tripId:
+          $ref: "#/components/schemas/Identifier"
+        tripStatus:
+          $ref: "#/components/schemas/TripStatus"
+        version:
+          $ref: "#/components/schemas/Version"
         statusBeforeError:
           type: string
-          enum: [DRIVER_ASSIGNED, ARRIVED_PICKUP, PICKED_UP, IN_PROGRESS]
-        closedAt: { type: string, format: date-time }
-        closeReason: { type: string }
-        updatedAt: { type: string, format: date-time }
+          enum:
+            - DRIVER_ASSIGNED
+            - ARRIVED_PICKUP
+            - PICKED_UP
+            - IN_PROGRESS
+        closedAt:
+          type: string
+          format: date-time
+        closeReason:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
       description: |
         Snapshot sau thao tác.
         ERROR phải giữ statusBeforeError.
         Khôi phục thành công không còn statusBeforeError.
         Đóng bất thường có closedAt và closeReason.
         Chi tiết đầy đủ đọc từ Trip API.
-
     IncidentCreationResult:
       type: object
       additionalProperties: false
-      required: [incident, trip]
+      required:
+        - incident
+        - trip
       properties:
-        incident: { $ref: '#/components/schemas/Incident' }
-        trip: { $ref: '#/components/schemas/TripStateSnapshot' }
+        incident:
+          $ref: "#/components/schemas/Incident"
+        trip:
+          $ref: "#/components/schemas/TripStateSnapshot"
       description: Incident OPEN và Trip ERROR chưa đóng
-
     ResolveTripErrorRequest:
       type: object
       additionalProperties: false
-      required: [expectedTripVersion, resolutionAction, resolutionNote]
+      required:
+        - expectedTripVersion
+        - resolutionAction
+        - resolutionNote
       properties:
-        expectedTripVersion: { $ref: '#/components/schemas/Version' }
-        resolutionAction: { $ref: '#/components/schemas/ResolutionAction' }
-        resolutionNote: { $ref: '#/components/schemas/NonBlankText' }
-
+        expectedTripVersion:
+          $ref: "#/components/schemas/Version"
+        resolutionAction:
+          $ref: "#/components/schemas/ResolutionAction"
+        resolutionNote:
+          $ref: "#/components/schemas/NonBlankText"
     ResolveTripErrorResult:
       type: object
       additionalProperties: false
       required:
         - trip
-        - driver
         - resolvedIncidentIds
         - resolutionAction
         - resolvedAt
         - resolvedByAccountId
       properties:
-        trip: { $ref: '#/components/schemas/TripStateSnapshot' }
-        driver: { $ref: '#/components/schemas/Driver' }
+        trip:
+          $ref: "#/components/schemas/TripStateSnapshot"
+        driver:
+          $ref: "#/components/schemas/Driver"
         resolvedIncidentIds:
           type: array
           minItems: 1
           uniqueItems: true
-          items: { $ref: '#/components/schemas/Identifier' }
-        resolutionAction: { $ref: '#/components/schemas/ResolutionAction' }
-        resolvedAt: { type: string, format: date-time }
-        resolvedByAccountId: { $ref: '#/components/schemas/Identifier' }
-
+          items:
+            $ref: "#/components/schemas/Identifier"
+        resolutionAction:
+          $ref: "#/components/schemas/ResolutionAction"
+        resolvedAt:
+          type: string
+          format: date-time
+        resolvedByAccountId:
+          $ref: "#/components/schemas/Identifier"
+      description: Trip/Incident là kết quả commit tại Trip; driver tùy chọn là dữ liệu đọc từ Driver, không cùng
+        transaction. Khi đóng bất thường, xem API closure để biết xác nhận giải phóng.
     CreatePricingRequest:
       type: object
       additionalProperties: false
@@ -2039,14 +3236,26 @@ components:
         - pricePerMinute
         - reason
       properties:
-        vehicleType: { $ref: '#/components/schemas/VehicleType' }
-        currency: { type: string, enum: [VND] }
-        baseFare: { type: number, minimum: 0 }
-        pricePerKm: { type: number, minimum: 0 }
-        pricePerMinute: { type: number, minimum: 0 }
-        effectiveFrom: { type: string, format: date-time }
-        reason: { $ref: '#/components/schemas/NonBlankText' }
-
+        vehicleType:
+          $ref: "#/components/schemas/VehicleType"
+        currency:
+          type: string
+          enum:
+            - VND
+        baseFare:
+          type: number
+          minimum: 0
+        pricePerKm:
+          type: number
+          minimum: 0
+        pricePerMinute:
+          type: number
+          minimum: 0
+        effectiveFrom:
+          type: string
+          format: date-time
+        reason:
+          $ref: "#/components/schemas/NonBlankText"
     PricingConfig:
       type: object
       additionalProperties: false
@@ -2062,17 +3271,33 @@ components:
         - createdAt
         - createdByAccountId
       properties:
-        pricingVersionId: { $ref: '#/components/schemas/Identifier' }
-        vehicleType: { $ref: '#/components/schemas/VehicleType' }
-        currency: { type: string, enum: [VND] }
-        baseFare: { type: number, minimum: 0 }
-        pricePerKm: { type: number, minimum: 0 }
-        pricePerMinute: { type: number, minimum: 0 }
-        effectiveFrom: { type: string, format: date-time }
-        reason: { type: string }
-        createdAt: { type: string, format: date-time }
-        createdByAccountId: { $ref: '#/components/schemas/Identifier' }
-
+        pricingVersionId:
+          $ref: "#/components/schemas/Identifier"
+        vehicleType:
+          $ref: "#/components/schemas/VehicleType"
+        currency:
+          type: string
+          enum:
+            - VND
+        baseFare:
+          type: number
+          minimum: 0
+        pricePerKm:
+          type: number
+          minimum: 0
+        pricePerMinute:
+          type: number
+          minimum: 0
+        effectiveFrom:
+          type: string
+          format: date-time
+        reason:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        createdByAccountId:
+          $ref: "#/components/schemas/Identifier"
     OperationalPaymentSummary:
       type: object
       additionalProperties: false
@@ -2089,29 +3314,56 @@ components:
         - createdAt
         - updatedAt
       properties:
-        paymentId: { $ref: '#/components/schemas/Identifier' }
-        tripId: { $ref: '#/components/schemas/Identifier' }
-        customerId: { $ref: '#/components/schemas/Identifier' }
-        method: { $ref: '#/components/schemas/PaymentMethod' }
-        paymentStatus: { $ref: '#/components/schemas/PaymentStatus' }
-        amount: { type: integer, format: int64, minimum: 0 }
-        currency: { type: string, enum: [VND] }
-        requiresReview: { type: boolean }
-        version: { $ref: '#/components/schemas/Version' }
-        paidAt: { type: string, format: date-time }
-        createdAt: { type: string, format: date-time }
-        updatedAt: { type: string, format: date-time }
+        paymentId:
+          $ref: "#/components/schemas/Identifier"
+        tripId:
+          $ref: "#/components/schemas/Identifier"
+        customerId:
+          $ref: "#/components/schemas/Identifier"
+        method:
+          $ref: "#/components/schemas/PaymentMethod"
+        paymentStatus:
+          $ref: "#/components/schemas/PaymentStatus"
+        amount:
+          type: integer
+          format: int64
+          minimum: 0
+        currency:
+          type: string
+          enum:
+            - VND
+        requiresReview:
+          type: boolean
+        version:
+          $ref: "#/components/schemas/Version"
+        paidAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
       oneOf:
-        - required: [paidAt]
+        - required:
+            - paidAt
           properties:
-            paymentStatus: { type: string, enum: [SUCCESS] }
+            paymentStatus:
+              type: string
+              enum:
+                - SUCCESS
         - properties:
             paymentStatus:
               type: string
-              enum: [PENDING, PROCESSING, FAILED, UNKNOWN]
+              enum:
+                - PENDING
+                - PROCESSING
+                - FAILED
+                - UNKNOWN
           not:
-            required: [paidAt]
-
+            required:
+              - paidAt
     OperationalSummary:
       type: object
       additionalProperties: false
@@ -2129,40 +3381,75 @@ components:
         - collectedRevenue
         - currency
       properties:
-        from: { type: string, format: date-time }
-        to: { type: string, format: date-time }
-        snapshotAt: { type: string, format: date-time }
-        totalTrips: { type: integer, minimum: 0 }
-        completedTrips: { type: integer, minimum: 0 }
-        cancelledTrips: { type: integer, minimum: 0 }
-        abnormalClosedTrips: { type: integer, minimum: 0 }
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        snapshotAt:
+          type: string
+          format: date-time
+        totalTrips:
+          type: integer
+          minimum: 0
+        completedTrips:
+          type: integer
+          minimum: 0
+        cancelledTrips:
+          type: integer
+          minimum: 0
+        abnormalClosedTrips:
+          type: integer
+          minimum: 0
         cancellationRate:
           type: number
           nullable: true
           minimum: 0
           maximum: 1
-        noDriverFoundBookings: { type: integer, minimum: 0 }
-        successfulPayments: { type: integer, minimum: 0 }
-        collectedRevenue: { type: integer, format: int64, minimum: 0 }
-        currency: { type: string, enum: [VND] }
-
+        noDriverFoundBookings:
+          type: integer
+          minimum: 0
+        successfulPayments:
+          type: integer
+          minimum: 0
+        collectedRevenue:
+          type: integer
+          format: int64
+          minimum: 0
+        currency:
+          type: string
+          enum:
+            - VND
     ServiceHealth:
       type: object
       additionalProperties: false
-      required: [name, status, checkedAt]
+      required:
+        - name
+        - status
+        - checkedAt
       properties:
         name:
           type: string
           enum:
             - gateway
-            - cab-core-api
-            - cab-core-worker
-            - rating
-            - notification
+            - identity-service
+            - customer-service
+            - driver-service
+            - booking-service
+            - trip-service
+            - payment-service
+            - rating-service
+            - notification-service
             - postgres
             - redis
             - rabbitmq
-        status: { type: string, enum: [UP, DOWN, UNKNOWN] }
+        status:
+          type: string
+          enum:
+            - UP
+            - DOWN
+            - UNKNOWN
         checkedAt:
           type: string
           format: date-time
@@ -2180,260 +3467,401 @@ components:
       description: |
         Mỗi name xuất hiện tối đa một lần trong SystemHealth.
         UP chỉ dùng khi kiểm tra đáp ứng điều kiện và còn đủ mới.
-
     SystemHealth:
       type: object
       additionalProperties: false
-      required: [status, checkedAt, services]
+      required:
+        - status
+        - checkedAt
+        - services
       properties:
-        status: { type: string, enum: [UP, DEGRADED] }
-        checkedAt: { type: string, format: date-time }
+        status:
+          type: string
+          enum:
+            - UP
+            - DEGRADED
+        checkedAt:
+          type: string
+          format: date-time
         services:
           type: array
-          minItems: 8
-          maxItems: 8
-          items: { $ref: '#/components/schemas/ServiceHealth' }
-      description: |
-        Bao gồm đủ tám thành phần, mỗi name một lần.
-        Có DOWN hoặc UNKNOWN ở thành phần bắt buộc thì status=DEGRADED.
-        HTTP 200 chỉ khi status=UP; DEGRADED trả HTTP 503.
-        Probe các thành phần không diễn ra nguyên tử.
+          minItems: 12
+          maxItems: 12
+          items:
+            $ref: "#/components/schemas/ServiceHealth"
+      description: >
+        Bao gồm đủ 12 thành phần: Gateway, tám MS và PostgreSQL/Redis/RabbitMQ, mỗi name một lần. Worker bắt
+        buộc gộp vào kết quả MS chủ sở hữu, không là MS mới.
 
+        Có DOWN hoặc UNKNOWN ở thành phần bắt buộc thì status=DEGRADED.
+
+        HTTP 200 chỉ khi status=UP; DEGRADED trả HTTP 503.
+
+        Probe các thành phần không diễn ra nguyên tử.
     NextCursor:
       type: string
       nullable: true
       description: null khi không còn trang tiếp theo tại thời điểm truy vấn
-
     ApplicationPage:
       type: object
       additionalProperties: false
-      required: [items, nextCursor]
+      required:
+        - items
+        - nextCursor
       properties:
         items:
           type: array
           maxItems: 100
-          items: { $ref: '#/components/schemas/DriverApplication' }
-        nextCursor: { $ref: '#/components/schemas/NextCursor' }
-
+          items:
+            $ref: "#/components/schemas/DriverApplication"
+        nextCursor:
+          $ref: "#/components/schemas/NextCursor"
     AccountPage:
       type: object
       additionalProperties: false
-      required: [items, nextCursor]
+      required:
+        - items
+        - nextCursor
       properties:
         items:
           type: array
           maxItems: 100
-          items: { $ref: '#/components/schemas/AccountSummary' }
-        nextCursor: { $ref: '#/components/schemas/NextCursor' }
-
+          items:
+            $ref: "#/components/schemas/AccountSummary"
+        nextCursor:
+          $ref: "#/components/schemas/NextCursor"
     DriverPage:
       type: object
       additionalProperties: false
-      required: [items, nextCursor]
+      required:
+        - items
+        - nextCursor
       properties:
         items:
           type: array
           maxItems: 100
-          items: { $ref: '#/components/schemas/Driver' }
-        nextCursor: { $ref: '#/components/schemas/NextCursor' }
-
+          items:
+            $ref: "#/components/schemas/Driver"
+        nextCursor:
+          $ref: "#/components/schemas/NextCursor"
     VehiclePage:
       type: object
       additionalProperties: false
-      required: [items, nextCursor]
+      required:
+        - items
+        - nextCursor
       properties:
         items:
           type: array
           maxItems: 100
-          items: { $ref: '#/components/schemas/Vehicle' }
-        nextCursor: { $ref: '#/components/schemas/NextCursor' }
-
+          items:
+            $ref: "#/components/schemas/Vehicle"
+        nextCursor:
+          $ref: "#/components/schemas/NextCursor"
     TripPage:
       type: object
       additionalProperties: false
-      required: [items, nextCursor]
+      required:
+        - items
+        - nextCursor
       properties:
         items:
           type: array
           maxItems: 100
-          items: { $ref: '#/components/schemas/OperationalTripSummary' }
-        nextCursor: { $ref: '#/components/schemas/NextCursor' }
-
+          items:
+            $ref: "#/components/schemas/OperationalTripSummary"
+        nextCursor:
+          $ref: "#/components/schemas/NextCursor"
     IncidentPage:
       type: object
       additionalProperties: false
-      required: [items, nextCursor]
+      required:
+        - items
+        - nextCursor
       properties:
         items:
           type: array
           maxItems: 100
-          items: { $ref: '#/components/schemas/Incident' }
-        nextCursor: { $ref: '#/components/schemas/NextCursor' }
-
+          items:
+            $ref: "#/components/schemas/Incident"
+        nextCursor:
+          $ref: "#/components/schemas/NextCursor"
     PricingPage:
       type: object
       additionalProperties: false
-      required: [items, nextCursor]
+      required:
+        - items
+        - nextCursor
       properties:
         items:
           type: array
           maxItems: 100
-          items: { $ref: '#/components/schemas/PricingConfig' }
-        nextCursor: { $ref: '#/components/schemas/NextCursor' }
-
+          items:
+            $ref: "#/components/schemas/PricingConfig"
+        nextCursor:
+          $ref: "#/components/schemas/NextCursor"
     PaymentPage:
       type: object
       additionalProperties: false
-      required: [items, nextCursor]
+      required:
+        - items
+        - nextCursor
       properties:
         items:
           type: array
           maxItems: 100
-          items: { $ref: '#/components/schemas/OperationalPaymentSummary' }
-        nextCursor: { $ref: '#/components/schemas/NextCursor' }
-
+          items:
+            $ref: "#/components/schemas/OperationalPaymentSummary"
+        nextCursor:
+          $ref: "#/components/schemas/NextCursor"
     ErrorDetail:
       type: object
       additionalProperties: false
-      required: [field, message]
+      required:
+        - field
+        - message
       properties:
-        field: { type: string }
-        message: { type: string }
-
+        field:
+          type: string
+        message:
+          type: string
     ErrorResponse:
       type: object
       additionalProperties: false
-      required: [errorCode, message, correlationId]
+      required:
+        - errorCode
+        - message
+        - correlationId
       properties:
-        errorCode: { type: string }
-        message: { type: string }
+        errorCode:
+          type: string
+        message:
+          type: string
         details:
           type: array
-          items: { $ref: '#/components/schemas/ErrorDetail' }
-        correlationId: { type: string }
-
+          items:
+            $ref: "#/components/schemas/ErrorDetail"
+        correlationId:
+          type: string
+    DriverRegistrationOperation:
+      type: object
+      additionalProperties: false
+      required:
+        - operationId
+        - status
+        - createdAt
+        - updatedAt
+      properties:
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        status:
+          type: string
+          enum:
+            - PROCESSING
+            - SUCCEEDED
+            - FAILED
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        result:
+          $ref: "#/components/schemas/DriverRegistrationResult"
+        error:
+          $ref: "#/components/schemas/ErrorResponse"
+      oneOf:
+        - properties:
+            status:
+              enum:
+                - PROCESSING
+          not:
+            anyOf:
+              - required:
+                  - result
+              - required:
+                  - error
+        - properties:
+            status:
+              enum:
+                - SUCCEEDED
+          required:
+            - result
+          not:
+            required:
+              - error
+        - properties:
+            status:
+              enum:
+                - FAILED
+          required:
+            - error
+          not:
+            required:
+              - result
   responses:
     ApplicationRead:
       description: Hồ sơ đăng ký tài xế
       headers:
-        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/DriverApplication' }
-
+          schema:
+            $ref: "#/components/schemas/DriverApplication"
     DriverRead:
       description: Snapshot hồ sơ tài xế
       headers:
-        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Driver' }
-
+          schema:
+            $ref: "#/components/schemas/Driver"
     DriverProfileRead:
       description: Hồ sơ tài xế và xe đang phân công nếu có
       headers:
-        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/DriverProfile' }
-
+          schema:
+            $ref: "#/components/schemas/DriverProfile"
     VehicleRead:
       description: Snapshot hồ sơ xe
       headers:
-        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Vehicle' }
-
+          schema:
+            $ref: "#/components/schemas/Vehicle"
     BadRequest:
       description: |
         VALIDATION_ERROR, INVALID_CURSOR, CURSOR_EXPIRED,
         INVALID_TIME_RANGE hoặc VERIFICATION_TOKEN_INVALID_OR_EXPIRED.
         Không nhận trường request hoặc query ngoài hợp đồng.
       headers:
-        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/ErrorResponse' }
-
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     Unauthorized:
       description: |
         UNAUTHENTICATED.
         Thiếu JWT, JWT không hợp lệ, hết hạn, bị sửa hoặc Session bị thu hồi.
       headers:
-        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/ErrorResponse' }
-
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     Forbidden:
       description: |
         FORBIDDEN hoặc ACCOUNT_INACTIVE.
         Sai vai trò hoặc tài khoản không được phép thực hiện thao tác.
         Không cho phép quản lý OPERATOR qua API tài khoản trong file này.
       headers:
-        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/ErrorResponse' }
-
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     NotFound:
       description: |
         Không tìm thấy đối tượng hoặc đối tượng ngoài phạm vi truy cập.
         Mã lỗi theo tài nguyên như ACCOUNT_NOT_FOUND, DRIVER_NOT_FOUND,
         APPLICATION_NOT_FOUND, VEHICLE_NOT_FOUND hoặc TRIP_NOT_FOUND.
       headers:
-        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/ErrorResponse' }
-
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     Conflict:
-      description: |
+      description: >
         Xung đột version, dữ liệu duy nhất hoặc điều kiện nghiệp vụ.
 
+
         Các mã lỗi:
+
         - VERSION_CONFLICT.
+
         - IDEMPOTENCY_CONFLICT.
+
         - REQUEST_IN_PROGRESS.
+
         - CONTACT_ALREADY_EXISTS.
+
         - LICENSE_ALREADY_EXISTS.
+
         - PLATE_ALREADY_EXISTS.
+
         - VERIFICATION_TOKEN_USED.
+
         - APPLICATION_ALREADY_REVIEWED.
+
         - APPLICATION_NOT_REVIEWABLE.
+
         - DRIVER_HAS_ACTIVE_TRIP.
+
         - DRIVER_NOT_OFFLINE.
+
         - DRIVER_NOT_ELIGIBLE.
+
         - VEHICLE_HAS_ACTIVE_TRIP.
+
         - VEHICLE_ALREADY_ASSIGNED.
+
         - VEHICLE_NOT_ACTIVE.
+
         - VEHICLE_APPLICATION_MISMATCH.
+
         - LOCATION_STALE.
+
         - LOCATION_UNAVAILABLE.
+
         - TRIP_NOT_ACTIVE.
+
         - TRIP_NOT_RESOLVABLE.
+
         - PRICING_EFFECTIVE_TIME_CONFLICT.
 
+
         Không ghi đè dữ liệu mới hơn hoặc bỏ qua ràng buộc để tiếp tục.
+
+
+        RESOURCE_RESERVED: tài nguyên đang được Saga/Trip giữ. REGISTRATION_FAILED: cấp phát đã thất bại cuối.
+        IDEMPOTENCY_KEY_EXPIRED: hết cửa sổ replay, không tạo lại operation. Đăng ký Driver còn xử lý trả 202
+        thay REQUEST_IN_PROGRESS.
       headers:
-        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/ErrorResponse' }
-
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     TooManyRequests:
       description: |
         RATE_LIMIT_EXCEEDED.
         Vượt hạn mức được cấu hình tại Gateway.
         Khi gửi lại thao tác ghi, giữ nguyên Idempotency-Key và nội dung.
       headers:
-        Cache-Control: { $ref: '#/components/headers/NoStore' }
-        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/ErrorResponse' }
-
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     ServiceUnavailable:
       description: |
         SERVICE_UNAVAILABLE.
@@ -2442,18 +3870,21 @@ components:
         Nếu mất kết quả thao tác ghi, gửi lại cùng key và nội dung.
         Không tạo thao tác mới chỉ vì mất response.
       headers:
-        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/ErrorResponse' }
-
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     ServerError:
       description: |
         INTERNAL_ERROR.
         Không trả stack trace, secret hoặc chuỗi kết nối.
         Client dùng cùng key và nội dung khi cần xác định kết quả thao tác ghi.
       headers:
-        Cache-Control: { $ref: '#/components/headers/NoStore' }
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
