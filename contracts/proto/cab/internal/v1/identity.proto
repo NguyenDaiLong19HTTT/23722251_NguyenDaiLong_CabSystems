@@ -1,0 +1,21 @@
+syntax = "proto3";
+package cab.internal.v1;
+
+import "google/protobuf/timestamp.proto";
+import "cab/internal/v1/common.proto";
+
+service IdentityInternalService {
+  rpc VerifyAccountEligibility(VerifyAccountEligibilityRequest) returns (AccountEligibility);
+  rpc VerifyUserIdentity(VerifyUserIdentityRequest) returns (Principal);
+  rpc VerifyRatingUserIdentity(VerifyUserIdentityRequest) returns (Principal);
+  rpc GetAccountContact(GetAccountContactRequest) returns (AccountContact);
+}
+// User token is metadata x-cab-user-authorization, NEVER in protobuf or durable jobs.
+message VerifyUserIdentityRequest { repeated Role allowed_roles = 1; }
+message GetAccountContactRequest { string account_id = 1; ContactPurpose purpose = 2; optional string trip_id = 3; }
+enum ContactPurpose { CONTACT_PURPOSE_UNSPECIFIED = 0; OWN_PROFILE = 1; OPERATIONS_PROFILE = 2; ACTIVE_TRIP_CONTACT = 3; }
+message AccountContact { string account_id = 1; string full_name = 2; optional string email = 3; optional string phone = 4; uint64 account_version = 5; google.protobuf.Timestamp verified_at = 6; }
+
+// Worker eligibility only. Does NOT authorize user requests or resurrect revoked sessions.
+message VerifyAccountEligibilityRequest { string account_id = 1; Role expected_role = 2; }
+message AccountEligibility { string account_id = 1; Role role = 2; uint64 account_version = 3; google.protobuf.Timestamp verified_at = 4; }

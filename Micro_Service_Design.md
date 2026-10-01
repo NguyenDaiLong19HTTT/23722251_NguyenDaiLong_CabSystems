@@ -339,7 +339,7 @@ Driver Service duyệt Application, kiểm tra biển số/giấy phép, tạo h
 
 Identity khóa Account, thu hồi Session và ghi outbox. Dịch vụ nhận sự kiện chặn hoạt động mới, hủy offer chưa nhận và giữ BUSY nếu còn Trip. Không tự hủy Trip. RPC nhạy cảm xác minh Account/Session hiện tại thay vì chỉ dùng cache.
 
-Chính sách phân xử thao tác đã được cấp quyền trước khi Account bị khóa nhưng chưa commit ở dịch vụ khác phải được chốt trong hợp đồng; không tuyên bố chúng cùng một transaction hoặc được xử lý nguyên tử nhờ event.
+Chính sách in-flight được chốt tại contracts/SECURITY.md: quyền tại tiếp nhận, cửa sổ verify→commit receipt tối đa 2 giây; không atomic xuyên DB. Worker phục hồi chỉ tiếp tục operation đã được cấp quyền.
 
 ### 6.8. Rating và Notification
 
@@ -355,7 +355,7 @@ Chỉ trả kết quả cuối cùng 200/201 khi các điều kiện thành côn
 
 Đề xuất cần duyệt khi sửa API: nếu chưa xong trong ngân sách chờ, trả 202 cùng operationId và đường dẫn tra cứu tiến trình; replay cùng key trả trạng thái tiến trình hoặc kết quả cuối cùng, không tạo operation mới. API tra cứu chỉ trả cho đúng người dùng/quyền vận hành và không lộ payload nội bộ. Đối với đăng ký chưa có user token phải thiết kế bằng chứng truy cập riêng, không dùng operationId đoán được làm quyền truy cập.
 
-Đề xuất 202 và endpoint operation chưa thuộc YAML hiện tại. Phải đặc tả request/response, xác thực, lỗi, lưu giữ và test trước khi triển khai. Không âm thầm đổi 200/201 trong code.
+YAML 1.3 đã đặc tả 202 và endpoint operation cho các luồng liên quan. Triển khai đúng request/response, bằng chứng tra cứu và lỗi tại YAML; không suy timeout thành rollback. Hợp đồng liên dịch vụ xem contracts/RPC.md.
 
 ## 7. GPS, cước và thanh toán
 
@@ -411,7 +411,7 @@ Envelope nội bộ đề xuất gồm eventId, eventType, schemaVersion, source
 
 Đây không phải yêu cầu thêm mọi trường vào NotificationDomainEvent hiện tại. Message gửi Notification phải map sang schema riêng có referenceType/id, recipientAccountIds và snapshot; không serialize toàn bộ OutboxEvent. Nguồn nhận được xác minh bằng quyền broker, không chỉ tin trường source.
 
-API 06 hiện chỉ cho source=CAB_CORE. Cần version hóa/đổi hợp đồng để cho phép các producer mới với allowlist theo eventType; chưa được phát payload mới trước khi consumer và schema được cập nhật.
+API 06 hiện dùng NotificationDomainEvent schemaVersion=2 với nhiều producer. Schema thực thi, routing/ACL và cutover CAB_CORE v1 nằm tại contracts/EVENTS.md; không serialize generic domain envelope thành notification.
 
 ### 8.3. Bảng sự kiện nghiệp vụ chính
 
@@ -431,7 +431,7 @@ API 06 hiện chỉ cho source=CAB_CORE. Cần version hóa/đổi hợp đồng
 | Metrics được xác nhận | Trip | Payment đủ dữ liệu phát hành Fare; schema nội bộ cần đặc tả |
 | PAYMENT_SUCCESS/FAILED/UNKNOWN/REVIEW_REQUIRED | Payment | Notification; không quyết định quyền tạo Rating |
 
-Những tên mô tả bằng tiếng Việt trong bảng là sự kiện nội bộ chưa chốt tên/schema, không phải enum đã có trong API. Các tên chữ hoa đối chiếu API Notification hiện tại. Không đổi sang user.registered/ride.accepted/payment.succeeded trong một phần tài liệu mà giữ tên khác ở nơi còn lại.
+Các tên domain event đã chốt trong contracts/events/domain-v1.schema.json: ACCOUNT_PROVISIONED, ACCOUNT_ACCESS_CHANGED, DRIVER_LOCATION_RECORDED, JOURNEY_METRICS_CONFIRMED; chúng không phải enum Notification trong API06. Các tên chữ hoa đối chiếu API Notification hiện tại. Không đổi sang user.registered/ride.accepted/payment.succeeded trong một phần tài liệu mà giữ tên khác ở nơi còn lại.
 
 ## 9. API công khai và truy vấn phục vụ rubric
 
@@ -441,10 +441,11 @@ Ngoại trừ health tại gốc Gateway, đường dẫn dưới đây nằm d�
 |---|---|
 | /auth/register, login, refresh, logout, change-password; /accounts/me; OTP | Identity |
 | /customers/{customerId} | Customer, lấy trường Account cần thiết từ Identity theo quyền |
-| /driver-applications | Driver là cửa vào nghiệp vụ; phối hợp tiến trình cấp phát của Identity |
+| /driver-applications | Identity là coordinator đăng ký; gọi Driver.ProvisionDriver |
 | /driver-applications/me; /drivers/me; /drivers/{driverId}; availability; review và xe | Driver |
 | /drivers/me/location | Driver; chuyển mẫu hành trình bền vững cho Trip |
-| /drivers/nearby; /bookings; /trip-requests và accept/reject | Booking/Dispatch |
+| /drivers/nearby | Driver theo API03; Booking gọi FindDispatchCandidates cho dispatch nội bộ |
+| /bookings; /trip-requests và accept/reject | Booking/Dispatch |
 | /trips, status, tracking, cancel, incidents, resolve-error | Trip |
 | Fare, Payment, attempts, confirm-cash, retry, reconcile và webhook | Payment |
 | /trips/{tripId}/rating; /drivers/me/ratings; /operations/ratings | Rating |
@@ -690,3 +691,10 @@ Tài liệu đã bổ sung thiết kế và minh chứng cho đủ 30 tiêu chí
 - Quyết định của chủ dự án: giữ tám MS, ghép Dispatch vào Booking, chia Tracking cho Driver/Trip, Analytics ngoài MVP.
 
 Chưa thực thi kiểm thử hoặc xác nhận trạng thái mã nguồn trong lần rà soát tài liệu này. Lần cập nhật này chỉ thay tài liệu Micro_Service_Design; chưa đồng bộ mã nguồn, SRS, API hoặc test case. Bản Word gốc không bị sửa.
+
+
+## 18. Hợp đồng nội bộ bổ sung 1.3
+
+Nguồn chuẩn mới: [contracts/README.md](contracts/README.md), protobuf package `cab.internal.v1`, RPC policy, JSON Schema RabbitMQ và validator. D04 đã có hợp đồng MS→MS; facade Gateway→MS vẫn cần protobuf riêng trước triển khai. D06/D07/D09 đã có quyết định giao tiếp và invariant cụ thể; kiểm chứng concurrency, mTLS, ACL và phục hồi runtime chưa thực hiện. D08 chỉ chốt baseline giữ bằng chứng nội bộ suốt MVP, không đóng phần retention PII/provider/backup. D01–D03 và D10 không bị coi là đã hoàn tất bởi lần bổ sung này.
+
+Lần bổ sung này đồng bộ API08 và các đoạn ownership/event cũ trong tài liệu; không sửa business REST schema, không triển khai service hoặc commit/push repository. Phần ghi “chưa đồng bộ” trong lịch sử rà soát trước mục này mô tả lần rà soát trước, không phủ nhận bộ contracts mới.

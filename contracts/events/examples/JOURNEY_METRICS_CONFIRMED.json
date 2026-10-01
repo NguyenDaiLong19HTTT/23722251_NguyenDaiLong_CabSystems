@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "eventId": "00000000-0000-0000-0000-000000000068",
+  "source": "TRIP_SERVICE",
+  "eventType": "JOURNEY_METRICS_CONFIRMED",
+  "aggregateType": "TRIP",
+  "aggregateId": "TRIP001",
+  "aggregateVersion": 1,
+  "occurredAt": "2026-10-01T10:00:01Z",
+  "correlationId": "test-correlation",
+  "causationId": "CMD001",
+  "payload": {
+    "tripId": "TRIP001",
+    "metricsVersion": 1
+  }
+}

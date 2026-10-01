@@ -150,9 +150,9 @@ info:
 
     - OPERATOR không được đọc hộp thư của người khác qua API này.
 
-    - Lời gọi gRPC nội bộ nếu có phải xác minh service identity/scope theo D04.
+    - Lời gọi gRPC nội bộ xác minh mTLS/SAN và allowlist theo contracts/SECURITY.md.
 
-    - User JWT không được dùng thay service JWT.
+    - User JWT không được dùng thay danh tính dịch vụ mTLS.
 
     - JWT phải được kiểm tra chữ ký, thuật toán cho phép, issuer,
       audience, thời hạn và trạng thái session.
@@ -1627,7 +1627,8 @@ components:
     ServiceUnauthorized:
       description: |
         UNAUTHENTICATED_SERVICE.
-        Thiếu hoặc không xác minh được service JWT.
+        Không xác minh được danh tính dịch vụ mTLS hoặc broker credential.
+        Schema lỗi legacy, không tạo HTTP endpoint nội bộ; lỗi dependency công khai là 503.
         Không chấp nhận user JWT thay thế.
       headers:
         Cache-Control:
@@ -1746,3 +1747,9 @@ x-internal-workflows:
       metadata và không đổi nội dung lịch sử. Ca sử dụng và worker dùng cùng ràng buộc. Không cần HTTP gọi vào
       chính service; nếu phát sinh bên gọi khác phải chốt .proto/scope theo D04, không tự mở quyền cho
       OPERATOR.
+
+x-rabbitmq-contract:
+  notificationSchema: ../contracts/events/notification-v2.schema.json
+  domainSchema: ../contracts/events/domain-v1.schema.json
+  topology: ../contracts/events/topology.json
+  semantics: ../contracts/EVENTS.md

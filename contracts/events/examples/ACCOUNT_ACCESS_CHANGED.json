@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "eventId": "00000000-0000-0000-0000-000000000065",
+  "source": "IDENTITY_SERVICE",
+  "eventType": "ACCOUNT_ACCESS_CHANGED",
+  "aggregateType": "ACCOUNT",
+  "aggregateId": "ACC001",
+  "aggregateVersion": 1,
+  "occurredAt": "2026-10-01T10:00:01Z",
+  "correlationId": "test-correlation",
+  "causationId": "CMD001",
+  "payload": {
+    "accountId": "ACC001",
+    "accountStatus": "SUSPENDED",
+    "sessionEpoch": 2
+  }
+}
