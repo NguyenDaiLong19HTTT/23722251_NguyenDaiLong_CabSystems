@@ -74,13 +74,12 @@ info:
     - Trip.version bắt đầu từ 1.
     - Thay đổi dữ liệu điều khiển chuyến hoặc xử lý sự cố tăng version.
     - GPS không làm tăng Trip.version hoặc Driver.version.
-    - Lệnh thay đổi Trip yêu cầu expectedVersion và Idempotency-Key.
+    - Lệnh thay đổi Trip yêu cầu expectedVersion, không yêu cầu
+      Idempotency-Key từ client. Owner giữ command key/receipt nội bộ.
     - Xác thực, quyền và cấu trúc request được kiểm tra trước replay.
-    - Replay hợp lệ được xử lý trước kiểm tra expectedVersion.
-    - Cùng key/khác body trả 409 IDEMPOTENCY_CONFLICT.
-    - Cùng key đang xử lý transaction cục bộ trả 409 REQUEST_IN_PROGRESS.
-    - Khi đóng Trip đã commit, replay 200 đã lưu dù giải phóng tài nguyên còn chờ;
-      client theo dõi /trips/{tripId}/closure. Không dùng 202 cho trạng thái đã commit.
+    - Retry nội bộ cùng command dùng receipt trước kiểm tra expectedVersion.
+    - Khi đóng Trip đã commit, client theo dõi /trips/{tripId}/closure,
+      kể cả khi giải phóng tài nguyên còn chờ. Không dùng 202 cho trạng thái đã commit.
     - Với thao tác mới, expectedVersion cũ trả 409 TRIP_VERSION_CONFLICT.
     - Không lưu kết quả chống lặp chỉ trong Redis.
 
@@ -422,6 +421,12 @@ paths:
         - PICKED_UP -> IN_PROGRESS.
         - IN_PROGRESS -> COMPLETED.
 
+        PICKED_UP -> IN_PROGRESS và IN_PROGRESS -> COMPLETED không phụ thuộc
+        Payment đã được tạo hoặc thanh toán. Trip vẫn khóa hàng, kiểm tra
+        expectedVersion, Driver được gán và thứ tự trạng thái. Customer chỉ
+        tạo Payment sau khi Trip COMPLETED; giá đã chốt trong PricingSnapshot
+        từ trước chuyến không bị tính lại theo GPS.
+
         Không cho bỏ bước hoặc chuyển ngược.
         Không nhận CANCELLED, ERROR hoặc DRIVER_ASSIGNED:
         - Hủy dùng /trips/{tripId}/cancel.
@@ -468,21 +473,16 @@ paths:
         - Theo dõi GET /trips/{tripId}/closure; quá deadline phải cảnh báo/đối soát.
 
         JourneyMetrics do Trip xác nhận PENDING/CONFIRMED/REVIEW_REQUIRED.
-        Chỉ khi Trip COMPLETED và metrics CONFIRMED mới phát dữ liệu có version
-        để Payment tạo Fare idempotently theo snapshot giá của Booking.
-        Không tự đánh dấu thanh toán thành công. Closure SUCCEEDED không đồng nghĩa
-        metrics CONFIRMED, Fare đã tạo hoặc Payment SUCCESS.
+        Fare cố định đã được Payment phát hành từ Booking PricingSnapshot và
+        tuyến demo trước khi bắt đầu chở khách; JourneyMetrics sau chuyến
+        không tính lại Fare. Trip COMPLETED không tự đánh dấu thanh toán thành công.
+        Closure SUCCEEDED không đồng nghĩa Payment SUCCESS.
 
-        Chưa đủ dữ liệu tính cước:
-        - Trip vẫn COMPLETED.
-        - Fare chưa sẵn sàng hoặc cần rà soát.
-        - Không tạo Fare bằng 0 để bỏ qua dữ liệu thiếu.
-        - Không thu tiền khi chưa có Fare hợp lệ.
-        - Không ép Trip trở lại ERROR.
+        Thiếu dữ liệu GPS/JourneyMetrics không thay đổi cước cố định đã chốt;
+        vẫn ghi tình trạng tracking để vận hành kiểm tra, không tạo số 0 giả.
 
-        Replay cùng key/body:
-        - Trả HTTP status/body đã lưu.
-        - Không tăng version hoặc tạo lịch sử/sự kiện mới.
+        Retry nội bộ cùng command trả kết quả đã lưu, không tăng version
+        hoặc tạo lịch sử/sự kiện mới. Client đọc Trip để biết hiện trạng.
         - Không giải phóng Driver hoặc Customer lần nữa.
         - Response có thể là snapshot cũ; dùng GET để đọc hiện trạng.
 
@@ -490,7 +490,6 @@ paths:
         Khóa mới với chuyển trạng thái không hợp lệ không được coi là replay.
       parameters:
         - $ref: "#/components/parameters/TripId"
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -557,6 +556,13 @@ paths:
         Mọi reasonCode đều phải có reason không rỗng.
         Dùng mã dành cho role khác trả 403 FORBIDDEN.
 
+        Với CUSTOMER hủy do đổi kế hoạch, có thể chỉ gửi `reason`.
+        Gateway đọc Trip có kiểm tra quyền để lấy version hiện tại, gán
+        CHANGE_OF_PLANS rồi gửi CancelTrip với expectedVersion đó. Trip vẫn
+        kiểm tra version dưới khóa DB; thay đổi đồng thời trả 409
+        TRIP_VERSION_CONFLICT. Dạng đầy đủ gồm expectedVersion và reasonCode
+        tiếp tục được hỗ trợ cho các trường hợp hủy khác.
+
         NO_SHOW khi hủy mới yêu cầu:
         - Trip đang ARRIVED_PICKUP.
         - Có arrivedAt.
@@ -566,7 +572,7 @@ paths:
         Thứ tự:
         - Kiểm tra danh tính, quyền trên Trip và cấu trúc request.
         - Kiểm tra idempotency.
-        - Với key mới, kiểm tra quyền dùng reasonCode và expectedVersion.
+        - Với lệnh mới, kiểm tra quyền dùng reasonCode và expectedVersion.
         - Sau đó xét trạng thái hiện tại.
 
         Khi hủy mới thành công trong cùng transaction cab_trip:
@@ -587,19 +593,18 @@ paths:
         Không ghi completedAt.
         Không đổi Booking DRIVER_ASSIGNED thành CANCELLED.
 
-        Nếu cùng key/body đã thành công:
-        - Trả lại kết quả cũ trước kiểm tra expectedVersion.
-        - Không tạo tác động nghiệp vụ mới.
+        Retry nội bộ cùng command đã thành công trả kết quả cũ trước kiểm tra
+        expectedVersion và không tạo tác động nghiệp vụ mới.
 
-        Nếu dùng key mới và Trip đã CANCELLED:
+        Nếu gửi lệnh mới và Trip đã CANCELLED:
         - expectedVersion vẫn phải khớp version hiện tại.
         - Trả 200 với cancellation đang được lưu.
         - Không sửa lý do, người hủy hoặc thời điểm ban đầu.
         - Không tăng Trip.version.
         - Không giải phóng Driver/Customer lần nữa.
-        - Lưu kết quả cho key mới để phát lại an toàn.
+        - Lưu receipt nội bộ của lệnh mới để phát lại an toàn.
 
-        Nếu key mới có expectedVersion cũ, trả TRIP_VERSION_CONFLICT
+        Nếu lệnh mới có expectedVersion cũ, trả TRIP_VERSION_CONFLICT
         dù Trip hiện đã CANCELLED.
 
         Hủy và PICKED_UP phải tranh chấp trên cùng dữ liệu:
@@ -609,7 +614,6 @@ paths:
         Lỗi Notification sau commit không đảo ngược việc hủy.
       parameters:
         - $ref: "#/components/parameters/TripId"
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -617,8 +621,6 @@ paths:
             schema:
               $ref: "#/components/schemas/CancelTripRequest"
             example:
-              expectedVersion: 2
-              reasonCode: CHANGE_OF_PLANS
               reason: "Tôi không còn nhu cầu di chuyển."
       responses:
         "200":
@@ -701,8 +703,8 @@ paths:
 
         expectedVersion ngăn ghi đè khi vận hành đồng thời xử lý sự cố.
 
-        Cùng Idempotency-Key/body trả lại kết quả đã lưu.
-        Không tạo Incident trùng hoặc tăng version lần nữa.
+        Retry nội bộ cùng command dùng kết quả đã lưu, không tạo Incident
+        trùng hoặc tăng version lần nữa. Client đọc Trip/Incident hiện tại.
 
         Response replay có thể chứa Incident OPEN và Trip ERROR
         tại thời điểm báo, dù hiện tại vận hành đã xử lý.
@@ -718,7 +720,6 @@ paths:
         vận hành xử lý bằng quyền của OPERATOR.
       parameters:
         - $ref: "#/components/parameters/TripId"
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -787,8 +788,15 @@ paths:
 
         Chu kỳ đề xuất khi AVAILABLE/BUSY và có mạng là 5 giây.
 
-        recordedAt là thời điểm thiết bị lấy mẫu.
+        recordedAt là thời điểm thiết bị lấy mẫu trong cấu hình thường.
         receivedAt do máy chủ ghi khi tiếp nhận mẫu.
+
+        Riêng Compose demo khi NODE_ENV=development và
+        CAB_DEMO_GPS_SERVER_TIME_ENABLED=1, request có thể chỉ gửi latitude
+        và longitude. Gateway gắn recordedAt bằng thời điểm nhận request;
+        response vẫn có recordedAt và receivedAt. Chế độ này không chứng minh
+        thời điểm thiết bị thực sự lấy mẫu và không áp dụng ở production.
+        Nếu client gửi recordedAt, quy tắc kiểm tra thời gian hiện có vẫn áp dụng.
 
         Kiểm tra:
         - Tọa độ hợp lệ.
@@ -998,31 +1006,6 @@ components:
         $ref: "#/components/schemas/Identifier"
       example: "TRP0001"
 
-    IdempotencyKey:
-      name: Idempotency-Key
-      in: header
-      required: true
-      description: |
-        Mã cho một thao tác, trong phạm vi Account + operation + tripId.
-
-        Gửi lại giữ nguyên key và body, bao gồm expectedVersion.
-        Cùng key/khác body trả IDEMPOTENCY_CONFLICT.
-        Cùng key đang xử lý trả REQUEST_IN_PROGRESS.
-
-        So sánh theo JSON chuẩn hóa của các trường hợp lệ.
-        Thứ tự thuộc tính không tạo một thao tác khác.
-
-        Thao tác mới dùng key mới và expectedVersion hiện tại.
-        Không tạo key mới chỉ vì mất phản hồi.
-        Kết quả chống lặp được lưu bền vững.
-        Giữ liên kết key/kết quả khi bản ghi nghiệp vụ liên quan vẫn được lưu.
-      schema:
-        type: string
-        minLength: 1
-        maxLength: 128
-        pattern: '^[A-Za-z0-9._:-]+$'
-      example: "550e8400-e29b-41d4-a716-446655440001"
-
     Limit:
       name: limit
       in: query
@@ -1120,6 +1103,22 @@ components:
           enum: [ARRIVED_PICKUP, PICKED_UP, IN_PROGRESS, COMPLETED]
 
     CancelTripRequest:
+      oneOf:
+        - $ref: "#/components/schemas/CustomerCancelTripRequest"
+        - $ref: "#/components/schemas/DetailedCancelTripRequest"
+
+    CustomerCancelTripRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          pattern: '\S'
+          description: Lý do Customer đổi kế hoạch, xử lý như văn bản.
+
+    DetailedCancelTripRequest:
       type: object
       additionalProperties: false
       required: [expectedVersion, reasonCode, reason]
@@ -1419,10 +1418,12 @@ components:
           minLength: 1
         phone:
           type: string
-          pattern: '^\+[1-9][0-9]{7,14}$'
+          pattern: '^(0[0-9]{9}|\+84[0-9]{10})$'
           description: |
             Trường tùy chọn, chỉ trả khi được phép liên hệ trong Trip đang hoạt động.
             Bỏ trường khi Trip đã đóng.
+            Số legacy +84 sai độ dài được giữ nguyên khi đọc, không suy ra
+            số nội địa bằng cách cắt chữ số.
       description: |
         Hồ sơ tối thiểu cho người có quyền theo dõi Trip.
         Không phải hồ sơ công khai cho mọi Account.
@@ -1575,7 +1576,11 @@ components:
     UpdateDriverLocationRequest:
       type: object
       additionalProperties: false
-      required: [latitude, longitude, recordedAt]
+      required: [latitude, longitude]
+      description: |
+        Trong Compose demo với NODE_ENV=development và
+        CAB_DEMO_GPS_SERVER_TIME_ENABLED=1, recordedAt được phép vắng mặt;
+        Gateway ghi thời điểm nhận request. Ngoài chế độ đó, recordedAt bắt buộc.
       properties:
         latitude:
           type: number
@@ -1803,8 +1808,7 @@ components:
     BadRequest:
       description: |
         VALIDATION_ERROR.
-        Dữ liệu sai, thiếu trường, thiếu/sai Idempotency-Key khi bắt buộc,
-        hoặc chứa thuộc tính không được phép.
+        Dữ liệu sai, thiếu trường hoặc chứa thuộc tính không được phép.
       headers:
         Cache-Control:
           $ref: "#/components/headers/NoStore"
@@ -1876,7 +1880,7 @@ components:
         Vượt giới hạn theo IP, Account hoặc chức năng.
 
         Chờ Retry-After trước khi thử lại.
-        Với lệnh Trip, giữ nguyên Idempotency-Key/body cho cùng thao tác.
+        Với lệnh Trip, đọc hiện trạng trước khi gửi thao tác mới.
         Với GPS, không sửa recordedAt để làm mẫu cũ có vẻ mới.
 
         Request trước đã commit không bị mất vì request mới nhận 429.
@@ -1905,11 +1909,8 @@ components:
 
         503 hoặc mất response không chứng minh lệnh trước chưa thực hiện.
 
-        Với thay đổi Trip:
-        - Gửi lại cùng Idempotency-Key/body; hoặc
-        - GET Trip để xác định hiện trạng.
-
-        Không tạo key mới chỉ vì mất phản hồi.
+        Với thay đổi Trip, GET Trip/closure để xác định hiện trạng trước
+        khi gửi một thao tác mới. Mất phản hồi không chứng minh chưa commit.
       headers:
         Cache-Control:
           $ref: "#/components/headers/NoStore"

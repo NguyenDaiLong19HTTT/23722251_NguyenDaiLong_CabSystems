@@ -1,0 +1,35 @@
+{
+  "info": {
+    "name": "CAB Driver manual OTP demo (no environment or scripts)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1 Request OTP - copy challengeId and otp from 202",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "url": "http://127.0.0.1:33201/v1/auth/driver-registration/otp",
+        "body": {"mode": "raw", "raw": "{\"phone\":\"0912345679\"}", "options": {"raw": {"language": "json"}}}
+      }
+    },
+    {
+      "name": "2 Verify OTP - paste challengeId and otp from step 1",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "url": "http://127.0.0.1:33201/v1/auth/driver-registration/otp/verify",
+        "body": {"mode": "raw", "raw": "{\"challengeId\":\"PASTE_CHALLENGE_ID\",\"otp\":\"PASTE_SIX_DIGIT_OTP\"}", "options": {"raw": {"language": "json"}}}
+      }
+    },
+    {
+      "name": "3 Submit Driver - paste verificationToken from step 2",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "url": "http://127.0.0.1:33201/v1/driver-applications",
+        "body": {"mode": "raw", "raw": "{\"verificationToken\":\"PASTE_VERIFICATION_TOKEN\",\"fullName\":\"CAB Demo Driver\",\"email\":\"new-driver@example.test\",\"password\":\"REPLACE_WITH_TEST_PASSWORD\",\"licenseNumber\":\"NEW-UNIQUE-LICENSE\",\"vehicle\":{\"plateNumber\":\"NEW-UNIQUE-PLATE\",\"vehicleType\":\"MOTORBIKE\"}}", "options": {"raw": {"language": "json"}}}
+      }
+    }
+  ]
+}

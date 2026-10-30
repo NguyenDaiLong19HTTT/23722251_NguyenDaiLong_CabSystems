@@ -47,7 +47,7 @@ info:
 
     - /health và /ready công khai, chỉ trả trạng thái tối thiểu.
 
-    - /health/services chỉ dành cho OPERATOR.
+    - /health/services công khai báo cáo trạng thái thành phần, không cần token.
 
     - Không tạo hoặc quản lý tài khoản OPERATOR qua tài liệu này.
 
@@ -108,7 +108,7 @@ info:
 
     - Email được trim và chuyển chữ thường.
 
-    - Phone dùng E.164 theo API Auth.
+    - Phone dùng nội địa Việt Nam 10 chữ số bắt đầu bằng 0 theo API Auth.
 
     - Email và phone duy nhất trong toàn bộ Account.
 
@@ -158,7 +158,9 @@ info:
 
     - Không có Trip đang hoạt động.
 
-    - GPS hợp lệ và còn mới theo cấu hình dùng chung với Dispatch.
+    - Khi bật AVAILABLE, GPS hợp lệ và còn mới theo cấu hình dùng chung với Dispatch.
+      Riêng Compose demo development có thể đặt vị trí mẫu cố định nếu chưa có GPS mới.
+      Đây là dữ liệu giả lập của demo, không dùng trong production.
 
     - Ngưỡng GPS hiện tại là 30 giây tính từ recordedAt.
 
@@ -171,24 +173,25 @@ info:
 
     8. Idempotency và version
 
-    - Các API ghi yêu cầu Idempotency-Key.
+    - Client không phải gửi Idempotency-Key cho các API ở tài liệu này;
+      Gateway/owner vẫn dùng command key nội bộ và receipt khi cần.
 
-    - Với API đã đăng nhập, phạm vi key gồm accountId, operation và resource.
+    - Với API đã đăng nhập, phạm vi key nội bộ gồm accountId, operation và resource.
 
     - Đăng ký công khai dùng phạm vi verificationToken digest và operation.
 
-    - Cùng key, cùng nội dung chuẩn hóa trả status code và body đã lưu.
+    - Retry nội bộ cùng key và nội dung chuẩn hóa dùng status code/body đã lưu.
 
-    - Cùng key, nội dung khác trả 409 IDEMPOTENCY_CONFLICT.
+    - Cùng key nội bộ nhưng nội dung khác trả 409 IDEMPOTENCY_CONFLICT.
 
-    - Request cùng key đang xử lý transaction cục bộ trả 409 REQUEST_IN_PROGRESS; riêng đăng ký Driver đã có
+    - Request cùng key nội bộ đang xử lý transaction cục bộ trả 409 REQUEST_IN_PROGRESS; riêng đăng ký Driver đã có
     operation bền vững trả 202.
 
     - Kiểm tra quyền hiện tại trước khi replay API đã đăng nhập.
 
-    - Kiểm tra replay hợp lệ trước expectedVersion và điều kiện có thể thay đổi.
+    - Kiểm tra retry cùng command nội bộ trước expectedVersion và điều kiện có thể thay đổi.
 
-    - Response replay là snapshot ban đầu; dùng GET để đọc hiện trạng.
+    - Receipt của command nội bộ là snapshot ban đầu; client dùng GET để đọc hiện trạng.
 
     - Không lưu plaintext mật khẩu hoặc verificationToken trong idempotency.
 
@@ -200,7 +203,8 @@ info:
 
     - GPS không tăng Driver.version hoặc Trip.version.
 
-    - Version không thay thế Idempotency-Key.
+    - expectedVersion/expectedDriverVersion vẫn là điều kiện CAS bắt buộc;
+      key nội bộ không thay thế kiểm tra version và quyền.
 
     - Kiểm tra điều kiện, khóa dữ liệu và cập nhật phải an toàn khi chạy đồng thời.
 
@@ -320,7 +324,7 @@ paths:
         minh phone, không gửi bí mật OTP.
 
         Identity xác nhận hồ sơ đúng Account rồi hoàn tất operation và trả 201; còn xử lý trả 202 cùng
-        operationId/Location. Mất phản hồi retry cùng token/key/payload, không tiêu thụ token hoặc tạo hồ sơ
+        operationId/Location. A lost response without operationId or legacy key cannot be replayed; no duplicate profile
         lần hai. Token hết hạn sau tiếp nhận không hủy operation đã bền vững.
 
         Nếu lỗi đã xác định trước tạo hồ sơ, thực hiện bù có version/tombstone, ngăn cấp phát đến muộn, vô
@@ -337,31 +341,26 @@ paths:
         Ràng buộc xe chính thức được kiểm tra lại trong transaction review.
 
 
-        Replay công khai:
-
-        - Phải gửi lại cùng verificationToken, Idempotency-Key và nội dung.
-
-        - Server xác định token qua digest và bản ghi kết quả đã liên kết.
-
-        - Replay kết quả thành công đã lưu được kiểm tra trước việc token
-          đã bị tiêu thụ hoặc hết hạn sau lần đăng ký thành công.
-        - Ngoại lệ này chỉ trả lại kết quả cũ, không tạo tài khoản khác.
-
-        - Key mới với token đã sử dụng trả VERIFICATION_TOKEN_USED.
-
-        - Không cho phép chỉ biết Idempotency-Key là đọc được kết quả.
-
+        New clients do not need an Idempotency-Key. Gateway creates an
+        internal command key per POST; verificationToken remains one-use.
+        Identity commits Account, operation and proof consumption together.
+        After durable 202, lookup needs operationId and original
+        verificationToken in Driver-Registration-Token. Legacy callers may
+        replay with the same key, proof and body. A second POST without that
+        key returns VERIFICATION_TOKEN_USED after proof consumption and never
+        creates another Account or Application. A lost response without an
+        operationId or legacy key cannot be recovered by replay. Timeout does
+        not prove rollback.
 
         Các lỗi 409 gồm CONTACT_ALREADY_EXISTS, LICENSE_ALREADY_EXISTS,
 
         VERIFICATION_TOKEN_USED, IDEMPOTENCY_CONFLICT, REGISTRATION_FAILED hoặc IDEMPOTENCY_KEY_EXPIRED.
 
-        Cùng operation đang chạy trả 202; kết quả FAILED được replay, không tạo operation mới.
+        Cùng operation đang chạy trả 202; client cũ có cặp key/proof có thể replay
+        kết quả FAILED, không tạo operation mới.
 
         Fingerprint payload dùng HMAC có khóa, không lưu password plaintext; password Account vẫn hash chuyên
         dụng.
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -392,7 +391,7 @@ paths:
               schema:
                 type: string
               example: /v1/driver-registration-operations/REG_example
-              description: Đường dẫn tra cứu cần verification token và idempotency key gốc.
+              description: Đường dẫn tra cứu cần verification token gốc; key cũ chỉ cần nếu đã gửi.
           content:
             application/json:
               schema:
@@ -622,9 +621,9 @@ paths:
         - Concurrent review chỉ được có một quyết định thành công.
 
 
-        Replay cùng key trả kết quả đã lưu.
-
-        Key mới trên hồ sơ đã quyết định trả APPLICATION_ALREADY_REVIEWED.
+        Gateway tạo key nội bộ cho review không có header client; receipt cùng
+        transaction giữ kết quả của chính lệnh đó. Gửi lại POST sau khi hồ sơ
+        đã quyết định trả APPLICATION_ALREADY_REVIEWED; GET đọc hiện trạng.
 
         API này không mở lại hồ sơ đã APPROVED hoặc REJECTED.
 
@@ -634,7 +633,6 @@ paths:
         chứng xác nhận tương ứng qua gRPC. Không thay Account/Session trong transaction review.
       parameters:
         - $ref: "#/components/parameters/ApplicationId"
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -774,7 +772,6 @@ paths:
         ứng lấy hiện trạng. Worker phục hồi event, không rollback khóa vì tra cứu công việc lỗi.
       parameters:
         - $ref: "#/components/parameters/AccountId"
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -1039,9 +1036,13 @@ paths:
 
         - Không có Trip hoạt động.
 
-        - GPS hợp lệ, không quá 30 giây tính từ recordedAt.
+        - Production cần GPS hợp lệ, không quá 30 giây tính từ recordedAt.
 
-        - Dùng cùng cấu hình và quy tắc GPS với Dispatch.
+        - Compose demo development tự ghi vị trí mẫu tại điểm đón khi GPS thiếu/cũ;
+          Driver không phải gửi request GPS riêng để bật nhận chuyến.
+
+        - Dispatch vẫn chỉ chọn vị trí không quá 30 giây. Vị trí mẫu lúc bật
+          không được coi là GPS thiết bị hoặc tự gia hạn vô hạn.
 
 
         OFFLINE:
@@ -1066,6 +1067,9 @@ paths:
 
         Kiểm tra expectedVersion.
 
+        Không yêu cầu Idempotency-Key từ client. Gateway tạo key cho lệnh
+        nội bộ; Driver vẫn commit receipt cùng thay đổi trạng thái.
+
         Nếu đã đúng trạng thái, vẫn kiểm tra điều kiện hiện tại,
 
         nhưng không tăng version khi không có thay đổi.
@@ -1077,8 +1081,6 @@ paths:
         chỉ dựa BUSY hoặc đọc Trip cache: reservation đang giữ, đang gắn Trip hoặc chờ giải phóng đều ngăn
         thay đổi làm mất quyền của Saga/chuyến. Khi bị giữ trả 409 RESOURCE_RESERVED; không giải phóng bằng
         TTL. Account/Session kiểm tra qua Identity; D07 vẫn cần chốt với thao tác in-flight.
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -1165,7 +1167,6 @@ paths:
         TTL. Account/Session kiểm tra qua Identity; D07 vẫn cần chốt với thao tác in-flight.
       parameters:
         - $ref: "#/components/parameters/DriverId"
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -1252,8 +1253,6 @@ paths:
         Dùng cùng quy tắc với xe khai báo trong DriverApplication.
 
         Không nhận assignedDriverId hoặc vehicleStatus khi tạo.
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -1347,7 +1346,6 @@ paths:
         TTL. Account/Session kiểm tra qua Identity; D07 vẫn cần chốt với thao tác in-flight.
       parameters:
         - $ref: "#/components/parameters/VehicleId"
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -1529,8 +1527,6 @@ paths:
 
         Incident/Trip/audit/outbox thuộc cùng cab_trip; giữ transaction này. Không phát lệnh giải phóng khi
         ERROR chưa đóng.
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -1645,7 +1641,9 @@ paths:
         vì vậy request dùng version cũ phải bị từ chối.
 
 
-        Replay cùng key trả snapshot kết quả cũ và không giải phóng
+        Client không cần Idempotency-Key ở route này. Trip suy command ID nội bộ
+        ổn định từ tripId, expectedTripVersion, action, note đã chuẩn hóa và
+        OPERATOR đã xác thực. Replay cùng yêu cầu trả snapshot kết quả cũ và không giải phóng
 
         guard hoặc Driver của một chuyến mới phát sinh sau đó.
 
@@ -1660,7 +1658,6 @@ paths:
         snapshot xác minh, không dùng nó chứng minh release đã xong; tra cứu Driver riêng để lấy hiện trạng.
       parameters:
         - $ref: "#/components/parameters/TripId"
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -1784,8 +1781,6 @@ paths:
 
         PricingConfig do Payment sở hữu; thao tác chỉ trong cab_payment. Booking lấy snapshot bất biến qua
         gRPC; giá mới không sửa snapshot Booking/Fare cũ.
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -2047,7 +2042,8 @@ paths:
 
         - Khả năng truy cập dữ liệu cần thiết của từng service.
 
-        - Redis dùng cho rate limit.
+        - Bản demo một Gateway dùng rate limiter hữu hạn trong tiến trình; không phụ thuộc Redis.
+          Nếu triển khai nhiều Gateway, phải thay bằng limiter chia sẻ và khai báo dependency của cấu hình đó.
 
         - RabbitMQ và đường xử lý sự kiện theo cấu hình.
 
@@ -2118,18 +2114,20 @@ paths:
       tags:
         - Health
       operationId: getServiceHealthDetails
-      summary: Điều hành viên xem sức khỏe các thành phần
+      summary: Xem sức khỏe các thành phần
       servers:
         - url: /
           description: Route gốc của API Gateway
+      security: []
       description: >
-        Chỉ OPERATOR có tài khoản và session hợp lệ.
+        Công khai, không cần Account hoặc Session. Báo cáo chỉ chứa tên thành phần,
+        trạng thái, thời điểm kiểm tra và mã nguyên nhân chuẩn hóa.
 
 
         Kiểm tra tối thiểu các thành phần:
 
         gateway, identity-service, customer-service, driver-service, booking-service, trip-service,
-        payment-service, rating-service, notification-service, postgres, redis, rabbitmq.
+        payment-service, rating-service, notification-service, postgres, mongo, rabbitmq.
 
 
         Trạng thái phản ánh probe thực tế, không hard-code UP.
@@ -2156,9 +2154,6 @@ paths:
 
         Dependency lỗi có thể trả 503 kèm báo cáo chi tiết này.
 
-        Nếu không xác thực được OPERATOR thì không trả báo cáo chi tiết.
-
-
         Danh sách bắt buộc 12 thành phần theo enum mới; probe DB của mỗi MS qua readiness của MS, Gateway
         không đăng nhập trực tiếp DB nghiệp vụ. PostgreSQL chung vật lý không thay thế kiểm tra
         credential/schema từng DB logic. Worker có heartbeat và độ trễ công việc; probe quá hạn là
@@ -2173,26 +2168,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SystemHealth"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
         "429":
           $ref: "#/components/responses/TooManyRequests"
         "503":
           description: |
-            Có thành phần lỗi, chưa xác định được hoặc không thể hoàn tất kiểm tra.
-            Nếu bước xác thực phụ thuộc dịch vụ đang lỗi, trả ErrorResponse
-            thay vì dữ liệu sức khỏe chi tiết.
+            Có thành phần lỗi hoặc chưa xác định được.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
-                oneOf:
-                  - $ref: "#/components/schemas/SystemHealth"
-                  - $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/SystemHealth"
         default:
           $ref: "#/components/responses/ServerError"
       x-owner-service: gateway
@@ -2205,14 +2192,16 @@ paths:
       summary: Tra cứu tiến trình đăng ký Driver
       security:
         - driverRegistrationProof: []
-      description: Không cần Session. Đối chiếu token digest và Idempotency-Key với operation; chỉ biết ID/key không
-        đủ quyền. Token gốc hết hạn/đã tiêu thụ vẫn được dùng đọc đúng operation trong cửa sổ phục hồi, không
-        khởi tạo operation mới. Thiếu proof trả 401; sai proof/key, mã không tồn tại hoặc hết lưu giữ đều trả
-        404 giống nhau. Mất POST đầu thì replay cùng token/key/body để tìm lại ID. GET 200 là tra cứu, chỉ
-        SUCCEEDED có kết quả đăng ký 201 đã lưu. PROCESSING không lộ hồ sơ từng phần. Đề xuất giữ operation
-        đang chạy và thêm 7 ngày sau kết quả cuối; giữ tombstone/digest tối thiểu ngăn tái tạo key, D08 phải
-        chốt dọn. Không lưu PII trong tombstone. Hết cửa sổ replay trả IDEMPOTENCY_KEY_EXPIRED, không mở lại
-        token.
+      description: |
+        No Session is needed. The caller must present the original verificationToken
+        as Driver-Registration-Token and the operationId. Identity compares the
+        token digest to the operation proof; the ID alone is not authorization.
+        Missing proof returns 401. Wrong proof, unknown ID or expired public
+        lookup return the same 404. A legacy Idempotency-Key, if supplied, must
+        also match. A 200 PROCESSING is not a completed registration; only
+        SUCCEEDED contains the stored result. The operation survives timeout
+        and is recovered by the coordinator. A lost POST response without
+        operationId or a legacy key cannot be replayed as the original request.
       parameters:
         - name: operationId
           in: path
@@ -2221,7 +2210,6 @@ paths:
             type: string
             minLength: 1
             maxLength: 128
-        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
         "200":
           description: Tiến trình đăng ký được phép đọc.
@@ -2269,7 +2257,7 @@ components:
       type: apiKey
       in: header
       name: Driver-Registration-Token
-      description: verificationToken gốc của đúng operation, dùng cùng Idempotency-Key gốc. Không phải JWT; không
+      description: original verificationToken for this operation; legacy key only if supplied. Không phải JWT; không
         đưa vào URL/log. Chỉ tra cứu/replay operation đã tiếp nhận, không cấp quyền đăng ký mới sau hết hạn.
   headers:
     NoStore:
@@ -2284,19 +2272,6 @@ components:
         type: integer
         minimum: 1
   parameters:
-    IdempotencyKey:
-      name: Idempotency-Key
-      in: header
-      required: true
-      description: |
-        Khóa ổn định của một thao tác.
-        Gửi lại cùng thao tác phải giữ nguyên key và nội dung.
-        Phạm vi và quy tắc replay được mô tả trong info và từng operation.
-      schema:
-        type: string
-        minLength: 1
-        maxLength: 128
-        pattern: ^[A-Za-z0-9._:-]+$
     AccountId:
       name: accountId
       in: path
@@ -2379,7 +2354,11 @@ components:
       description: Lý do văn bản thuần, an toàn để thông báo cho người đăng ký
     Phone:
       type: string
-      pattern: ^\+[1-9][0-9]{7,14}$
+      pattern: '^(0[0-9]{9}|\+84[0-9]{10})$'
+      description: |
+        Response mới dùng số nội địa 0xxxxxxxxx. Bản ghi legacy +84 có
+        mười chữ số sau mã nước được giữ nguyên khi đọc vì không thể chuyển
+        tương đương. Request phone mới vẫn chỉ nhận ^0[0-9]{9}$ theo API01.
     LicenseNumber:
       type: string
       minLength: 1
@@ -2421,6 +2400,10 @@ components:
         - PREMIUM
         - MOTORBIKE
         - VAN
+      description: Giá trị legacy vẫn đọc được; request tạo/đổi xe mới chỉ nhận MOTORBIKE (Xe máy).
+    NewVehicleType:
+      type: string
+      enum: [MOTORBIKE]
     TripStatus:
       type: string
       enum:
@@ -2475,7 +2458,7 @@ components:
           maxLength: 30
           pattern: \S
         vehicleType:
-          $ref: "#/components/schemas/VehicleType"
+          $ref: "#/components/schemas/NewVehicleType"
     SubmitDriverApplicationRequest:
       type: object
       additionalProperties: false
@@ -2974,7 +2957,7 @@ components:
           maxLength: 30
           pattern: \S
         vehicleType:
-          $ref: "#/components/schemas/VehicleType"
+          $ref: "#/components/schemas/NewVehicleType"
         vehicleStatus:
           $ref: "#/components/schemas/VehicleStatus"
       anyOf:
@@ -3237,7 +3220,7 @@ components:
         - reason
       properties:
         vehicleType:
-          $ref: "#/components/schemas/VehicleType"
+          $ref: "#/components/schemas/NewVehicleType"
         currency:
           type: string
           enum:
@@ -3442,7 +3425,7 @@ components:
             - rating-service
             - notification-service
             - postgres
-            - redis
+            - mongo
             - rabbitmq
         status:
           type: string
@@ -3490,7 +3473,7 @@ components:
           items:
             $ref: "#/components/schemas/ServiceHealth"
       description: >
-        Bao gồm đủ 12 thành phần: Gateway, tám MS và PostgreSQL/Redis/RabbitMQ, mỗi name một lần. Worker bắt
+        Bao gồm đủ 12 thành phần của Compose demo: Gateway, tám MS và PostgreSQL/MongoDB/RabbitMQ, mỗi name một lần. Worker bắt
         buộc gộp vào kết quả MS chủ sở hữu, không là MS mới.
 
         Có DOWN hoặc UNKNOWN ở thành phần bắt buộc thì status=DEGRADED.
@@ -3852,7 +3835,8 @@ components:
       description: |
         RATE_LIMIT_EXCEEDED.
         Vượt hạn mức được cấu hình tại Gateway.
-        Khi gửi lại thao tác ghi, giữ nguyên Idempotency-Key và nội dung.
+        Khi chưa rõ kết quả thao tác ghi, dùng API đọc/operation tương ứng
+        để xác định trạng thái trước khi gửi lệnh mới.
       headers:
         Cache-Control:
           $ref: "#/components/headers/NoStore"
@@ -3867,8 +3851,8 @@ components:
         SERVICE_UNAVAILABLE.
         Không thể hoàn thành thao tác do dependency cần thiết tạm thời lỗi.
         HTTP 503 không tự chứng minh transaction chưa commit.
-        Nếu mất kết quả thao tác ghi, gửi lại cùng key và nội dung.
-        Không tạo thao tác mới chỉ vì mất response.
+        Nếu mất kết quả thao tác ghi, tra cứu trạng thái/operation trước khi
+        gửi lệnh mới; 503 không chứng minh transaction chưa commit.
       headers:
         Cache-Control:
           $ref: "#/components/headers/NoStore"
@@ -3880,7 +3864,7 @@ components:
       description: |
         INTERNAL_ERROR.
         Không trả stack trace, secret hoặc chuỗi kết nối.
-        Client dùng cùng key và nội dung khi cần xác định kết quả thao tác ghi.
+        Client dùng API đọc/operation để xác định kết quả thao tác ghi.
       headers:
         Cache-Control:
           $ref: "#/components/headers/NoStore"

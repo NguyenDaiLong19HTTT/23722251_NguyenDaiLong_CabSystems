@@ -1,0 +1,418 @@
+name: cab
+
+x-app: &app
+  image: cab/demo-node:24.19.0
+  environment:
+    CAB_HEALTH_DIR: /cab-health
+  build:
+    context: .
+    dockerfile: Dockerfile
+  init: true
+  read_only: true
+  tmpfs: [/tmp]
+  restart: unless-stopped
+
+services:
+  cert-renewer:
+    image: cab/demo-node:24.19.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "dev/compose/cert-init.mjs"]
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/tmp]
+    secrets: [cab_ca_cert, cab_ca_key]
+    volumes:
+      - ./.secrets/customer-dev/compose-pki:/out
+    healthcheck:
+      test: ["CMD", "node", "dev/compose/health.mjs", "certs"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: postgres:17.11-bookworm@sha256:639ab7ceb90e13123085b741fb31ef493fba25463002f6da665352e7b534b652
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+    secrets: [postgres_password]
+    volumes:
+      - cab_pg_existing:/var/lib/postgresql/data
+    ports: ["127.0.0.1:55439:5432"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:4.2.9-management@sha256:bda54cf7b1dc13aff98091ef8c99d59ca37c396b38eef1b21232f533136ba0ec
+    hostname: 95a48b840782
+    ports: ["127.0.0.1:15672:15672"]
+    depends_on:
+      cert-renewer: {condition: service_healthy}
+    volumes:
+      - cab_rabbit_existing:/var/lib/rabbitmq
+      - ./dev/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./.secrets/customer-dev/compose-pki/broker/ca.crt:/certs/ca.crt:ro
+      - ./.secrets/customer-dev/compose-pki/broker/broker.crt:/certs/broker.crt:ro
+      - ./.secrets/customer-dev/compose-pki/broker/broker.key:/certs/broker.key:ro
+    restart: unless-stopped
+    healthcheck:
+      # ping can pass while plugins/listeners are still booting; setup jobs need both.
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q check_running && rabbitmq-diagnostics -q check_port_connectivity"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  mongo:
+    image: mongo:8.0.30-noble@sha256:f40b97b97ce805c48ab428ce4422180ae0ef0de6dacadf1e32c6e6a1cbc9353d
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: cab_dev_admin
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_root_password
+    secrets: [mongo_root_password]
+    ports: ["127.0.0.1:55440:27017"]
+    volumes:
+      - cab_mongo_existing:/data/db
+      - cab_mongo_config_existing:/data/configdb
+      - ./.secrets/customer-dev/mongo-init.js:/docker-entrypoint-initdb.d/notification.js:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand({ping:1})"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  migrate-identity:
+    <<: *app
+    restart: "no"
+    command: ["node", "dev/compose/launch.mjs", "migrate-identity"]
+    volumes:
+      - ./.secrets/customer-dev/compose-runtime/migrate-identity:/cab-runtime:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  migrate-customer:
+    <<: *app
+    restart: "no"
+    command: ["node", "dev/compose/launch.mjs", "migrate-customer"]
+    volumes:
+      - ./.secrets/customer-dev/compose-runtime/migrate-customer:/cab-runtime:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  migrate-driver:
+    <<: *app
+    restart: "no"
+    command: ["node", "dev/compose/launch.mjs", "migrate-driver"]
+    volumes:
+      - ./.secrets/customer-dev/compose-runtime/migrate-driver:/cab-runtime:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  migrate-payment:
+    <<: *app
+    restart: "no"
+    command: ["node", "dev/compose/launch.mjs", "migrate-payment"]
+    volumes:
+      - ./.secrets/customer-dev/compose-runtime/migrate-payment:/cab-runtime:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  migrate-trip:
+    <<: *app
+    restart: "no"
+    command: ["node", "dev/compose/launch.mjs", "migrate-trip"]
+    volumes:
+      - ./.secrets/customer-dev/compose-runtime/migrate-trip:/cab-runtime:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  migrate-booking:
+    <<: *app
+    restart: "no"
+    command: ["node", "dev/compose/launch.mjs", "migrate-booking"]
+    volumes:
+      - ./.secrets/customer-dev/compose-runtime/migrate-booking:/cab-runtime:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  migrate-rating:
+    <<: *app
+    restart: "no"
+    command: ["node", "dev/compose/launch.mjs", "migrate-rating"]
+    volumes:
+      - ./.secrets/customer-dev/compose-runtime/migrate-rating:/cab-runtime:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  identity-service:
+    <<: *app
+    command: ["node", "dev/compose/launch.mjs", "identity"]
+    environment:
+      CAB_HEALTH_DIR: /cab-health
+      NODE_ENV: development
+      CAB_DEMO_OTP_RESPONSE_ENABLED: "1"
+    volumes:
+      - cab_health:/cab-health
+      - ./.secrets/customer-dev/compose-runtime/identity:/cab-runtime:ro
+      - ./.secrets/customer-dev/compose-pki/identity:/cab-pki:ro
+    depends_on:
+      cert-renewer: {condition: service_healthy}
+      migrate-identity: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "node", "dev/compose/health.mjs", "identity"]
+      interval: 10s
+      timeout: 6s
+      retries: 12
+
+  customer-service:
+    <<: *app
+    command: ["node", "dev/compose/launch.mjs", "customer"]
+    volumes:
+      - cab_health:/cab-health
+      - ./.secrets/customer-dev/compose-runtime/customer:/cab-runtime:ro
+      - ./.secrets/customer-dev/compose-pki/customer:/cab-pki:ro
+    depends_on:
+      cert-renewer: {condition: service_healthy}
+      migrate-customer: {condition: service_completed_successfully}
+      identity-service: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "node", "dev/compose/health.mjs", "customer"]
+      interval: 10s
+      timeout: 6s
+      retries: 12
+
+  driver-service:
+    <<: *app
+    command: ["node", "dev/compose/launch.mjs", "driver"]
+    environment:
+      CAB_HEALTH_DIR: /cab-health
+      NODE_ENV: development
+      CAB_DEMO_AVAILABILITY_LOCATION_ENABLED: "1"
+      CAB_DEMO_AVAILABILITY_LATITUDE: "10.7769"
+      CAB_DEMO_AVAILABILITY_LONGITUDE: "106.7009"
+    volumes:
+      - cab_health:/cab-health
+      - ./.secrets/customer-dev/compose-runtime/driver:/cab-runtime:ro
+      - ./.secrets/customer-dev/compose-pki/driver:/cab-pki:ro
+    depends_on:
+      cert-renewer: {condition: service_healthy}
+      migrate-driver: {condition: service_completed_successfully}
+      identity-service: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "node", "dev/compose/health.mjs", "driver"]
+      interval: 10s
+      timeout: 6s
+      retries: 12
+
+  notification-service:
+    <<: *app
+    command: ["node", "dev/compose/launch.mjs", "notification"]
+    volumes:
+      - cab_health:/cab-health
+      - ./.secrets/customer-dev/compose-runtime/notification:/cab-runtime:ro
+      - ./.secrets/customer-dev/compose-pki/notification:/cab-pki:ro
+    depends_on:
+      cert-renewer: {condition: service_healthy}
+      identity-service: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      mongo: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "node", "dev/compose/health.mjs", "notification"]
+      interval: 10s
+      timeout: 6s
+      retries: 12
+
+  payment-broker-setup:
+    <<: *app
+    restart: "no"
+    command: ["node", "dev/compose/setup-payment-broker.mjs"]
+    volumes:
+      - ./.secrets/customer-dev/compose-runtime/payment-broker:/cab-runtime:ro
+      - ./.secrets/customer-dev/compose-pki/broker:/cab-pki:ro
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+
+  payment-service:
+    <<: *app
+    command: ["node", "dev/compose/launch.mjs", "payment"]
+    environment:
+      CAB_HEALTH_DIR: /cab-health
+      NODE_ENV: development
+      CAB_DEMO_PAYMENT_RESULT_ENABLED: "1"
+    volumes:
+      - cab_health:/cab-health
+      - ./.secrets/customer-dev/compose-runtime/payment:/cab-runtime:ro
+      - ./.secrets/customer-dev/compose-pki/payment:/cab-pki:ro
+    depends_on:
+      cert-renewer: {condition: service_healthy}
+      migrate-payment: {condition: service_completed_successfully}
+      identity-service: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      payment-broker-setup: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "node", "dev/compose/health.mjs", "payment"]
+      interval: 10s
+      timeout: 6s
+      retries: 12
+
+  trip-broker-setup:
+    <<: *app
+    restart: "no"
+    command: ["node", "dev/compose/setup-trip-broker.mjs"]
+    volumes:
+      - ./.secrets/customer-dev/compose-runtime/trip-broker:/cab-runtime:ro
+      - ./.secrets/customer-dev/compose-pki/broker:/cab-pki:ro
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+
+  trip-service:
+    <<: *app
+    command: ["node", "dev/compose/launch.mjs", "trip"]
+    volumes:
+      - cab_health:/cab-health
+      - ./.secrets/customer-dev/compose-runtime/trip:/cab-runtime:ro
+      - ./.secrets/customer-dev/compose-pki/trip:/cab-pki:ro
+    depends_on:
+      cert-renewer: {condition: service_healthy}
+      migrate-trip: {condition: service_completed_successfully}
+      identity-service: {condition: service_healthy}
+      payment-service: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      trip-broker-setup: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "node", "dev/compose/health.mjs", "trip"]
+      interval: 10s
+      timeout: 6s
+      retries: 12
+
+  booking-broker-setup:
+    <<: *app
+    restart: "no"
+    command: ["node", "dev/compose/setup-booking-broker.mjs"]
+    volumes:
+      - ./.secrets/customer-dev/compose-runtime/booking-broker:/cab-runtime:ro
+      - ./.secrets/customer-dev/compose-pki/broker:/cab-pki:ro
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+
+  booking-service:
+    <<: *app
+    command: ["node", "dev/compose/launch.mjs", "booking"]
+    volumes:
+      - cab_health:/cab-health
+      - ./.secrets/customer-dev/compose-runtime/booking:/cab-runtime:ro
+      - ./.secrets/customer-dev/compose-pki/booking:/cab-pki:ro
+    depends_on:
+      cert-renewer: {condition: service_healthy}
+      migrate-booking: {condition: service_completed_successfully}
+      migrate-customer: {condition: service_completed_successfully}
+      migrate-driver: {condition: service_completed_successfully}
+      identity-service: {condition: service_healthy}
+      customer-service: {condition: service_healthy}
+      driver-service: {condition: service_healthy}
+      trip-service: {condition: service_healthy}
+      payment-service: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      booking-broker-setup: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "node", "dev/compose/health.mjs", "booking"]
+      interval: 10s
+      timeout: 6s
+      retries: 12
+
+  rating-service:
+    <<: *app
+    command: ["node", "dev/compose/launch.mjs", "rating"]
+    volumes:
+      - cab_health:/cab-health
+      - ./.secrets/customer-dev/compose-runtime/rating:/cab-runtime:ro
+      - ./.secrets/customer-dev/compose-pki/rating:/cab-pki:ro
+    depends_on:
+      cert-renewer: {condition: service_healthy}
+      migrate-rating: {condition: service_completed_successfully}
+      identity-service: {condition: service_healthy}
+      trip-service: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "node", "dev/compose/health.mjs", "rating"]
+      interval: 10s
+      timeout: 6s
+      retries: 12
+
+  api-gateway:
+    <<: *app
+    command: ["node", "dev/compose/launch.mjs", "gateway"]
+    environment:
+      CAB_HEALTH_DIR: /cab-health
+      NODE_ENV: development
+      CAB_DEMO_OTP_RESPONSE_ENABLED: "1"
+      CAB_DEMO_PAYMENT_RESULT_ENABLED: "1"
+      CAB_DEMO_GPS_SERVER_TIME_ENABLED: "1"
+    volumes:
+      - cab_health:/cab-health
+      - ./.secrets/customer-dev/compose-pki/gateway:/cab-pki:ro
+    ports: ["127.0.0.1:33201:33201"]
+    depends_on:
+      identity-service: {condition: service_healthy}
+      customer-service: {condition: service_healthy}
+      driver-service: {condition: service_healthy}
+      notification-service: {condition: service_healthy}
+      payment-service: {condition: service_healthy}
+      trip-service: {condition: service_healthy}
+      booking-service: {condition: service_healthy}
+      rating-service: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "node", "dev/compose/health.mjs", "gateway"]
+      interval: 10s
+      timeout: 12s
+      retries: 12
+
+  nearby-demo-gps:
+    <<: *app
+    command: ["node", "dev/compose/nearby-demo-gps.mjs"]
+    environment:
+      NODE_ENV: development
+      CAB_DEMO_NEARBY_GPS_ENABLED: "1"
+      CAB_DEMO_PRIORITY_DRIVER_ID: "23411fa8-d14f-4ef8-a4ff-14165a540c8c"
+      CAB_GATEWAY_INTERNAL_URL: http://api-gateway:33201
+      CAB_NEARBY_FIXTURE_FILE: /cab-demo/drivers.json
+      CAB_NEARBY_HEALTH_FILE: /tmp/nearby-demo-heartbeat
+    volumes:
+      - ./.secrets/customer-dev/nearby-demo:/cab-demo:ro
+    depends_on:
+      api-gateway: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "node", "dev/compose/nearby-demo-gps-health.mjs"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+secrets:
+  postgres_password:
+    file: ./.secrets/customer-dev/postgres_password
+  mongo_root_password:
+    file: ./.secrets/customer-dev/mongo_root_password
+  cab_ca_cert:
+    file: ./.secrets/customer-dev/pki/ca.crt
+  cab_ca_key:
+    file: ./.secrets/customer-dev/pki/ca.key
+
+volumes:
+  cab_health:
+  cab_pg_existing:
+    external: true
+    name: cab-customer-dev-bdb8a430-c2b7-466e-ab77-7b509be16898_cab_dev_data
+  cab_rabbit_existing:
+    external: true
+    name: cab-customer-dev-bdb8a430-c2b7-466e-ab77-7b509be16898_cab_rabbit_data
+  cab_mongo_existing:
+    external: true
+    name: cab-customer-dev-bdb8a430-c2b7-466e-ab77-7b509be16898_cab_notification_data
+  cab_mongo_config_existing:
+    external: true
+    name: 560f0f4b8c6702a09fb9c6cbf4fab0829980ea0669b08863e3b581d276f5d512

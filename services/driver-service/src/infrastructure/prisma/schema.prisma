@@ -1,0 +1,177 @@
+generator client {
+  provider = "prisma-client"
+  output = "./generated"
+  moduleFormat = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model DriverProfile {
+  driverId String @id @map("driver_id") @db.Uuid
+  accountId String @unique @map("account_id") @db.Uuid
+  licenseCiphertext Bytes @map("license_ciphertext")
+  licenseNonce Bytes @map("license_nonce")
+  licenseTag Bytes @map("license_tag")
+  licenseKeyVersion String @map("license_key_version")
+  licenseLookupHmac Bytes @unique @map("license_lookup_hmac")
+  approvalStatus String @map("approval_status")
+  rejectionReason String? @map("rejection_reason")
+  driverStatus String @map("driver_status")
+  version BigInt @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  assignments VehicleAssignment[]
+  receipts AvailabilityReceipt[]
+  location DriverLocation?
+  samples DriverLocationSample[]
+  @@map("driver_profile")
+}
+
+model DriverApplication {
+  applicationId String @id @map("application_id") @db.Uuid
+  accountId String @unique @map("account_id") @db.Uuid
+  driverId String @unique @map("driver_id") @db.Uuid
+  operationId String @unique @map("operation_id") @db.Uuid
+  status String
+  snapshotCiphertext Bytes @map("snapshot_ciphertext")
+  snapshotNonce Bytes @map("snapshot_nonce")
+  snapshotTag Bytes @map("snapshot_tag")
+  snapshotKeyVersion String @map("snapshot_key_version")
+  version BigInt @default(1)
+  submittedAt DateTime @default(now()) @map("submitted_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  reviewedAt DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  reviewedByAccountId String? @map("reviewed_by_account_id") @db.Uuid
+  rejectionReason String? @map("rejection_reason")
+  approvedVehicleId String? @map("approved_vehicle_id") @db.Uuid
+  @@index([status,submittedAt(sort: Desc),applicationId(sort: Desc)], map:"driver_application_page")
+  @@map("driver_application")
+}
+
+model DriverProvisionReceipt {
+  operationId String @id @map("operation_id") @db.Uuid
+  commandId String @unique @map("command_id") @db.Uuid
+  accountId String @unique @map("account_id") @db.Uuid
+  driverId String @unique @map("driver_id") @db.Uuid
+  applicationId String @unique @map("application_id") @db.Uuid
+  payloadDigest Bytes @map("payload_digest")
+  state String
+  committedAt DateTime @default(now()) @map("committed_at") @db.Timestamptz(6)
+  @@map("driver_provision_receipt")
+}
+
+model DriverReviewReceipt {
+  receiptId String @id @map("receipt_id") @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  idempotencyKey String @map("idempotency_key")
+  requestDigest Bytes @map("request_digest")
+  resultCiphertext Bytes @map("result_ciphertext")
+  resultNonce Bytes @map("result_nonce")
+  resultTag Bytes @map("result_tag")
+  resultKeyVersion String @map("result_key_version")
+  committedAt DateTime @default(now()) @map("committed_at") @db.Timestamptz(6)
+  @@unique([applicationId,idempotencyKey])
+  @@map("driver_review_receipt")
+}
+
+model DriverApplicationOutbox {
+  eventId String @id @map("event_id") @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  aggregateVersion BigInt @map("aggregate_version")
+  eventType String @map("event_type")
+  safePayload Json @map("safe_payload")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  @@unique([applicationId,aggregateVersion,eventType])
+  @@map("driver_application_outbox")
+}
+
+model DriverApplicationAudit {
+  auditId String @id @map("audit_id") @db.Uuid
+  applicationId String @map("application_id") @db.Uuid
+  action String
+  actorAccountId String? @map("actor_account_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  @@map("driver_application_audit")
+}
+
+model Vehicle {
+  vehicleId String @id @map("vehicle_id") @db.Uuid
+  plateNumber String @map("plate_number")
+  plateKey String @unique @map("plate_key")
+  vehicleType String @map("vehicle_type")
+  vehicleStatus String @map("vehicle_status")
+  version BigInt @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  assignments VehicleAssignment[]
+  @@map("vehicle")
+}
+
+model VehicleAssignment {
+  assignmentId String @id @map("assignment_id") @db.Uuid
+  driverId String @map("driver_id") @db.Uuid
+  vehicleId String @map("vehicle_id") @db.Uuid
+  startedAt DateTime @default(now()) @map("started_at") @db.Timestamptz(6)
+  endedAt DateTime? @map("ended_at") @db.Timestamptz(6)
+  driver DriverProfile @relation(fields: [driverId], references: [driverId], onDelete: Restrict)
+  vehicle Vehicle @relation(fields: [vehicleId], references: [vehicleId], onDelete: Restrict)
+  @@map("vehicle_assignment")
+}
+
+model AvailabilityReceipt {
+  receiptId String @id @map("receipt_id") @db.Uuid
+  driverId String @map("driver_id") @db.Uuid
+  idempotencyKey String @map("idempotency_key") @db.VarChar(128)
+  expectedVersion BigInt @map("expected_version")
+  requestedStatus String @map("requested_status")
+  resultJson Json @map("result_json")
+  committedAt DateTime @default(now()) @map("committed_at") @db.Timestamptz(6)
+  driver DriverProfile @relation(fields: [driverId], references: [driverId], onDelete: Restrict)
+  @@unique([driverId, idempotencyKey])
+  @@map("availability_receipt")
+}
+
+model DriverLocation {
+  driverId String @id @map("driver_id") @db.Uuid
+  latitude Float @db.DoublePrecision
+  longitude Float @db.DoublePrecision
+  recordedAt DateTime @map("recorded_at") @db.Timestamptz(6)
+  receivedAt DateTime @map("received_at") @db.Timestamptz(6)
+  driver DriverProfile @relation(fields: [driverId], references: [driverId], onDelete: Restrict)
+  @@map("driver_location")
+}
+
+model DriverLocationSample {
+  sampleId String @id @map("sample_id") @db.Uuid
+  driverId String @map("driver_id") @db.Uuid
+  latitude Float @db.DoublePrecision
+  longitude Float @db.DoublePrecision
+  recordedAt DateTime @map("recorded_at") @db.Timestamptz(6)
+  receivedAt DateTime @map("received_at") @db.Timestamptz(6)
+  handoffState String @default("PENDING") @map("handoff_state")
+  driver DriverProfile @relation(fields: [driverId], references: [driverId], onDelete: Restrict)
+  @@unique([driverId,recordedAt])
+  @@map("driver_location_sample")
+}
+
+model NearbySearchSnapshot {
+  searchId String @id @map("search_id") @db.Uuid
+  accountId String @map("account_id") @db.Uuid
+  paramsDigest Bytes @map("params_digest")
+  items Json
+  snapshotAt DateTime @map("snapshot_at") @db.Timestamptz(6)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  cursors NearbyPageCursor[]
+  @@map("nearby_search_snapshot")
+}
+
+model NearbyPageCursor {
+  tokenDigest Bytes @id @map("token_digest")
+  searchId String @map("search_id") @db.Uuid
+  pageOffset Int @map("page_offset")
+  search NearbySearchSnapshot @relation(fields:[searchId],references:[searchId],onDelete:Restrict)
+  @@map("nearby_page_cursor")
+}

@@ -151,21 +151,16 @@ info:
 
     - Kiểm tra tồn tại trước khi ghi không thay thế unique constraint.
 
-    - POST tạo Rating yêu cầu Idempotency-Key.
+    - POST tạo Rating không yêu cầu Idempotency-Key từ client.
 
-    - Phạm vi key gồm accountId, operation và tripId.
+    - Gateway/Rating dùng command ID và receipt nội bộ khi retry cùng lệnh.
 
-    - Cùng key, cùng nội dung chuẩn hóa trả status code và body đã lưu.
+    - Kiểm tra quyền hiện tại trước khi xử lý.
 
-    - Cùng key, nội dung khác trả 409 IDEMPOTENCY_CONFLICT.
-
-    - Request cùng key đang xử lý trả 409 REQUEST_IN_PROGRESS.
-
-    - Kiểm tra quyền hiện tại trước khi replay.
-
-    - Replay hợp lệ được kiểm tra trước điều kiện Rating đã tồn tại.
-
-    - Key mới khi Trip đã có Rating trả 409 RATING_ALREADY_EXISTS.
+    - Cùng Trip, đúng Customer và cùng score/comment sau chuẩn hóa trả lại
+      Rating đã lưu với HTTP 201, kể cả request mới không có key client.
+    - Cùng Trip nhưng nội dung khác trả 409 RATING_ALREADY_EXISTS; unique
+      constraint bảo vệ cả hai POST cạnh tranh, không tạo thêm audit nghiệp vụ.
 
     - Ghi Rating, kết quả idempotency và audit trong cùng transaction.
 
@@ -259,7 +254,7 @@ paths:
         - Người gọi là CUSTOMER.
         - Trip thuộc Customer đang đăng nhập.
         - Trip có tripStatus=COMPLETED.
-        - Trip chưa có Rating.
+        - Trip chưa có Rating, hoặc Rating đã có cùng nội dung chuẩn hóa để replay.
 
         Không kiểm tra Payment SUCCESS.
         Vẫn cho phép đánh giá khi chưa có Payment hoặc Payment đang
@@ -280,17 +275,17 @@ paths:
         - Ghi Rating, idempotency và audit trong transaction cab_rating.
         - customerId và driverId lấy từ snapshot Trip đã xác minh.
 
-        Hai key khác nhau cùng tạo đánh giá:
+        Hai request cùng tạo đánh giá:
         - Unique constraint tripId chỉ cho phép một bản ghi.
-        - Request còn lại trả 409 RATING_ALREADY_EXISTS.
+        - Cùng score/comment chuẩn hóa trả Rating cũ với 201.
+        - Nội dung khác trả 409 RATING_ALREADY_EXISTS.
         - Không trả lỗi 500 chỉ vì tranh chấp unique constraint đã biết.
 
         Nếu Identity hoặc Trip không xác minh được, không tạo Rating.
-        Nếu đã commit nhưng mất response, gửi lại cùng key để lấy kết quả cũ.
+        Nếu mất response, đọc Rating của Trip trước khi gửi một POST mới.
         Không đổi Trip, Driver, Fare hoặc Payment.
       parameters:
         - $ref: "#/components/parameters/TripId"
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -525,20 +520,6 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/Identifier"
-    IdempotencyKey:
-      name: Idempotency-Key
-      in: header
-      required: true
-      description: |
-        Khóa ổn định của yêu cầu tạo Rating.
-        Phạm vi accountId, operation và tripId.
-        Gửi lại cùng thao tác phải giữ nguyên key và nội dung.
-        Không dùng lại key cho nhận xét hoặc score khác.
-      schema:
-        type: string
-        minLength: 1
-        maxLength: 128
-        pattern: ^[A-Za-z0-9._:-]+$
     ScoreFilter:
       name: score
       in: query
@@ -840,7 +821,6 @@ components:
         - comment vượt giới hạn hoặc có giá trị null.
         - Body có trường không được phép.
         - Query có tham số ngoài hợp đồng.
-        - Thiếu hoặc sai định dạng Idempotency-Key.
         - Khoảng thời gian không hợp lệ.
       headers:
         Cache-Control:
@@ -906,7 +886,7 @@ components:
         - IDEMPOTENCY_CONFLICT.
         - REQUEST_IN_PROGRESS.
 
-        Trip đã có Rating thì có thể đọc bằng GET /trips/{tripId}/rating.
+        Trip đã có Rating khác nội dung thì có thể đọc bằng GET /trips/{tripId}/rating.
         Không tự ghi đè Rating hiện có khi nhận request mới.
       headers:
         Cache-Control:
@@ -919,7 +899,7 @@ components:
       description: |
         RATE_LIMIT_EXCEEDED.
         Vượt hạn mức tại API Gateway.
-        Khi thử lại POST, giữ nguyên Idempotency-Key và nội dung.
+        Khi thử lại POST, kiểm tra Rating hiện có trước.
       headers:
         Cache-Control:
           $ref: "#/components/headers/NoStore"
@@ -938,7 +918,7 @@ components:
         Không tạo Rating từ dữ liệu chưa được xác minh.
         Không trả danh sách rỗng hoặc 404 thay cho lỗi dependency.
         HTTP 503 không chứng minh thao tác ghi chắc chắn chưa commit.
-        Client gửi lại cùng Idempotency-Key và nội dung để xác định kết quả.
+        Client đọc Rating hiện có để xác định kết quả trước khi gửi POST mới.
       headers:
         Cache-Control:
           $ref: "#/components/headers/NoStore"
@@ -950,7 +930,7 @@ components:
       description: |
         INTERNAL_ERROR.
         Không trả stack trace, token, chuỗi kết nối hoặc thông tin xác thực.
-        Nếu mất kết quả POST, thử lại cùng Idempotency-Key và nội dung.
+        Nếu mất kết quả POST, đọc Rating hiện có trước khi thử lại.
       headers:
         Cache-Control:
           $ref: "#/components/headers/NoStore"

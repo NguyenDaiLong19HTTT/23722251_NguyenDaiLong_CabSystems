@@ -14,13 +14,25 @@ service DriverInternalService {
  rpc GetReservation(GetReservationRequest) returns (DriverReservation);
  rpc BindReservation(BindReservationRequest) returns (DriverReservation);
  rpc ReleaseReservation(ReleaseReservationRequest) returns (DriverReservation);
+ rpc GetTripVehicle(GetTripVehicleRequest) returns (TripVehicle);
+ rpc CheckTripRestoreEligibility(CheckTripRestoreEligibilityRequest) returns (TripRestoreEligibility);
 }
+message CheckTripRestoreEligibilityRequest { string trip_id = 1; string driver_account_id = 2;
+  ReservationRef reservation = 3; }
+message TripRestoreEligibility { string trip_id = 1; bool eligible = 2;
+  google.protobuf.Timestamp verified_at = 3; }
+message GetTripVehicleRequest { string trip_id = 1; string driver_id = 2;
+  string vehicle_id = 3; }
+message TripVehicle { string vehicle_id = 1; string plate_number = 2;
+  VehicleType vehicle_type = 3; }
 message ProposedVehicle { VehicleType type = 1; string plate_number = 2; }
 // PII over mTLS only; encrypt license at rest; no PII in idempotency/audit payload.
-message ProvisionDriverRequest { Command command = 1; string account_id = 2; string driver_id = 3; string application_id = 4; string license_number = 5; ProposedVehicle proposed_vehicle = 6; }
+message ProvisionDriverRequest { Command command = 1; string account_id = 2; string driver_id = 3; string application_id = 4; string license_number = 5; ProposedVehicle proposed_vehicle = 6;
+  string applicant_full_name = 7; string applicant_email = 8; string applicant_phone = 9;
+  google.protobuf.Timestamp phone_verified_at = 10; }
 message CancelDriverProvisionRequest { Command command = 1; string account_id = 2; string driver_id = 3; }
 enum DriverProvisionState { DRIVER_PROVISION_STATE_UNSPECIFIED = 0; DRIVER_PROVISIONED = 1; DRIVER_PROVISION_CANCELLED = 2; }
-message DriverProvision { string operation_id = 1; string account_id = 2; string driver_id = 3; string application_id = 4; DriverProvisionState state = 5; }
+message DriverProvision { string operation_id = 1; string account_id = 2; string driver_id = 3; string application_id = 4; DriverProvisionState state = 5; google.protobuf.Timestamp submitted_at = 6; }
 message FindDispatchCandidatesRequest { string booking_id = 1; Point pickup = 2; VehicleType vehicle_type = 3; uint32 radius_meters = 4; uint32 limit = 5; repeated string excluded_driver_ids = 6; }
 message DispatchCandidate { string driver_id = 1; string driver_account_id = 2; string vehicle_id = 3; uint64 driver_version = 4; uint64 vehicle_version = 5; uint32 distance_meters = 6; google.protobuf.Timestamp location_recorded_at = 7; }
 message DispatchCandidates { repeated DispatchCandidate candidates = 1; google.protobuf.Timestamp as_of = 2; }

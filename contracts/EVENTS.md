@@ -31,7 +31,7 @@ Notification aggregate/ref mapping theo schema API06. `aggregateId == referenceI
 | ACCOUNT_PROVISIONED / ACCOUNT | Identity | Bảy MS còn lại cập nhật projection nếu cần; chỉ phát sau registration SUCCEEDED. Không thay response/query xác nhận provisioning. |
 | ACCOUNT_ACCESS_CHANGED / ACCOUNT | Identity | Bảy MS invalidate authorization projections; Booking hủy offer chưa nhận, Driver chặn công việc mới, không tự hủy Trip. Payload accountStatus/sessionEpoch, aggregateVersion là Account security revision tăng trên lock/unlock/logout/password/session revocation. |
 | DRIVER_LOCATION_RECORDED / DRIVER | Driver | Trip ghi journey; sampleId ổn định. aggregateVersion là location stream sequence riêng, **không tăng version nghiệp vụ Driver/Trip**. recordedAt không lớn hơn receivedAt. |
-| JOURNEY_METRICS_CONFIRMED / TRIP | Trip | Payment gọi GetFareContext(tripId,metricsVersion) rồi phát hành Fare idempotent; chỉ emit khi COMPLETED và metrics CONFIRMED. |
+| JOURNEY_METRICS_CONFIRMED / TRIP | Trip | Lưu bằng chứng metrics hành trình sau COMPLETED; Payment MVP không dùng event này để phát hành hoặc tính lại Fare cố định đã chốt trước chuyến. |
 
 Domain aggregateId phải bằng accountId/driverId/tripId tương ứng trong payload. causationId là commandId hoặc input eventId gây ra thay đổi; không raw token. UUID eventId không dùng làm timestamp/order. ACCOUNT_ACCESS_CHANGED không thay Identity check theo request; sessionEpoch tăng cũng khi chỉ revoke một session để invalidate cache, không có nghĩa tất cả session đều revoked. Identity vẫn là nguồn xác minh cụ thể.
 

@@ -1,0 +1,84 @@
+syntax = "proto3";
+package cab.gateway.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// API07 /drivers/me and /drivers/me/availability; API04 /drivers/me/location.
+// End-user token is metadata x-cab-user-authorization, never a protobuf field.
+service DriverFacadeService {
+  rpc GetMyDriverProfile(GetMyDriverProfileRequest) returns (DriverProfile);
+  rpc GetDriverById(GetDriverByIdRequest) returns (DriverPublicProfile);
+  rpc SetMyDriverAvailability(SetMyDriverAvailabilityRequest) returns (Driver);
+  rpc UpdateMyDriverLocation(UpdateMyDriverLocationRequest) returns (LocationUpdateResult);
+  rpc SearchNearbyDrivers(SearchNearbyDriversRequest) returns (NearbyDriverPage);
+}
+message GetMyDriverProfileRequest {}
+message GetDriverByIdRequest { optional string driver_id = 1; }
+message DriverPublicProfile { optional string driver_id = 1; optional string full_name = 2; }
+enum DriverApprovalStatus { DRIVER_APPROVAL_UNSPECIFIED = 0; PENDING_APPROVAL = 1; APPROVED = 2; REJECTED = 3; }
+enum DriverStatus { DRIVER_STATUS_UNSPECIFIED = 0; AVAILABLE = 1; BUSY = 2; OFFLINE = 3; }
+enum VehicleStatus { VEHICLE_STATUS_UNSPECIFIED = 0; VEHICLE_ACTIVE = 1; VEHICLE_INACTIVE = 2; }
+enum VehicleType { VEHICLE_TYPE_UNSPECIFIED = 0; STANDARD = 1; PREMIUM = 2; MOTORBIKE = 3; VAN = 4; }
+message Driver {
+  optional string driver_id = 1;
+  optional string account_id = 2;
+  optional string license_number = 3;
+  optional DriverApprovalStatus approval_status = 4;
+  optional DriverStatus driver_status = 5;
+  optional string vehicle_id = 6;
+  optional uint64 version = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+  optional string rejection_reason = 10;
+}
+message Vehicle {
+  optional string vehicle_id = 1;
+  optional string plate_number = 2;
+  optional VehicleType vehicle_type = 3;
+  optional VehicleStatus vehicle_status = 4;
+  optional string assigned_driver_id = 5;
+  optional uint64 version = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+message DriverProfile { Driver driver = 1; Vehicle vehicle = 2; }
+message SetMyDriverAvailabilityRequest {
+  optional uint64 expected_version = 1;
+  optional DriverStatus driver_status = 2;
+}
+message UpdateMyDriverLocationRequest {
+  optional double latitude = 1;
+  optional double longitude = 2;
+  google.protobuf.Timestamp recorded_at = 3;
+}
+message DriverLocation {
+  optional double latitude = 1;
+  optional double longitude = 2;
+  google.protobuf.Timestamp recorded_at = 3;
+  google.protobuf.Timestamp received_at = 4;
+}
+message LocationUpdateResult {
+  optional bool location_updated = 1;
+  DriverLocation current_location = 2;
+}
+message SearchNearbyDriversRequest {
+  optional double latitude = 1;
+  optional double longitude = 2;
+  optional double radius_km = 3;
+  optional uint32 limit = 4;
+  optional string cursor = 5;
+}
+message NearbyDriver {
+  optional string driver_id = 1;
+  optional VehicleType vehicle_type = 2;
+  optional uint32 distance_meters = 3;
+}
+message NearbyDriverPage {
+  repeated NearbyDriver items = 1;
+  optional double radius_km = 2;
+  optional uint32 limit = 3;
+  google.protobuf.Timestamp snapshot_at = 4;
+  google.protobuf.Timestamp expires_at = 5;
+  optional bool has_more = 6;
+  optional string next_cursor = 7;
+}

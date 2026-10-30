@@ -27,7 +27,8 @@
     "/cab.internal.v1.IdentityInternalService/VerifyAccountEligibility": {
       "callers": [
         "booking-service",
-        "driver-service"
+        "driver-service",
+        "trip-service"
       ],
       "scope": "identity:eligibility:read",
       "userContext": "none",
@@ -244,6 +245,12 @@
       "userContext": "required",
       "deadlineMs": 1000
     },
+    "/cab.internal.v1.TripInternalService/HasCustomerDriverTrip": {
+      "callers": ["identity-service"],
+      "scope": "trip:customer-driver-relation:read",
+      "userContext": "required",
+      "deadlineMs": 1000
+    },
     "/cab.internal.v1.TripInternalService/GetTripPaymentContext": {
       "callers": [
         "payment-service"
@@ -252,9 +259,28 @@
       "userContext": "required",
       "deadlineMs": 1000
     },
+    "/cab.internal.v1.DriverInternalService/GetTripVehicle": {
+      "callers": ["trip-service"],
+      "scope": "driver:trip-vehicle:read",
+      "userContext": "required",
+      "deadlineMs": 1000
+    },
+    "/cab.internal.v1.DriverInternalService/CheckTripRestoreEligibility": {
+      "callers": ["trip-service"],
+      "scope": "driver:trip-restore:check",
+      "userContext": "none",
+      "deadlineMs": 1000
+    },
+    "/cab.internal.v1.TripInternalService/RecordAssignedLocation": {
+      "callers": ["driver-service"],
+      "scope": "trip:location:record-assigned",
+      "userContext": "none",
+      "deadlineMs": 1000
+    },
     "/cab.internal.v1.TripInternalService/GetActiveTripContactContext": {
       "callers": [
-        "identity-service"
+        "identity-service",
+        "driver-service"
       ],
       "scope": "trip:contact:read",
       "userContext": "required",
@@ -268,11 +294,29 @@
       "userContext": "none",
       "deadlineMs": 1000
     },
+    "/cab.internal.v1.BookingInternalService/GetBookingPaymentContext": {
+      "callers": ["payment-service"],
+      "scope": "booking:payment-context:read",
+      "userContext": "none",
+      "deadlineMs": 1000
+    },
     "/cab.internal.v1.PaymentInternalService/GetPricingSnapshot": {
       "callers": [
         "booking-service"
       ],
       "scope": "pricing:snapshot:capture",
+      "userContext": "none",
+      "deadlineMs": 2000
+    },
+    "/cab.internal.v1.PaymentInternalService/GetTripPaymentDecision": {
+      "callers": ["trip-service"],
+      "scope": "payment:trip-start:check",
+      "userContext": "none",
+      "deadlineMs": 1000
+    },
+    "/cab.internal.v1.PaymentInternalService/RecordTripCancellation": {
+      "callers": ["trip-service"],
+      "scope": "payment:trip-cancellation:record",
       "userContext": "none",
       "deadlineMs": 2000
     },

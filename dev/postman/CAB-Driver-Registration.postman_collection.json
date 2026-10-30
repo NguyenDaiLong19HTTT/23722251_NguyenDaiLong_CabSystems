@@ -1,0 +1,425 @@
+{
+  "info": {
+    "name": "CAB Driver registration and review demo",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1 Request Driver OTP — 202",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/auth/driver-registration/otp",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"phone\":\"{{newDriverPhone}}\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('OTP accepted',()=>pm.response.to.have.status(202));",
+              "if(pm.response.code===202) pm.environment.set('driverChallengeId',pm.response.json().challengeId);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 Verify Driver OTP — 200",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/auth/driver-registration/otp/verify",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"challengeId\":\"{{driverChallengeId}}\",\"otp\":\"{{driverOtp}}\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Phone verified',()=>pm.response.to.have.status(200));",
+              "if(pm.response.code===200) pm.environment.set('driverVerificationToken',pm.response.json().verificationToken);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 Submit Driver application — 201 or 202",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/driver-applications",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"verificationToken\":\"{{driverVerificationToken}}\",\"fullName\":\"{{newDriverName}}\",\"email\":\"{{newDriverEmail}}\",\"password\":\"{{newDriverPassword}}\",\"licenseNumber\":\"{{newDriverLicense}}\",\"vehicle\":{\"plateNumber\":\"{{newDriverPlate}}\",\"vehicleType\":\"MOTORBIKE\"}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Durable application',()=>pm.expect([201,202]).to.include(pm.response.code));",
+              "if([201,202].includes(pm.response.code)){const d=pm.response.json();if(d.operationId)pm.environment.set('driverOperationId',d.operationId);if(d.applicationId)pm.environment.set('newDriverApplicationId',d.applicationId);if(d.driverId)pm.environment.set('newDriverId',d.driverId);}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4 Lookup pending operation after 202 — 200",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Driver-Registration-Token",
+            "value": "{{driverVerificationToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/driver-registration-operations/{{driverOperationId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Operation lookup',()=>pm.response.to.have.status(200));",
+              "if(pm.response.code===200&&pm.response.json().result){const d=pm.response.json().result;pm.environment.set('newDriverApplicationId',d.applicationId);pm.environment.set('newDriverId',d.driverId);}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5 Login new Driver — 200",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/auth/login",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"emailOrPhone\":\"{{newDriverEmail}}\",\"password\":\"{{newDriverPassword}}\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Driver login',()=>pm.response.to.have.status(200));",
+              "if(pm.response.code===200)pm.environment.set('newDriverToken',pm.response.json().accessToken);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "6 Driver reads own pending application — 200",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{newDriverToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/driver-applications/me"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Pending application',()=>pm.response.to.have.status(200));",
+              "if(pm.response.code===200){const d=pm.response.json();pm.test('Pending status',()=>pm.expect(d.status).to.eql('SUBMITTED'));pm.environment.set('newDriverApplicationId',d.applicationId);pm.environment.set('applicationVersion',String(d.version));}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "7 Admin login — 200",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/auth/login",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"emailOrPhone\":\"{{operatorEmail}}\",\"password\":\"{{operatorPassword}}\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Operator login',()=>pm.response.to.have.status(200));",
+              "if(pm.response.code===200)pm.environment.set('operatorToken',pm.response.json().accessToken);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "8 Admin lists pending applications — 200",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{operatorToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/operations/driver-applications?status=SUBMITTED&limit=20"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Application list',()=>pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "9 Admin reads application detail — 200",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{operatorToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/operations/driver-applications/{{newDriverApplicationId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Application detail',()=>pm.response.to.have.status(200));",
+              "if(pm.response.code===200)pm.environment.set('applicationVersion',String(pm.response.json().version));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 Driver reads profile before review — 200",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{newDriverToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/drivers/me"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Driver profile',()=>pm.response.to.have.status(200));",
+              "if(pm.response.code===200)pm.environment.set('newDriverVersion',String(pm.response.json().driver.version));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "11 Admin approves — 200",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{operatorToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/operations/driver-applications/{{newDriverApplicationId}}/review",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"decision\":\"APPROVED\",\"expectedVersion\":{{applicationVersion}},\"expectedDriverVersion\":{{newDriverVersion}}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Approved',()=>pm.response.to.have.status(200));",
+              "if(pm.response.code===200){const d=pm.response.json();pm.test('Driver remains offline',()=>pm.expect(d.driver.driverStatus).to.eql('OFFLINE'));pm.environment.set('newDriverVehicleId',d.vehicle.vehicleId);pm.environment.set('newDriverVersion',String(d.driver.version));}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "12 Driver reads reviewed application — 200",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{newDriverToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/driver-applications/me"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Own review visible',()=>pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "13 Driver ONLINE (JSON AVAILABLE) ? 200",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{newDriverToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/drivers/me/availability",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"driverStatus\":\"AVAILABLE\",\"expectedVersion\":{{newDriverVersion}}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Available',()=>pm.response.to.have.status(200));",
+              "if(pm.response.code===200)pm.environment.set('newDriverVersion',String(pm.response.json().version));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "14 Driver OFFLINE ? 200",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{newDriverToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/drivers/me/availability",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"driverStatus\":\"OFFLINE\",\"expectedVersion\":{{newDriverVersion}}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Offline',()=>pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

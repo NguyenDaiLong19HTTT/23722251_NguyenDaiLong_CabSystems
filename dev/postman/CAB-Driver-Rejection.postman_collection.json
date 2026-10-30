@@ -1,0 +1,273 @@
+{
+  "info": {
+    "name": "CAB Driver rejection scenario",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1 Request OTP — 202",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/auth/driver-registration/otp",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"phone\":\"{{rejectedDriverPhone}}\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('OTP accepted',()=>pm.response.to.have.status(202));",
+              "if(pm.response.code===202)pm.environment.set('rejectedChallengeId',pm.response.json().challengeId);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 Verify OTP — 200",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/auth/driver-registration/otp/verify",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"challengeId\":\"{{rejectedChallengeId}}\",\"otp\":\"{{rejectedOtp}}\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Phone verified',()=>pm.response.to.have.status(200));",
+              "if(pm.response.code===200)pm.environment.set('rejectedVerificationToken',pm.response.json().verificationToken);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 Submit application — 201 or 202",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/driver-applications",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"verificationToken\":\"{{rejectedVerificationToken}}\",\"fullName\":\"Demo Rejected Driver\",\"email\":\"{{rejectedDriverEmail}}\",\"password\":\"{{rejectedDriverPassword}}\",\"licenseNumber\":\"{{rejectedDriverLicense}}\",\"vehicle\":{\"plateNumber\":\"{{rejectedDriverPlate}}\",\"vehicleType\":\"MOTORBIKE\"}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Submitted',()=>pm.expect([201,202]).to.include(pm.response.code));",
+              "if(pm.response.code===201)pm.environment.set('rejectedApplicationId',pm.response.json().applicationId);else if(pm.response.code===202)pm.environment.set('rejectedOperationId',pm.response.json().operationId);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4 Lookup operation after 202 — 200",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Driver-Registration-Token",
+            "value": "{{rejectedVerificationToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/driver-registration-operations/{{rejectedOperationId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Lookup',()=>pm.response.to.have.status(200));",
+              "if(pm.response.code===200&&pm.response.json().result)pm.environment.set('rejectedApplicationId',pm.response.json().result.applicationId);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5 Driver login — 200",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/auth/login",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"emailOrPhone\":\"{{rejectedDriverEmail}}\",\"password\":\"{{rejectedDriverPassword}}\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Login',()=>pm.response.to.have.status(200));",
+              "if(pm.response.code===200)pm.environment.set('rejectedDriverToken',pm.response.json().accessToken);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "6 Driver profile/version — 200",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{rejectedDriverToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/drivers/me"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Profile',()=>pm.response.to.have.status(200));",
+              "if(pm.response.code===200)pm.environment.set('rejectedDriverVersion',String(pm.response.json().driver.version));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "7 Admin detail/version — 200",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{operatorToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/operations/driver-applications/{{rejectedApplicationId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Detail',()=>pm.response.to.have.status(200));",
+              "if(pm.response.code===200)pm.environment.set('rejectedApplicationVersion',String(pm.response.json().version));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "8 Admin rejects — 200",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{operatorToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/operations/driver-applications/{{rejectedApplicationId}}/review",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"decision\":\"REJECTED\",\"expectedVersion\":{{rejectedApplicationVersion}},\"expectedDriverVersion\":{{rejectedDriverVersion}},\"rejectionReason\":\"{{rejectionReason}}\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Rejected',()=>pm.response.to.have.status(200));",
+              "if(pm.response.code===200)pm.expect(pm.response.json().application.rejectionReason).to.eql(pm.environment.get('rejectionReason'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "9 Driver sees rejection — 200",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{rejectedDriverToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/driver-applications/me"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Own result',()=>pm.response.to.have.status(200));",
+              "if(pm.response.code===200){const d=pm.response.json();pm.expect(d.status).to.eql('REJECTED');pm.expect(d.rejectionReason).to.eql(pm.environment.get('rejectionReason'));}"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

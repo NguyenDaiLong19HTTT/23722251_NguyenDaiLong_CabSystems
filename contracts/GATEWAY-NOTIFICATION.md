@@ -1,0 +1,12 @@
+# Notification Gateway facade — Driver review slice
+
+Source of public behavior: `API-Document/06-notification-api.yaml` GET `/notifications` and PATCH `/notifications/{notificationId}/read`. Gateway exposes the existing `/v1` prefix. The dedicated `cab.gateway.v1.NotificationFacadeService` is defined by `proto/cab/gateway/v1/notification_facade.proto`; exact API Gateway caller rights are in `gateway-customer-policy.json`. No `cab.internal.v1` method is opened to Gateway.
+
+| REST | Owner RPC | Input | Output |
+|---|---|---|---|
+| GET `/v1/notifications` | Notification `ListMyNotifications` | Optional `isRead`, `limit` 1–100 (default 20), opaque cursor up to 2048 | `NotificationPage` mapped to API06 `items` and nullable `nextCursor` |
+| PATCH `/v1/notifications/{notificationId}/read` | Notification `MarkMyNotificationRead` | Opaque identifier; no body | API06 read Notification, first `readAt` preserved on replay |
+
+Gateway forwards the user bearer only as `x-cab-user-authorization` over mTLS. Notification verifies it through Identity `VerifyUserIdentity` with its separate service identity; client account IDs or role headers are never trusted. Mongo queries and conditional updates scope to the verified account and `SENT`/`IN_APP`. Other-owner read is 404 `NOTIFICATION_NOT_FOUND`; missing/invalid user token is 401 `UNAUTHENTICATED`. Query/body/identifier validation returns 400 `VALIDATION_ERROR`; forbidden principal is 403; rate limit is 429 with `Retry-After`. Failed Identity verification dependency, malformed downstream responses, and timeouts fail closed as 503 `SERVICE_UNAVAILABLE`; no empty-list success is synthesized. The REST contract and its error bodies remain API06's source of truth.
+
+Driver review commits the business state and outbox event in one PostgreSQL transaction. The outbox publisher uses the event ID as stable message ID, RabbitMQ publisher confirms and mandatory routing. Notification persists a verified inbox job before manual ACK, then creates an immutable per-recipient IN_APP notification in MongoDB. Unique `(eventId,recipientAccountId,channel)` and conditional read updates preserve a single notification and first `readAt` across replay. Malformed/conflicting events are durably quarantined and sent encrypted to DLQ. The event is a historical fact; GET of a Driver application remains the source for its current state. This slice does not send SMS/email/push.

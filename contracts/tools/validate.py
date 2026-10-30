@@ -38,10 +38,14 @@ def main():
   target=Path(temp)/'cab.pb'
   subprocess.run([sys.executable,'-m','grpc_tools.protoc','-I'+str(BASE/'proto'),'-I'+str(Path(grpc_tools.__file__).parent/'_proto'),'--include_imports','--descriptor_set_out='+str(target),*[str(x) for x in protos]],check=True)
   desc=descriptor_pb2.FileDescriptorSet.FromString(target.read_bytes())
- methods={'/'+f.package+'.'+s.name+'/'+m.name for f in desc.file for s in f.service for m in s.method}
+ methods={'/'+f.package+'.'+s.name+'/'+m.name for f in desc.file if f.package=='cab.internal.v1' for s in f.service for m in s.method}
  policy=read(BASE/'rpc-policy.json');assert set(policy['methods'])==methods,'RPC policy coverage drift'
+ assert len(methods)==41,'Internal RPC count changed'
  assert policy['default']=='deny'
  for entry in policy['methods'].values():assert entry['callers'] and 0<entry['deadlineMs']<=4000 and entry['userContext'] in {'none','required'}
+ from validate_facade import validate_facade
+ validate_facade(desc)
+ assert {f.package for f in desc.file if f.service}=={'cab.internal.v1','cab.gateway.v1'},'Unknown service package without policy'
  ns=read(BASE/'events/notification-v2.schema.json'); ds=read(BASE/'events/domain-v1.schema.json')
  for schema in [ns,ds]:jsonschema.Draft202012Validator.check_schema(schema)
  # Compare every extracted API06 schema after exact known transformation.
@@ -90,5 +94,5 @@ def main():
   except ValueError:pass
   else:raise AssertionError('accepted routing/source spoof')
  for f in (ROOT/'API-Document').glob('*.yaml'):yaml.safe_load(f.read_text())
- print(f'PASS: {len(protos)} protobuf files compiled; {len(methods)} RPCs have exact policy coverage; 2 schemas; {len(fixtures)} valid event fixtures; {len(negatives)+2} negative checks; API06 schema parity; all OpenAPI YAML parse.')
+ print(f'PASS: {len(protos)} protobuf files compiled; {len(methods)} internal + 52 facade RPCs have separate exact policy coverage; 2 schemas; {len(fixtures)} valid event fixtures; {len(negatives)+2} negative checks; API06 schema parity; all OpenAPI YAML parse.')
 if __name__=='__main__':main()

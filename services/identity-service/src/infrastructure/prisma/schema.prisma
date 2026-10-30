@@ -1,0 +1,222 @@
+generator client {
+  provider = "prisma-client"
+  output = "./generated"
+  moduleFormat = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Account {
+  accountId String @id @map("account_id") @db.Uuid
+  fullName String @map("full_name")
+  emailCiphertext Bytes @map("email_ciphertext")
+  emailNonce Bytes @map("email_nonce")
+  emailTag Bytes @map("email_tag")
+  emailKeyVersion String @map("email_key_version")
+  phoneCiphertext Bytes @map("phone_ciphertext")
+  phoneNonce Bytes @map("phone_nonce")
+  phoneTag Bytes @map("phone_tag")
+  phoneKeyVersion String @map("phone_key_version")
+  emailLookupHmac Bytes @map("email_lookup_hmac")
+  phoneLookupHmac Bytes @map("phone_lookup_hmac")
+  lookupKeyVersion String @map("lookup_key_version")
+  passwordHash String @map("password_hash")
+  role String
+  accountStatus String @map("account_status")
+  registrationAccessState String @default("BLOCKED") @map("registration_access_state")
+  version BigInt @default(1)
+  confirmedProfileId String? @map("confirmed_profile_id") @db.Uuid
+  profileConfirmedAt DateTime? @map("profile_confirmed_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  sessions Session[]
+  operations RegistrationOperation[]
+  claims ContactClaim[]
+  @@index([role, accountStatus], map: "account_role_status_idx")
+  @@map("account")
+}
+
+model ContactClaim {
+  claimId String @id @map("claim_id") @db.Uuid
+  accountId String @map("account_id") @db.Uuid
+  operationId String @map("operation_id") @db.VarChar(128)
+  kind String
+  lookupHmac Bytes @map("lookup_hmac")
+  lookupKeyVersion String @map("lookup_key_version")
+  claimedAt DateTime @default(now()) @map("claimed_at") @db.Timestamptz(6)
+  releasedAt DateTime? @map("released_at") @db.Timestamptz(6)
+  account Account @relation(fields: [accountId], references: [accountId], onDelete: Restrict, onUpdate: NoAction)
+  operation RegistrationOperation @relation(fields: [operationId, accountId], references: [operationId, accountId], onDelete: Restrict, onUpdate: NoAction, map: "contact_claim_operation_account")
+  @@unique([accountId, kind], map: "contact_claim_account_kind")
+  @@unique([operationId, kind], map: "contact_claim_operation_kind")
+  @@index([kind, lookupHmac], map: "contact_claim_lookup_idx")
+  @@map("contact_claim")
+}
+
+model Session {
+  sessionId String @id @map("session_id") @db.Uuid
+  accountId String @map("account_id") @db.Uuid
+  refreshTokenDigest Bytes @unique @map("refresh_token_digest")
+  digestKeyVersion String @map("digest_key_version")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  rotatedAt DateTime? @map("rotated_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  version BigInt @default(1)
+  account Account @relation(fields: [accountId], references: [accountId], onDelete: Restrict, onUpdate: NoAction)
+  @@index([accountId, revokedAt, expiresAt], map: "session_account_state_idx")
+  @@map("session")
+}
+
+model RegistrationOperation {
+  operationId String @id @map("operation_id") @db.VarChar(128)
+  flowType String @map("flow_type")
+  accountId String @map("account_id") @db.Uuid
+  targetProfileId String @map("target_profile_id") @db.Uuid
+  publicStatus String @map("public_status")
+  internalPhase String @map("internal_phase")
+  idempotencyKeyHmac Bytes @map("idempotency_key_hmac")
+  idempotencyKeyVersion String @map("idempotency_key_version")
+  recoveryTokenDigest Bytes @map("recovery_token_digest")
+  recoveryDigestKeyVersion String @map("recovery_digest_key_version")
+  requestFingerprintHmac Bytes @map("request_fingerprint_hmac")
+  fingerprintKeyVersion String @map("fingerprint_key_version")
+  customerProvisionState String? @map("customer_provision_state")
+  terminalErrorCode String? @map("terminal_error_code")
+  resultSnapshotCiphertext Bytes? @map("result_snapshot_ciphertext")
+  resultSnapshotNonce Bytes? @map("result_snapshot_nonce")
+  resultSnapshotTag Bytes? @map("result_snapshot_tag")
+  resultSnapshotKeyVersion String? @map("result_snapshot_key_version")
+  resultSnapshotFormatVersion Int? @map("result_snapshot_format_version")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  terminalAt DateTime? @map("terminal_at") @db.Timestamptz(6)
+  publicLookupUntil DateTime? @map("public_lookup_until") @db.Timestamptz(6)
+  version BigInt @default(1)
+  account Account @relation(fields: [accountId], references: [accountId], onDelete: Restrict, onUpdate: NoAction)
+  claims ContactClaim[]
+  steps RegistrationStep[]
+  @@unique([flowType, idempotencyKeyHmac], map: "registration_key")
+  @@unique([flowType, targetProfileId], map: "registration_profile")
+  @@unique([operationId, accountId], map: "registration_account_binding")
+  @@index([publicStatus, updatedAt], map: "registration_public_scan_idx")
+  @@index([internalPhase, updatedAt], map: "registration_phase_scan_idx")
+  @@map("registration_operation")
+}
+
+model RegistrationStep {
+  stepId String @id @map("step_id") @db.Uuid
+  operationId String @map("operation_id") @db.VarChar(128)
+  stepKind String @map("step_kind")
+  commandId String @map("command_id") @db.Uuid
+  targetService String @map("target_service")
+  requestFingerprintHmac Bytes @map("request_fingerprint_hmac")
+  stepState String @map("step_state")
+  attemptCount Int @default(0) @map("attempt_count")
+  nextAttemptAt DateTime? @map("next_attempt_at") @db.Timestamptz(6)
+  lastSafeReason String? @map("last_safe_reason")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  operation RegistrationOperation @relation(fields: [operationId], references: [operationId], onDelete: Restrict, onUpdate: NoAction)
+  @@unique([operationId, stepKind], map: "step_once")
+  @@unique([targetService, commandId], map: "step_command")
+  @@index([stepState, nextAttemptAt], map: "registration_step_retry_idx")
+  @@map("registration_step")
+}
+
+model IdentityOutbox {
+  eventId String @id @map("event_id") @db.Uuid
+  aggregateId String @map("aggregate_id") @db.Uuid
+  aggregateVersion BigInt @map("aggregate_version")
+  eventType String @map("event_type")
+  schemaVersion Int @map("schema_version")
+  payload Json
+  correlationId String? @map("correlation_id")
+  causationId String? @map("causation_id")
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  publishState String @map("publish_state")
+  attemptCount Int @default(0) @map("attempt_count")
+  nextAttemptAt DateTime? @map("next_attempt_at") @db.Timestamptz(6)
+  publishedAt DateTime? @map("published_at") @db.Timestamptz(6)
+  @@unique([aggregateId, aggregateVersion, eventType], map: "outbox_fact_unique")
+  @@index([publishState, nextAttemptAt], map: "identity_outbox_pending_idx")
+  @@map("identity_outbox")
+}
+
+model IdentityAudit {
+  auditId String @id @map("audit_id") @db.Uuid
+  accountId String? @map("account_id") @db.Uuid
+  operationId String? @map("operation_id") @db.VarChar(128)
+  action String
+  actorAccountId String? @map("actor_account_id") @db.Uuid
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  correlationId String? @map("correlation_id")
+  safeDetail Json? @map("safe_detail")
+  @@index([accountId, occurredAt], map: "identity_audit_account_idx")
+  @@index([operationId, occurredAt], map: "identity_audit_operation_idx")
+  @@map("identity_audit")
+}
+
+model DriverOtpChallenge {
+  challengeId String @id @map("challenge_id") @db.Uuid
+  phoneLookupHmac Bytes @map("phone_lookup_hmac")
+  phoneCiphertext Bytes @map("phone_ciphertext")
+  phoneNonce Bytes @map("phone_nonce")
+  phoneTag Bytes @map("phone_tag")
+  phoneKeyVersion String @map("phone_key_version")
+  purpose String
+  codeDigest Bytes @map("code_digest")
+  deliveryCiphertext Bytes @map("delivery_ciphertext")
+  deliveryNonce Bytes @map("delivery_nonce")
+  deliveryTag Bytes @map("delivery_tag")
+  deliveryKeyVersion String @map("delivery_key_version")
+  deliveryState String @map("delivery_state")
+  failedAttempts Int @default(0) @map("failed_attempts")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  resendAvailableAt DateTime @map("resend_available_at") @db.Timestamptz(6)
+  verifiedAt DateTime? @map("verified_at") @db.Timestamptz(6)
+  invalidatedAt DateTime? @map("invalidated_at") @db.Timestamptz(6)
+  @@index([phoneLookupHmac,createdAt(sort: Desc)], map:"driver_otp_phone_time")
+  @@map("driver_otp_challenge")
+}
+
+model DriverPhoneVerification {
+  verificationId String @id @map("verification_id") @db.Uuid
+  challengeId String @unique @map("challenge_id") @db.Uuid
+  phoneLookupHmac Bytes @map("phone_lookup_hmac")
+  tokenDigest Bytes @unique @map("token_digest")
+  verifiedAt DateTime @map("verified_at") @db.Timestamptz(6)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  consumedOperationId String? @unique @map("consumed_operation_id") @db.Uuid
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(6)
+  @@map("driver_phone_verification")
+}
+
+model DriverRegistration {
+  operationId String @id @map("operation_id") @db.Uuid
+  accountId String @unique @map("account_id") @db.Uuid
+  driverId String @unique @map("driver_id") @db.Uuid
+  applicationId String @unique @map("application_id") @db.Uuid
+  commandId String @unique @map("command_id") @db.Uuid
+  verificationId String @unique @map("verification_id") @db.Uuid
+  idempotencyKeyHmac Bytes @unique @map("idempotency_key_hmac")
+  requestFingerprintHmac Bytes @map("request_fingerprint_hmac")
+  publicStatus String @map("public_status")
+  phase String
+  payloadCiphertext Bytes @map("payload_ciphertext")
+  payloadNonce Bytes @map("payload_nonce")
+  payloadTag Bytes @map("payload_tag")
+  payloadKeyVersion String @map("payload_key_version")
+  resultJson Json? @map("result_json")
+  terminalErrorCode String? @map("terminal_error_code")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  terminalAt DateTime? @map("terminal_at") @db.Timestamptz(6)
+  publicLookupUntil DateTime? @map("public_lookup_until") @db.Timestamptz(6)
+  @@index([publicStatus,updatedAt], map:"driver_registration_recovery")
+  @@map("driver_registration")
+}

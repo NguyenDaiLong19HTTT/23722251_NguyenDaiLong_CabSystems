@@ -1,0 +1,112 @@
+{
+  "info": {
+    "name": "CAB Rating MVP — manual",
+    "description": "Base URL cố định http://127.0.0.1:33201. Thay token/Trip UUID bằng giá trị nhận từ login và GET /v1/trips; không có environment hoặc script. Dùng Trip COMPLETED của Customer đang đăng nhập. Payment có thể còn PENDING; không cần Payment SUCCESS.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "01 Customer login — copy accessToken",
+      "request": {
+        "method": "POST",
+        "header": [{"key":"Content-Type","value":"application/json"}],
+        "url": "http://127.0.0.1:33201/v1/auth/login",
+        "body": {"mode":"raw","raw":"{\n  \"emailOrPhone\": \"customer@example.test\",\n  \"password\": \"PASTE_LOCAL_PASSWORD\"\n}"},
+        "description": "CUSTOMER. Expected 200. Sao chép accessToken bằng tay; không lưu credential thật trong collection."
+      }
+    },
+    {
+      "name": "02 List own Trips — copy a COMPLETED tripId",
+      "request": {
+        "method":"GET",
+        "header":[{"key":"Authorization","value":"Bearer PASTE_CUSTOMER_ACCESS_TOKEN"}],
+        "url":"http://127.0.0.1:33201/v1/trips?limit=20",
+        "description":"CUSTOMER. Expected 200. Chọn tripId của Trip COMPLETED từ items; Trip được tạo khi Driver chấp nhận Booking. Nếu chưa có, hoàn tất một chuyến bằng các request Booking/Trip trong collection CAB-Booking-Trip-Payment-Manual trước."
+      }
+    },
+    {
+      "name":"03 Create Rating — 5 stars and comment",
+      "request": {
+        "method":"POST",
+        "header":[{"key":"Authorization","value":"Bearer PASTE_CUSTOMER_ACCESS_TOKEN"},{"key":"Content-Type","value":"application/json"}],
+        "url":"http://127.0.0.1:33201/v1/trips/PASTE_COMPLETED_TRIP_UUID/rating",
+        "body":{"mode":"raw","raw":"{\n  \"score\": 5,\n  \"comment\": \"Tài xế đến đúng điểm đón và lái xe cẩn thận.\"\n}"},
+        "description":"CUSTOMER sở hữu Trip. Expected 201 với ratingId, tripId, customerId, driverId, score, comment, createdAt. Không cần Idempotency-Key hoặc Payment SUCCESS."
+      }
+    },
+    {
+      "name":"04 Read own Rating",
+      "request": {
+        "method":"GET",
+        "header":[{"key":"Authorization","value":"Bearer PASTE_CUSTOMER_ACCESS_TOKEN"}],
+        "url":"http://127.0.0.1:33201/v1/trips/PASTE_COMPLETED_TRIP_UUID/rating",
+        "description":"CUSTOMER. Expected 200 và cùng ratingId bước 03."
+      }
+    },
+    {
+      "name":"05 Replay same Rating",
+      "request": {
+        "method":"POST",
+        "header":[{"key":"Authorization","value":"Bearer PASTE_CUSTOMER_ACCESS_TOKEN"},{"key":"Content-Type","value":"application/json"}],
+        "url":"http://127.0.0.1:33201/v1/trips/PASTE_COMPLETED_TRIP_UUID/rating",
+        "body":{"mode":"raw","raw":"{\n  \"score\": 5,\n  \"comment\": \"  Tài xế đến đúng điểm đón và lái xe cẩn thận.  \"\n}"},
+        "description":"CUSTOMER. Expected 201, cùng ratingId; khoảng trắng đầu/cuối được chuẩn hóa."
+      }
+    },
+    {
+      "name":"06 Different content conflicts",
+      "request": {
+        "method":"POST",
+        "header":[{"key":"Authorization","value":"Bearer PASTE_CUSTOMER_ACCESS_TOKEN"},{"key":"Content-Type","value":"application/json"}],
+        "url":"http://127.0.0.1:33201/v1/trips/PASTE_COMPLETED_TRIP_UUID/rating",
+        "body":{"mode":"raw","raw":"{\n  \"score\": 4,\n  \"comment\": \"Nhận xét khác\"\n}"},
+        "description":"CUSTOMER. Expected 409 RATING_ALREADY_EXISTS."
+      }
+    },
+    {
+      "name":"07 Other Customer cannot read",
+      "request": {
+        "method":"GET",
+        "header":[{"key":"Authorization","value":"Bearer PASTE_OTHER_CUSTOMER_ACCESS_TOKEN"}],
+        "url":"http://127.0.0.1:33201/v1/trips/PASTE_COMPLETED_TRIP_UUID/rating",
+        "description":"CUSTOMER khác. Expected 404 TRIP_NOT_FOUND. Người khác cũng không được POST thay."
+      }
+    },
+    {
+      "name":"08 Driver reads own Rating list",
+      "request": {
+        "method":"GET",
+        "header":[{"key":"Authorization","value":"Bearer PASTE_ASSIGNED_DRIVER_ACCESS_TOKEN"}],
+        "url":"http://127.0.0.1:33201/v1/drivers/me/ratings?limit=20",
+        "description":"DRIVER được gán cho Trip lịch sử. Expected 200, items chứa ratingId từ bước 03; dùng nextCursor bằng tay nếu có trang sau."
+      }
+    },
+    {
+      "name":"09 Operator searches Ratings",
+      "request": {
+        "method":"GET",
+        "header":[{"key":"Authorization","value":"Bearer PASTE_OPERATOR_ACCESS_TOKEN"}],
+        "url":"http://127.0.0.1:33201/v1/operations/ratings?tripId=PASTE_COMPLETED_TRIP_UUID&limit=20",
+        "description":"OPERATOR. Expected 200, một item cho Trip. Operator không được POST tạo Rating."
+      }
+    },
+    {
+      "name":"10 Incomplete/Cancelled Trip denied",
+      "request": {
+        "method":"POST",
+        "header":[{"key":"Authorization","value":"Bearer PASTE_CUSTOMER_ACCESS_TOKEN"},{"key":"Content-Type","value":"application/json"}],
+        "url":"http://127.0.0.1:33201/v1/trips/PASTE_INCOMPLETE_OR_CANCELLED_TRIP_UUID/rating",
+        "body":{"mode":"raw","raw":"{\n  \"score\": 5\n}"},
+        "description":"CUSTOMER chủ Trip nhưng Trip chưa COMPLETED hoặc CANCELLED. Expected 409 TRIP_NOT_COMPLETED."
+      }
+    },
+    {
+      "name":"11 Missing token denied",
+      "request": {
+        "method":"GET",
+        "url":"http://127.0.0.1:33201/v1/trips/PASTE_COMPLETED_TRIP_UUID/rating",
+        "description":"Không gửi Authorization. Expected 401 UNAUTHENTICATED."
+      }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "info": {
+    "name": "CAB Trip - manual (Booking-dependent)",
+    "description": "Literal Gateway URL, no environment/scripts. Paste real tokens/Trip ID from a future assigned Booking. No client Idempotency-Key on Trip. Current demo lacks Booking activation, so status/cancel success paths cannot be run in Postman yet; 401/503 are not business PASS.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {"name":"01 CUSTOMER or DRIVER - List own Trips", "request":{"method":"GET","header":[{"key":"Authorization","value":"Bearer PASTE_CUSTOMER_OR_DRIVER_TOKEN"}],"url":"http://127.0.0.1:33201/v1/trips?limit=20"}},
+    {"name":"02 CUSTOMER or assigned DRIVER - Trip detail", "request":{"method":"GET","header":[{"key":"Authorization","value":"Bearer PASTE_CUSTOMER_OR_DRIVER_TOKEN"}],"url":"http://127.0.0.1:33201/v1/trips/PASTE_REAL_TRIP_UUID"}},
+    {"name":"03 assigned DRIVER - Arrived at pickup", "request":{"method":"PATCH","header":[{"key":"Authorization","value":"Bearer PASTE_ASSIGNED_DRIVER_TOKEN"},{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"expectedVersion\":1,\"tripStatus\":\"ARRIVED_PICKUP\"}","options":{"raw":{"language":"json"}}},"url":"http://127.0.0.1:33201/v1/trips/PASTE_REAL_TRIP_UUID/status"}},
+    {"name":"04 assigned DRIVER - Picked up", "request":{"method":"PATCH","header":[{"key":"Authorization","value":"Bearer PASTE_ASSIGNED_DRIVER_TOKEN"},{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"expectedVersion\":2,\"tripStatus\":\"PICKED_UP\"}","options":{"raw":{"language":"json"}}},"url":"http://127.0.0.1:33201/v1/trips/PASTE_REAL_TRIP_UUID/status"}},
+    {"name":"05 assigned DRIVER - Start carrying passenger (Payment gate)", "request":{"method":"PATCH","header":[{"key":"Authorization","value":"Bearer PASTE_ASSIGNED_DRIVER_TOKEN"},{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"expectedVersion\":3,\"tripStatus\":\"IN_PROGRESS\"}","options":{"raw":{"language":"json"}}},"url":"http://127.0.0.1:33201/v1/trips/PASTE_REAL_TRIP_UUID/status"}},
+    {"name":"06 assigned DRIVER - Complete", "request":{"method":"PATCH","header":[{"key":"Authorization","value":"Bearer PASTE_ASSIGNED_DRIVER_TOKEN"},{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"expectedVersion\":4,\"tripStatus\":\"COMPLETED\"}","options":{"raw":{"language":"json"}}},"url":"http://127.0.0.1:33201/v1/trips/PASTE_REAL_TRIP_UUID/status"}},
+    {"name":"07 CUSTOMER - Cancel before pickup (alternate to steps 04-06)", "request":{"method":"POST","header":[{"key":"Authorization","value":"Bearer PASTE_CUSTOMER_TOKEN"},{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"expectedVersion\":1,\"reasonCode\":\"CHANGE_OF_PLANS\",\"reason\":\"Tôi đổi kế hoạch.\"}","options":{"raw":{"language":"json"}}},"url":"http://127.0.0.1:33201/v1/trips/PASTE_REAL_TRIP_UUID/cancel"}},
+    {"name":"08 CUSTOMER or DRIVER - Closure progress", "request":{"method":"GET","header":[{"key":"Authorization","value":"Bearer PASTE_CUSTOMER_OR_DRIVER_TOKEN"}],"url":"http://127.0.0.1:33201/v1/trips/PASTE_REAL_TRIP_UUID/closure"}}
+  ]
+}

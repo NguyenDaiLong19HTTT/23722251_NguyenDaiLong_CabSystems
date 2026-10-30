@@ -1,0 +1,23 @@
+{
+  "name": "@cab/customer-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.build.json",
+    "test": "vitest run --root ../.. services/customer-service/test",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@cab/grpc-transport": "0.0.0",
+    "@grpc/grpc-js": "1.14.5",
+    "@grpc/proto-loader": "0.8.1",
+    "@nestjs/common": "12.1.2",
+    "@nestjs/core": "12.1.2",
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2"
+  }
+}

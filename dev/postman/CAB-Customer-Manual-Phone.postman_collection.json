@@ -1,0 +1,59 @@
+{
+  "info": {
+    "name": "CAB Customer manual domestic phone demo",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1 Register - use a new 0xxxxxxxxx phone",
+      "request": {
+        "method": "POST",
+        "header": [{"key":"Content-Type","value":"application/json"}],
+        "url": "http://127.0.0.1:33201/v1/auth/register",
+        "body": {"mode":"raw","raw":"{\"fullName\":\"CAB Demo Customer\",\"email\":\"new-unique@example.test\",\"phone\":\"0900000101\",\"password\":\"REPLACE_WITH_TEST_PASSWORD\"}"}
+      }
+    },
+    {
+      "name": "2 Lookup only if step 1 returns 202 - paste operationId and recovery header",
+      "request": {
+        "method": "GET",
+        "header": [{"key":"Registration-Recovery-Token","value":"PASTE_RECOVERY_TOKEN"}],
+        "url": "http://127.0.0.1:33201/v1/auth/customer-registrations/PASTE_OPERATION_ID"
+      }
+    },
+    {
+      "name": "3 Login by email - paste email and password",
+      "request": {
+        "method": "POST",
+        "header": [{"key":"Content-Type","value":"application/json"}],
+        "url": "http://127.0.0.1:33201/v1/auth/login",
+        "body": {"mode":"raw","raw":"{\"emailOrPhone\":\"new-unique@example.test\",\"password\":\"REPLACE_WITH_TEST_PASSWORD\"}"}
+      }
+    },
+    {
+      "name": "4 Login by domestic phone - paste same password",
+      "request": {
+        "method": "POST",
+        "header": [{"key":"Content-Type","value":"application/json"}],
+        "url": "http://127.0.0.1:33201/v1/auth/login",
+        "body": {"mode":"raw","raw":"{\"emailOrPhone\":\"0900000101\",\"password\":\"REPLACE_WITH_TEST_PASSWORD\"}"}
+      }
+    },
+    {
+      "name": "5 Me - paste accessToken from login",
+      "request": {
+        "method": "GET",
+        "header": [{"key":"Authorization","value":"Bearer PASTE_ACCESS_TOKEN"}],
+        "url": "http://127.0.0.1:33201/v1/accounts/me"
+      }
+    },
+    {
+      "name": "6 Customer profile - paste customerId and accessToken",
+      "request": {
+        "method": "GET",
+        "header": [{"key":"Authorization","value":"Bearer PASTE_ACCESS_TOKEN"}],
+        "url": "http://127.0.0.1:33201/v1/customers/PASTE_CUSTOMER_ID"
+      }
+    }
+  ]
+}

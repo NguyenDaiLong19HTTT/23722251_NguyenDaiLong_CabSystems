@@ -64,7 +64,7 @@ info:
 
     Thông số điều phối được chụp lại khi bắt đầu:
     - Bán kính: 5 km.
-    - Thời hạn lời mời: 30 giây.
+    - Thời hạn lời mời: tối đa 120 giây (2 phút), không vượt thời hạn tìm tài xế chung.
     - Tối đa 5 lời mời, gồm lời mời đầu tiên.
     - Tổng thời gian tìm: tối đa 180 giây.
     - Tuổi vị trí tối đa: 30 giây.

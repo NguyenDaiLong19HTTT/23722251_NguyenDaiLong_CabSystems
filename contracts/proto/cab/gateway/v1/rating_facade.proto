@@ -1,0 +1,21 @@
+syntax = "proto3";
+package cab.gateway.v1;
+import "google/protobuf/timestamp.proto";
+
+service RatingFacadeService {
+  rpc CreateTripRating(CreateTripRatingRequest) returns (RatingView);
+  rpc GetTripRating(RatingTripRequest) returns (RatingView);
+  rpc ListMyDriverRatings(RatingPageRequest) returns (RatingPage);
+  rpc ListOperationalRatings(RatingPageRequest) returns (RatingPage);
+}
+message RatingTripRequest { string trip_id = 1; }
+message CreateTripRatingRequest { string trip_id = 1; uint32 score = 2;
+  optional string comment = 3; string command_id = 4; }
+message RatingPageRequest { uint32 limit = 1; optional string cursor = 2;
+  optional uint32 score = 3; optional string driver_id = 4;
+  optional string trip_id = 5; optional google.protobuf.Timestamp from = 6;
+  optional google.protobuf.Timestamp to = 7; }
+message RatingView { string rating_id = 1; string trip_id = 2;
+  string customer_id = 3; string driver_id = 4; uint32 score = 5;
+  optional string comment = 6; google.protobuf.Timestamp created_at = 7; }
+message RatingPage { repeated RatingView items = 1; optional string next_cursor = 2; }

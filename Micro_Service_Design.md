@@ -1,8 +1,8 @@
 # CAB System Thiết kế tám microservice và đối chiếu phiếu chấm
 
-**Phiên bản:** 1.3  
-**Trạng thái:** Nội dung thiết kế đã được chủ dự án duyệt; các hợp đồng và quyết định còn mở được ghi tại mục 15.  
-**Phạm vi:** Tám dịch vụ nghiệp vụ, API Gateway và hạ tầng triển khai local.  
+**Phiên bản:** 1.3
+**Trạng thái:** Nội dung thiết kế đã được chủ dự án duyệt; các hợp đồng và quyết định còn mở được ghi tại mục 15.
+**Phạm vi:** Tám dịch vụ nghiệp vụ, API Gateway và hạ tầng triển khai local.
 **Căn cứ:** Bản Word Thiết Kế Micro-Service, phiếu PHIEU_CHAM_PROJECT, bộ API YAML local và quyết định giữ tám MS của chủ dự án.
 
 Tài liệu xác định kiến trúc, quyền sở hữu dữ liệu, cách phối hợp nghiệp vụ và bằng chứng cần chuẩn bị cho 30 tiêu chí chấm. Việc có đủ nội dung thiết kế không đồng nghĩa hệ thống đã triển khai hoặc kiểm thử đạt. Các hợp đồng mới và quyết định còn mở được ghi tại mục 15.
@@ -73,7 +73,7 @@ Booking/Dispatch và Trip là miền cốt lõi của bản CAB này. Cách phâ
 | Driver activity | AVAILABLE, BUSY, OFFLINE |
 | DriverApplication | SUBMITTED, APPROVED, REJECTED |
 | Vehicle | ACTIVE, INACTIVE |
-| VehicleType | STANDARD, PREMIUM, MOTORBIKE, VAN theo YAML hiện tại |
+| VehicleType | MOTORBIKE (Xe máy) cho request mới; STANDARD/PREMIUM/VAN giữ mã cũ để đọc lịch sử, không đổi xe legacy |
 | Booking | PENDING, FINDING_DRIVER, DRIVER_ASSIGNED, NO_DRIVER_FOUND, CANCELLED |
 | DispatchProcess | SEARCHING, DRIVER_FOUND, NO_DRIVER_AVAILABLE, CANCELLED |
 | TripRequest | PENDING, ACCEPTED, REJECTED, EXPIRED, CANCELLED |
@@ -246,7 +246,7 @@ Trip ERROR chưa đóng vẫn giữ tài nguyên. GPS không tăng version trạ
 | Entity | Thuộc tính và ràng buộc chính |
 |---|---|
 | PricingConfig | pricingVersionId, vehicleType, currency, baseFare, pricePerKm, pricePerMinute, effectiveFrom, reason, createdByAccountId; unique vehicleType + effectiveFrom |
-| Fare | fareId, tripId duy nhất, pricingSnapshot, metricsVersion, distanceKm, durationMinutes, các thành phần tiền, totalAmount, calculatedAt |
+| Fare | fareId, tripId duy nhất, pricingSnapshot, pricingVersionId, routeId/routeVersion, distanceMeters, totalAmount VND, calculatedAt; không phụ thuộc metricsVersion trong MVP |
 | Payment | paymentId, tripId/fareId duy nhất, customerId, amount, currency, method, paymentStatus, currentAttemptId, requiresReview, version, paidAt, confirmedByAccountId |
 | PaymentAttempt | attemptId, paymentId, attemptNumber, method, status, amount, provider, merchantReference, providerTransactionId, failureCode, resolvedAt; unique paymentId + attemptNumber |
 | ProviderEvent | provider + providerEventId duy nhất, attemptId, verifiedResult, processingStatus và evidenceReference |
@@ -302,7 +302,7 @@ Chỉ giải phóng guard khi chắc chắn tiến trình thất bại và guard
 
 Booking/Dispatch lấy ứng viên từ Driver theo Account ACTIVE, APPROVED, AVAILABLE, xe hợp lệ/ACTIVE, đúng loại xe, GPS còn mới và không bị reservation/Trip chiếm.
 
-Nearby công khai phải hỗ trợ bán kính 1 km, limit và paging. Bán kính dispatch 5 km, offer 30 giây và tối đa 5 lượt trong bản Word là cấu hình đề xuất cần đối chiếu SRS/API trước khi chốt, không phải con số rubric bắt buộc.
+Nearby công khai phải hỗ trợ bán kính 1 km, limit và paging. Bán kính dispatch 5 km và tối đa 5 lượt trong bản Word là cấu hình đề xuất cần đối chiếu SRS/API trước khi chốt, không phải con số rubric bắt buộc. Thời hạn offer demo đã được chủ dự án đổi thành tối đa 120 giây, vẫn bị chặn bởi hạn tìm tài xế chung 180 giây.
 
 Lưu deadlineAt, attemptedDriverIds và từng TripRequest. Worker chốt quá hạn bằng thời gian máy chủ; không dựa vào việc key Redis biến mất. Driver có thể truy vấn offer qua API dù thông báo realtime bị chậm.
 
@@ -369,13 +369,13 @@ Customer chỉ xem tracking của Trip thuộc quyền mình. Khi Trip đóng, d
 
 ### 7.2. JourneyMetrics và Fare
 
-Trip chịu trách nhiệm xác nhận JourneyMetrics PENDING/CONFIRMED/REVIEW_REQUIRED. Fare chỉ sẵn sàng khi Trip COMPLETED và metrics CONFIRMED. Không dùng khoảng cách thẳng thay quãng đường thực tế hoặc thay dữ liệu thiếu bằng 0.
+Trip giữ JourneyMetrics cho lịch sử/tracking. Trong demo cước cố định, PricingSnapshot do Payment chụp trước chuyến; Fare/Payment chỉ phát hành sau Trip COMPLETED khi Payment xác minh liên kết Booking/Trip, không tính lại từ GPS. Tuyến demo và khoảng cách mét do server sở hữu, không dùng khoảng cách thẳng hoặc đầu vào khoảng cách từ client.
 
 Payment tính theo snapshot giá bất biến:
 
-`totalAmount = baseFare + distanceKm * pricePerKm + durationMinutes * pricePerMinute`
+`totalAmount = ROUND_HALF_UP(distanceMeters * 5300 / 1000)` VND cho MOTORBIKE; baseFare và pricePerMinute bằng 0. Không làm tròn km trước.
 
-Giữ metricsVersion và pricingVersionId dùng khi phát hành Fare. Fare đã phát hành không âm thầm tính lại theo GPS hoặc giá mới. Không thêm voucher, phụ phí/VAT hoặc phí hủy ngoài hợp đồng MVP.
+Giữ pricingVersionId và routeVersion dùng khi phát hành Fare. Fare đã phát hành không âm thầm tính lại theo GPS hoặc giá mới. JourneyMetrics giữ riêng ở Trip cho lịch sử; không thêm voucher, phụ phí/VAT hoặc phí hủy ngoài hợp đồng MVP.
 
 Thuật toán xử lý GPS, ngưỡng mất mẫu/nhảy điểm, thời gian khi ERROR và quyền rà soát REVIEW_REQUIRED cần chốt tại mục 15. Đây là phần chưa hoàn tất; dữ liệu metrics giả lập chỉ chứng minh tích hợp, không chứng minh thuật toán thật.
 

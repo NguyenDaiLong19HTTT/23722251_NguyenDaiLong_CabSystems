@@ -1,0 +1,71 @@
+syntax = "proto3";
+package cab.gateway.v1;
+import "google/protobuf/timestamp.proto";
+import "cab/internal/v1/common.proto";
+
+service TripFacadeService {
+  rpc GetTrip(TripIdRequest) returns (TripView);
+  rpc GetTripTracking(TripIdRequest) returns (TripTrackingView);
+  rpc ListMyTrips(ListMyTripsRequest) returns (TripPage);
+  rpc UpdateTripStatus(UpdateTripStatusRequest) returns (TripView);
+  rpc CancelTrip(CancelTripRequest) returns (TripView);
+  rpc ReportTripIncident(ReportTripIncidentRequest) returns (TripIncidentResult);
+  rpc GetTripClosure(TripIdRequest) returns (TripClosureView);
+  rpc ResolveTripError(ResolveTripErrorRequest) returns (ResolveTripErrorResult);
+}
+message ResolveTripErrorRequest {string trip_id=1;uint64 expected_trip_version=2;
+  string resolution_action=3;string resolution_note=4;}
+message TripErrorState {string trip_id=1;cab.internal.v1.TripStatus trip_status=2;
+  uint64 version=3;optional cab.internal.v1.TripStatus status_before_error=4;
+  optional google.protobuf.Timestamp closed_at=5;optional string close_reason=6;
+  google.protobuf.Timestamp updated_at=7;}
+message ResolveTripErrorResult {TripErrorState trip=1;repeated string resolved_incident_ids=2;
+  string resolution_action=3;google.protobuf.Timestamp resolved_at=4;
+  string resolved_by_account_id=5;}
+message TripIdRequest {string trip_id=1;}
+message ListMyTripsRequest {optional cab.internal.v1.TripStatus trip_status=1;
+  optional google.protobuf.Timestamp from=2;optional google.protobuf.Timestamp to=3;
+  uint32 limit=4;optional string cursor=5;}
+message UpdateTripStatusRequest {string trip_id=1;uint64 expected_version=2;
+  cab.internal.v1.TripStatus trip_status=3;string command_id=4;}
+message CancelTripRequest {string trip_id=1;uint64 expected_version=2;
+  string reason_code=3;string reason=4;string command_id=5;}
+message TripHistoryView {uint64 version=1;optional cab.internal.v1.TripStatus previous_status=2;
+  cab.internal.v1.TripStatus new_status=3;string actor_type=4;string actor_id=5;
+  google.protobuf.Timestamp changed_at=6;optional string reason=7;}
+message TripCancellationView {string reason_code=1;string reason=2;string cancelled_by=3;
+  google.protobuf.Timestamp cancelled_at=4;}
+message TripView {string trip_id=1;string booking_id=2;string customer_id=3;
+  string driver_id=4;string vehicle_id=5;cab.internal.v1.VehicleType vehicle_type=6;
+  cab.internal.v1.Location pickup=7;cab.internal.v1.Location destination=8;
+  cab.internal.v1.TripStatus trip_status=9;uint64 version=10;
+  optional google.protobuf.Timestamp arrived_at=11;optional google.protobuf.Timestamp picked_up_at=12;
+  optional google.protobuf.Timestamp started_at=13;optional google.protobuf.Timestamp completed_at=14;
+  optional google.protobuf.Timestamp closed_at=15;optional TripCancellationView cancellation=16;
+  google.protobuf.Timestamp created_at=17;google.protobuf.Timestamp updated_at=18;
+  repeated TripHistoryView status_history=19;optional cab.internal.v1.TripStatus status_before_error=20;}
+message ReportTripIncidentRequest {string trip_id=1;uint64 expected_version=2;
+  string issue_type=3;string description=4;string command_id=5;}
+message CreatedTripIncident {string incident_id=1;string trip_id=2;string issue_type=3;
+  string description=4;string status=5;string reported_by_account_id=6;
+  google.protobuf.Timestamp created_at=7;}
+message TripIncidentResult {CreatedTripIncident incident=1;TripView trip=2;}
+message TripSummaryView {string trip_id=1;string booking_id=2;cab.internal.v1.TripStatus trip_status=3;
+  cab.internal.v1.Location pickup=4;cab.internal.v1.Location destination=5;
+  google.protobuf.Timestamp created_at=6;cab.internal.v1.VehicleType vehicle_type=7;
+  optional google.protobuf.Timestamp closed_at=8;}
+message TripPage {repeated TripSummaryView items=1;optional string next_cursor=2;}
+message TripClosureView {string operation_id=1;string trip_id=2;string status=3;
+  string driver_release=4;string customer_release=5;
+  google.protobuf.Timestamp created_at=6;google.protobuf.Timestamp updated_at=7;}
+message TrackingDriver {string driver_id=1;string full_name=2;optional string phone=3;}
+message TrackingVehicle {string vehicle_id=1;string license_plate=2;
+  cab.internal.v1.VehicleType vehicle_type=3;}
+message TrackingPoint {double latitude=1;double longitude=2;
+  google.protobuf.Timestamp recorded_at=3;google.protobuf.Timestamp received_at=4;}
+message TripTrackingView {string trip_id=1;cab.internal.v1.TripStatus trip_status=2;
+  uint64 trip_version=3;TrackingDriver driver=4;TrackingVehicle vehicle=5;
+  string tracking_status=6;optional TrackingPoint driver_location=7;
+  string eta_status=8;optional uint32 estimated_arrival_seconds=9;
+  optional google.protobuf.Timestamp closed_at=10;
+  google.protobuf.Timestamp snapshot_at=11;}

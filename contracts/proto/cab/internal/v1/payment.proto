@@ -6,6 +6,21 @@ import "cab/internal/v1/common.proto";
 
 service PaymentInternalService {
  rpc GetPricingSnapshot(GetPricingSnapshotRequest) returns (PricingSnapshot);
+ rpc GetTripPaymentDecision(GetTripPaymentDecisionRequest) returns (TripPaymentDecision);
+ rpc RecordTripCancellation(RecordTripCancellationRequest) returns (TripCancellationReceipt);
 }
 // Idempotent durable capture: replay operation_id returns original snapshot, not today's price.
-message GetPricingSnapshotRequest { string operation_id = 1; VehicleType vehicle_type = 2; google.protobuf.Timestamp booking_accepted_at = 3; }
+message GetPricingSnapshotRequest { string operation_id = 1; VehicleType vehicle_type = 2; google.protobuf.Timestamp booking_accepted_at = 3; Location pickup = 4; Location destination = 5; }
+// Trip alone calls this at PICKED_UP -> IN_PROGRESS; Trip still checks its own state.
+message GetTripPaymentDecisionRequest { string trip_id = 1; }
+enum TripPaymentMethod { TRIP_PAYMENT_METHOD_UNSPECIFIED = 0; TRIP_PAYMENT_CASH = 1;
+  TRIP_PAYMENT_DEMO_TRANSFER = 2; }
+enum TripPaymentStatus { TRIP_PAYMENT_STATUS_UNSPECIFIED = 0;
+  TRIP_PAYMENT_PENDING = 1; TRIP_PAYMENT_PROCESSING = 2;
+  TRIP_PAYMENT_SUCCESS = 3; TRIP_PAYMENT_FAILED = 4; TRIP_PAYMENT_UNKNOWN = 5; }
+message TripPaymentDecision { string trip_id = 1; string payment_id = 2;
+  TripPaymentMethod method = 3; TripPaymentStatus status = 4;
+  bool can_start_trip = 5; bool requires_review = 6; uint64 version = 7; }
+message RecordTripCancellationRequest { string trip_id = 1; string cancellation_id = 2; }
+message TripCancellationReceipt { string trip_id = 1; string cancellation_id = 2;
+  bool review_recorded = 3; optional string payment_id = 4; }

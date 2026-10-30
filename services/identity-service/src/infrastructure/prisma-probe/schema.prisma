@@ -1,0 +1,39 @@
+generator client {
+  provider = "prisma-client"
+  output = "./generated"
+  moduleFormat = "esm"
+  importFileExtension = "js"
+}
+datasource db {
+  provider = "postgresql"
+}
+model ProbeBusiness {
+  id String @id @db.Uuid
+  version Int @default(0)
+  amount Decimal @db.Decimal(30, 12)
+  probeNote String @default("v2") @map("probe_note")
+  outbox ProbeOutbox[]
+  upgradeAudit ProbeUpgradeAudit[]
+  @@map("probe_business")
+}
+model ProbeOutbox {
+  id String @id @db.Uuid
+  businessId String @map("business_id") @db.Uuid
+  payload String
+  business ProbeBusiness @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  @@map("probe_outbox")
+}
+model ProbeActiveRight {
+  id String @id @db.Uuid
+  resourceId String @map("resource_id") @db.Uuid
+  active Boolean
+  @@map("probe_active_right")
+}
+
+model ProbeUpgradeAudit {
+  id String @id @db.Uuid
+  businessId String @map("business_id") @db.Uuid
+  marker String
+  business ProbeBusiness @relation(fields: [businessId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  @@map("probe_upgrade_audit")
+}

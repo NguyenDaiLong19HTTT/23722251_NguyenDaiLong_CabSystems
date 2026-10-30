@@ -255,6 +255,12 @@ paths:
 
         Không công bố Booking tạm thiếu guard hoặc pricingSnapshot trong GET/list.
         201 chỉ sau commit hoàn tất các điều kiện trên, không chờ Driver chấp nhận.
+        Sau commit, request có thể đẩy riêng Booking này qua bước tìm ứng viên
+        và ghi offer đầu tiên. Nếu offer PENDING đã được ghi cùng outbox,
+        response 201 có initialOffer gồm tripRequestId và driverId để demo
+        thao tác chấp nhận bằng đúng Driver. Không có initialOffer nghĩa chưa
+        xác nhận đã phát offer; worker tiếp tục sau response/restart.
+        initialOffer không chứng minh RabbitMQ/Notification đã giao thành công.
         Đã có operation bền vững nhưng chưa hoàn tất thì trả 202 cùng operationId.
         Mất phản hồi sau commit phải replay 201 đã lưu, không giải phóng guard.
         Nếu thất bại đã xác định trước commit Booking, lưu quyết định bù bền vững,
@@ -268,34 +274,23 @@ paths:
         Client không cần gọi thêm API khởi tạo điều phối.
 
         Chống gửi trùng:
-        - Bắt buộc Idempotency-Key.
-        - Phạm vi khóa là Account và thao tác tạo Booking.
-        - Xác thực và kiểm tra cấu trúc request trước khi dùng kết quả đã lưu.
-        - Cùng khóa/cùng nội dung trả HTTP status, body và Location
-          của lần tạo thành công trước.
-        - Cùng khóa/khác nội dung trả 409 IDEMPOTENCY_CONFLICT.
-        - Cùng khóa đang xử lý trả 202 với cùng operationId và Location tra cứu.
-        - Cùng khóa đã thất bại cuối trả lại HTTP status/body lỗi đã lưu.
-        - Nhận diện replay trước khi kiểm tra các điều kiện nghiệp vụ
-          có thể thay đổi như Booking đang hoạt động hoặc biểu giá mới.
-        - Không tạo công việc, outbox hoặc quyền hoạt động mới khi replay.
-        - Hai khóa khác nhau gửi đồng thời vẫn phải tuân thủ
-          giới hạn một yêu cầu/chuyến đang hoạt động.
-        - Bản ghi chống lặp được lưu bền vững, không chỉ đặt trong Redis.
-        - Khóa đã gắn với Booking không được tái sử dụng
-          khi Booking và bản ghi chống lặp vẫn được lưu.
+        - Client không gửi Idempotency-Key; server cấp command/operation ID nội bộ.
+        - Xác thực, kiểm tra quyền và cấu trúc request trước khi xử lý.
+        - Một Customer chỉ có một công việc/chuyến đang hoạt động; DB/guard
+          bảo vệ điều kiện này cả khi hai POST đến đồng thời.
+        - Retry nội bộ của cùng command giữ ID/payload và receipt bền vững;
+          không tạo thêm công việc, outbox hoặc quyền hoạt động.
+        - POST công khai mới không được hứa replay nguyên response của POST cũ
+          chỉ vì body giống nhau. Dùng GET/operation để kiểm tra hiện trạng.
 
         So sánh nội dung theo biểu diễn JSON chuẩn hóa của các trường hợp lệ.
         Thứ tự thuộc tính JSON không tạo một ý định đặt xe khác.
         Không bỏ qua khác biệt nội dung pickup, destination, vehicleType hoặc note.
 
-        Nếu nhận lỗi tạm thời hoặc mất phản hồi,
-        gửi lại cùng khóa và cùng nội dung.
-        Không tự tạo khóa mới cho cùng ý định đặt xe.
+        Nếu nhận lỗi tạm thời hoặc mất phản hồi, tra cứu Booking/operation
+        hiện có trước khi gửi một yêu cầu tạo mới.
 
-        Khi nhận 429, chờ Retry-After rồi dùng lại khóa cũ.
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
+        Khi nhận 429, chờ Retry-After rồi kiểm tra hiện trạng trước khi thử lại.
       requestBody:
         required: true
         content:
@@ -304,22 +299,25 @@ paths:
               $ref: "#/components/schemas/CreateBookingRequest"
             example:
               pickup:
-                address: "123 Nguyễn Huệ, Quận 1, TP.HCM"
-                latitude: 10.7731
-                longitude: 106.7030
+                address: "Điểm đón demo CAB"
+                latitude: 10.7769
+                longitude: 106.7009
               destination:
-                address: "Sân bay Tân Sơn Nhất, TP.HCM"
-                latitude: 10.8188
-                longitude: 106.6519
-              vehicleType: STANDARD
+                address: "Điểm đến demo CAB"
+                latitude: 10.7869
+                longitude: 106.7109
+              vehicleType: MOTORBIKE
               note: "Tôi chờ tại cửa chính."
       responses:
         "201":
           description: |
             Booking và công việc điều phối đã được ghi nhận bền vững.
 
-            Body là kết quả tạo ở trạng thái PENDING.
-            Replay trả lại kết quả này dù Booking hiện đã đổi trạng thái.
+            Phần Booking trong body là snapshot tạo ở trạng thái PENDING.
+            dispatchStatus/initialOffer là tiến trình quan sát lúc trả response,
+            chỉ có initialOffer khi offer PENDING đã commit và Driver đọc được.
+            Replay của operation giữ snapshot Booking ban đầu; không dựng lại
+            snapshot đó từ trạng thái hiện tại.
 
             Dùng GET theo Location để xem trạng thái mới nhất.
           headers:
@@ -362,7 +360,7 @@ paths:
           description: |
             VALIDATION_ERROR, INVALID_ROUTE hoặc OUTSIDE_SERVICE_AREA.
 
-            Thiếu/sai Idempotency-Key, dữ liệu sai,
+            Dữ liệu sai,
             tọa độ không hợp lệ, điểm đón/đến trùng tọa độ
             hoặc ngoài phạm vi phục vụ.
 
@@ -491,7 +489,7 @@ paths:
         Booking NO_DRIVER_FOUND hoặc CANCELLED không tự quay lại
         FINDING_DRIVER.
 
-        Khách muốn đặt lại phải tạo Booking mới với Idempotency-Key mới,
+        Khách muốn đặt lại phải tạo Booking mới,
         sau khi đáp ứng điều kiện tạo Booking.
       parameters:
         - $ref: "#/components/parameters/BookingId"
@@ -695,8 +693,9 @@ paths:
         kết quả đã lưu; FAILED chứa lỗi cuối an toàn. Không trả payload gRPC, reservation, stack trace
         hay thông tin Driver ứng viên.
   
-        Nếu POST đầu mất phản hồi trước khi client biết operationId, replay tạo cùng key/body hoặc
-        replay hủy cùng bookingId để lấy operation. Việc đọc không khởi động lại thao tác.
+        Nếu POST đầu mất phản hồi trước khi client biết operationId, tra cứu
+        Booking/công việc hiện có theo quyền; hủy cùng bookingId vẫn trả
+        operation bền vững. Việc đọc không khởi động lại thao tác.
   
         Đề xuất retention: operation PROCESSING không bị dọn; kết quả cuối giữ cùng vòng đời Booking
         và bản ghi idempotency. Với tạo thất bại không có Booking, giữ kết quả ít nhất 7 ngày rồi giữ
@@ -771,25 +770,6 @@ components:
       schema:
         $ref: "#/components/schemas/Identifier"
       example: "BK0001"
-
-    IdempotencyKey:
-      name: Idempotency-Key
-      in: header
-      required: true
-      description: |
-        Mã do client tạo cho một ý định đặt xe.
-
-        Dùng cùng mã khi gửi lại cùng yêu cầu do mất phản hồi.
-        Dùng mã mới khi người dùng thực sự tạo yêu cầu đặt xe mới.
-
-        Khuyến nghị UUID ngẫu nhiên.
-        Không đưa thông tin cá nhân hoặc token vào khóa.
-      schema:
-        type: string
-        minLength: 1
-        maxLength: 128
-        pattern: '^[A-Za-z0-9._:-]+$'
-      example: "550e8400-e29b-41d4-a716-446655440000"
 
     BookingStatusFilter:
       name: bookingStatus
@@ -884,7 +864,11 @@ components:
     VehicleType:
       type: string
       enum: [STANDARD, PREMIUM, MOTORBIKE, VAN]
-      description: Mã loại dịch vụ thống nhất với SRS.
+      description: Mã lịch sử có thể xuất hiện khi đọc Booking cũ; request mới chỉ nhận MOTORBIKE (Xe máy).
+    NewVehicleType:
+      type: string
+      enum: [MOTORBIKE]
+      description: Xe máy; loại dịch vụ duy nhất cho Booking mới.
 
     BookingStatus:
       type: string
@@ -912,7 +896,7 @@ components:
         destination:
           $ref: "#/components/schemas/Location"
         vehicleType:
-          $ref: "#/components/schemas/VehicleType"
+          $ref: "#/components/schemas/NewVehicleType"
         note:
           type: string
           description: |
@@ -929,7 +913,7 @@ components:
     PricingSnapshot:
       type: object
       additionalProperties: false
-      required: [currency, baseFare, pricePerKm, pricePerMinute]
+      required: [currency, baseFare, pricePerKm, pricePerMinute, routeId, routeVersion, distanceMeters, totalAmount]
       properties:
         currency:
           type: string
@@ -946,13 +930,26 @@ components:
           type: number
           minimum: 0
           description: Đơn giá cho mỗi phút hành trình tính cước.
+        routeId:
+          $ref: "#/components/schemas/Identifier"
+        routeVersion:
+          $ref: "#/components/schemas/Version"
+        distanceMeters:
+          type: integer
+          format: int64
+          minimum: 1
+        totalAmount:
+          type: integer
+          format: int64
+          minimum: 0
       description: |
         Bản ghi bất biến của các đơn giá đã áp dụng.
         Nguồn có thẩm quyền là Payment; Booking lưu bản sao bất biến đã được chọn
         cho operation cùng pricingVersionId. Không đọc database Payment trực tiếp.
         Biểu giá mới không cập nhật đè dữ liệu này.
 
-        Không phải cước dự kiến hoặc cước thực tế.
+        Tổng cố định trước chuyến theo tuyến demo; chưa tự chứng minh Booking
+        đã tạo hoặc Payment đã thành công.
         Máy chủ xử lý tiền bằng số thập phân chính xác
         hoặc biểu diễn tương đương; không dùng sai số float
         để quyết định số tiền thu.
@@ -1035,6 +1032,12 @@ components:
         updatedAt:
           type: string
           format: date-time
+        dispatchStatus:
+          type: string
+          enum: [QUEUED, SEARCHING, DRIVER_FOUND, NO_DRIVER_AVAILABLE, CANCELLED]
+          description: Chỉ có trong response POST tạo Booking, không thuộc snapshot Booking bất biến.
+        initialOffer:
+          $ref: "#/components/schemas/InitialBookingOffer"
       oneOf:
         - properties:
             bookingStatus:
@@ -1068,21 +1071,47 @@ components:
 
         TripPreparation/assignmentId/reservation và tiến trình nội bộ không được
         trả như tripId/driverId đã phân công. Không suy diễn thành công từ event trễ.
-        Không có tổng cước thực tế trong Booking.
-        Cước thực tế thuộc Fare sau khi Trip hoàn thành.
+        Booking giữ PricingSnapshot cố định trước chuyến; snapshot không chứng minh đã thanh toán.
+        Fare thuộc Payment sau khi liên kết Trip/Booking được xác minh, không chờ Trip COMPLETED.
 
     CreatedBooking:
       description: |
-        Kết quả được lưu tại thời điểm tạo thành công.
-        Replay trả lại trạng thái PENDING ban đầu,
-        không dựng lại response từ trạng thái Booking hiện tại.
+        Booking snapshot được lưu khi tạo thành công; trạng thái PENDING bất biến.
+        dispatchStatus và initialOffer quan sát sau commit trong request tạo.
+        initialOffer chỉ có khi offer PENDING và outbox đã commit cùng nhau;
+        đó không phải bằng chứng Notification đã giao qua broker.
       allOf:
         - $ref: "#/components/schemas/Booking"
         - type: object
+          required: [dispatchStatus]
           properties:
             bookingStatus:
               type: string
               enum: [PENDING]
+
+    InitialBookingOffer:
+      type: object
+      description: |
+        Offer mới có thời hạn tối đa 120 giây từ sentAt. expiresAt cũng bị giới hạn
+        bởi thời hạn tìm tài xế chung của Booking (180 giây), nên offer về sau
+        có thể có thời gian nhận ngắn hơn. Offer đã tạo trước khi đổi cấu hình
+        giữ nguyên expiresAt đã lưu.
+      additionalProperties: false
+      required: [tripRequestId, driverId, status, sentAt, expiresAt]
+      properties:
+        tripRequestId:
+          $ref: "#/components/schemas/Identifier"
+        driverId:
+          $ref: "#/components/schemas/Identifier"
+        status:
+          type: string
+          enum: [PENDING]
+        sentAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
 
     CancelledBooking:
       allOf:
@@ -1441,8 +1470,8 @@ components:
         Vượt giới hạn theo IP, tài khoản hoặc chức năng.
 
         Chờ Retry-After trước khi thử lại.
-        Khi tạo Booking, tiếp tục dùng Idempotency-Key và nội dung cũ
-        nếu vẫn là cùng ý định đặt xe.
+        Khi tạo Booking, kiểm tra Booking/operation hiện có trước khi gửi lại
+        sau lỗi tạm thời.
 
         Request bị chặn tại bước giới hạn không tiếp tục thay đổi nghiệp vụ.
         Kết quả của request trước đã commit vẫn được giữ.
@@ -1474,7 +1503,7 @@ components:
         Nếu đã xác nhận operation bền vững đang xử lý, dùng 202 và đường dẫn tra cứu.
         Không trả thành công khi bước bắt buộc của MS khác còn chưa xác định.
 
-        Khi tạo Booking, gửi lại cùng Idempotency-Key và cùng body.
+        Khi tạo Booking, tra cứu trạng thái hiện có trước khi gửi POST mới.
         Khi hủy, tra cứu trạng thái hoặc gửi lại thao tác hủy hợp lệ.
       headers:
         Cache-Control:

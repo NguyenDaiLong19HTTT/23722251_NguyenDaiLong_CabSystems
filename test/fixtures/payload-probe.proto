@@ -1,0 +1,8 @@
+syntax = "proto3";
+package cab.test;
+
+// Diagnostic messages only, never loaded by production applications.
+service PayloadProbeService {
+  rpc Probe(PayloadProbe) returns (PayloadProbe);
+}
+message PayloadProbe { string text = 1; }

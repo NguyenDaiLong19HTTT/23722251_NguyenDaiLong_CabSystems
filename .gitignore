@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+.cache/
+.secrets/
+secrets/
+/services/*/src/infrastructure/prisma-probe/generated/
+/services/*/src/infrastructure/prisma/generated/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx

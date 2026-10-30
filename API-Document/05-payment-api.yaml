@@ -33,27 +33,35 @@ info:
     - Notification lỗi không được làm mất hoặc đảo ngược thanh toán đã ghi nhận.
 
     2. Quy tắc tính cước
-    - Chỉ có Fare cuối cùng khi Trip có trạng thái COMPLETED.
-    - JourneyMetrics phải được xác nhận trước khi tạo Fare.
+    - PricingSnapshot cố định do Payment cấp trước Booking; Fare/Payment mới được
+      phát hành sau Trip COMPLETED khi Trip đã gắn đúng Booking. Không dùng
+      JourneyMetrics để tính lại giá.
     - Một Trip có tối đa một Fare cuối cùng.
     - Giá sử dụng PricingSnapshot đã chốt cho Booking.
     - Không sử dụng bảng giá hiện tại để tính lại chuyến đã đặt.
-    - Không dùng khoảng cách đường chim bay thay cho quãng đường thực tế.
-    - Không thay dữ liệu hành trình còn thiếu bằng số 0.
-    - Fare giữ thông tin phiên bản giá và phiên bản JourneyMetrics để truy vết.
+    - Quãng đường tính tiền là distanceMeters của tuyến demo do server quản lý,
+      đã chụp trong PricingSnapshot trước chuyến; không dùng GPS hay khoảng cách
+      đường chim bay. JourneyMetrics sau chuyến không tính lại Fare.
+    - Fare giữ routeId/routeVersion, distanceMeters và pricingVersionId.
     - Fare đã phát hành không được âm thầm sửa khi dữ liệu nguồn thay đổi.
-    - Payment nhận sự kiện Trip/JourneyMetrics qua inbox chống trùng, có source,
-      schemaVersion và aggregateVersion; không dùng event chưa xác thực làm nguồn giá.
-    - Worker lấy ngữ cảnh Trip COMPLETED và metrics CONFIRMED qua hợp đồng có
-      thẩm quyền của Trip; lấy snapshot Booking đã chấp nhận theo bookingId.
-    - Đối chiếu tripId/bookingId/customerId/driverId, metricsVersion và pricingVersionId;
+    - Trong MVP, PricingSnapshot được cấp trước Booking; Fare được tạo trong
+      cùng transaction với Payment đầu tiên sau khi Trip/Booking đã xác nhận.
+      GET Fare trước thời điểm đó trả FARE_NOT_READY. Snapshot không phải Fare
+      hoặc bằng chứng có Booking hợp lệ.
+    - Payment lấy liên kết Trip và Booking từ hai owner qua RPC có quyền,
+      không nhận bookingId/tripId/customerId/driverId hoặc amount tự khai làm bằng chứng.
+    - Đối chiếu tripId/bookingId/customerId/driverId và pricingVersionId;
       lưu bộ đầu vào bất biến cùng Fare để có thể tính lại phục vụ kiểm tra.
-    - Dữ liệu đến sai thứ tự/thiếu thì giữ công việc phục hồi, không tạo Fare giả.
+    - Thiếu Booking/Trip xác nhận thì trả lỗi phụ thuộc, không tạo Fare giả.
     - Unique tripId/Fare và inbox/outbox tại Payment ngăn tạo cước/sự kiện lần hai.
     - Nếu dữ liệu có thẩm quyền mới mâu thuẫn với Fare đã phát hành, giữ bằng chứng
       và chặn thu mới để review; không sửa tiền âm thầm hoặc hạ Payment SUCCESS.
-    - Trip closure còn giải phóng tài nguyên không tự chặn Fare khi đủ COMPLETED
-      và metrics CONFIRMED; closure SUCCEEDED không phải bằng chứng cước sẵn sàng.
+    - Trip COMPLETED, closure và Payment SUCCESS là các kết quả độc lập;
+      closure không phải bằng chứng đã trả tiền.
+    - Khi Trip hủy trước khi bắt đầu, Trip gửi lệnh hủy có ID ổn định sau commit;
+      Payment ghi fence để không mở thu tiền mới. Nếu Payment đã SUCCESS,
+      giữ SUCCESS/paidAt/attempt, đặt requiresReview và phát
+      PAYMENT_REVIEW_REQUIRED để xử lý thủ công; không tự hoàn tiền.
 
     3. Tiền tệ và làm tròn
     - Tiền tệ của phiên bản này là VND.
@@ -104,8 +112,9 @@ info:
 
     7. Thanh toán online
     - Chỉ cho phép phương thức có adapter đã cấu hình và đang được hỗ trợ.
-    - E_WALLET và CREDIT_CARD là các loại phương thức của hệ thống;
-      không có nghĩa phiên bản đầu tiên phải tích hợp tất cả nhà cung cấp.
+    - Demo MVP chỉ nhận CASH hoặc DEMO_TRANSFER. DEMO_TRANSFER không gọi
+      ngân hàng/cổng thật; chỉ kết quả kiểm chứng qua thao tác demo có quyền
+      mới được đưa Payment thành SUCCESS. Production không cho thao tác này.
     - Số tiền, tiền tệ, người trả và mã giao dịch liên kết do server xác định.
     - Không nhận số tiền thanh toán từ client.
     - Không lưu PAN, CVV, mật khẩu ngân hàng hoặc thông tin đăng nhập ví.
@@ -230,26 +239,25 @@ paths:
         Đây là API chỉ đọc; GET không tự tạo hoặc tính lại Fare.
         Payment phục vụ endpoint này dù URL bắt đầu bằng /trips.
         Không join DB Trip; lấy ngữ cảnh cần thiết qua gRPC có quyền.
-        Không xác minh được Trip/metrics thì trả 503, không suy diễn
+        Không xác minh được Trip/Booking thì trả 503, không suy diễn
         TRIP_NOT_COMPLETED hoặc FARE_NOT_READY từ dữ liệu cache không xác định.
 
-        Fare được tạo khi Trip COMPLETED và JourneyMetrics đã được xác nhận.
-        Nếu sự kiện hoàn tất đã được ghi nhưng tác vụ tính cước chưa hoàn thành,
-        trả FARE_NOT_READY.
+        Trong MVP, Fare cố định được tạo cùng Payment đầu tiên sau khi Trip đã
+        được gắn hợp lệ với Booking và snapshot giá bất biến. Trước đó Booking
+        hiển thị PricingSnapshot nhưng GET Fare trả FARE_NOT_READY;
+        không suy Trip COMPLETED từ PricingSnapshot.
 
         Công thức:
         - baseAmount = pricingSnapshot.baseFare.
-        - distanceAmount = distanceKm * pricingSnapshot.pricePerKm.
-        - timeAmount = durationMinutes * pricingSnapshot.pricePerMinute.
+        - distanceAmount = pricingSnapshot.distanceMeters * pricePerKm / 1000.
+        - timeAmount = 0 cho MOTORBIKE demo.
         - totalAmount = ROUND_HALF_UP(baseAmount + distanceAmount + timeAmount).
 
-        durationMinutes được tính từ startedAt đến completedAt theo quy tắc
-        JourneyMetrics đã chốt, không làm tròn lên từng phút một cách ngầm định.
+        distanceMeters do tuyến demo phía server chốt, không lấy từ client/GPS.
 
         Các lỗi 409:
-        - TRIP_NOT_COMPLETED: chuyến chưa hoàn tất.
         - FARE_NOT_READY: chưa có Fare cuối cùng.
-        - FARE_REQUIRES_REVIEW: dữ liệu tính cước cần được kiểm tra.
+        - FARE_REQUIRES_REVIEW: dữ liệu tính cước cần được kiểm tra (tích hợp sau).
 
         Trip bị CANCELLED hoặc ERROR đã đóng không được coi là COMPLETED.
       parameters:
@@ -291,8 +299,11 @@ paths:
         Chỉ CUSTOMER sở hữu chuyến được thực hiện.
 
         Điều kiện:
-        - Trip COMPLETED.
-        - Fare cuối cùng đã sẵn sàng và không cần kiểm tra lại.
+        - Trip đã COMPLETED và liên kết với Booking hợp lệ.
+        - Payment đã tạo theo luồng cũ trước COMPLETED vẫn được đọc và retry
+          cùng Idempotency-Key/payload qua receipt; không tạo Payment thứ hai.
+        - PricingSnapshot cố định đã sẵn sàng; Payment kiểm tra liên kết Trip/Booking
+          và đối chiếu bản capture gốc trước khi tạo Fare.
         - Chưa có Payment cho Fare này.
         - Phương thức được yêu cầu có cấu hình hợp lệ và có thể sử dụng.
 
@@ -303,23 +314,24 @@ paths:
         Client không được truyền các trường này.
 
         Trong một transaction cục bộ tại cab_payment:
+        - Tạo Fare bất biến từ snapshot đã xác minh, nếu Fare chưa tồn tại.
         - Tạo Payment.
         - Tạo PaymentAttempt đầu tiên, attemptNumber=1.
         - Thiết lập currentAttemptId.
         - Lưu kết quả idempotency.
-        - Với thanh toán online, lưu job bền vững để bắt đầu xử lý.
+        - DEMO_TRANSFER chỉ lưu attempt chờ thao tác kết quả demo có quyền;
+          không gọi cổng thanh toán hoặc tự đánh dấu SUCCESS.
 
         Response tạo mới là snapshot PENDING được lưu cùng transaction.
-        Worker có thể cập nhật trạng thái ngay sau đó.
-        Client sử dụng GET để đọc trạng thái hiện tại hoặc lấy checkout.
+        Client sử dụng GET để đọc trạng thái hiện tại.
 
         Với CASH:
         - Payment và attempt ở PENDING.
         - Chờ tài xế được giao chuyến xác nhận đã nhận đủ tiền.
 
-        Với thanh toán online:
-        - Ghi merchantReference ổn định trước khi gửi yêu cầu ra ngoài.
-        - Chuyển PROCESSING theo quá trình xử lý của adapter.
+        Với DEMO_TRANSFER:
+        - Ghi merchantReference ổn định cho attempt demo; không gọi provider.
+        - Chỉ thao tác kết quả demo được cấp quyền mới chuyển trạng thái.
         - Không giữ transaction cơ sở dữ liệu trong lúc gọi nhà cung cấp.
         - Kết quả chưa chắc chắn phải được xử lý theo UNKNOWN và đối soát.
 
@@ -329,7 +341,7 @@ paths:
         khi đủ điều kiện.
 
         Các lỗi 409:
-        - TRIP_NOT_COMPLETED.
+        - TRIP_NOT_PAYABLE khi Trip chưa COMPLETED hoặc đã CANCELLED/ERROR.
         - FARE_NOT_READY.
         - FARE_REQUIRES_REVIEW.
         - PAYMENT_ALREADY_EXISTS.
@@ -469,7 +481,8 @@ paths:
 
         Sắp xếp theo attemptNumber tăng dần.
         Cursor gắn với người gọi, paymentId và limit.
-        Cursor không hợp lệ hoặc hết hạn trả 400.
+        Cursor ký bằng khóa riêng của Payment, hạn 15 phút; không hợp lệ hoặc
+        hết hạn trả 400. Không lưu khóa trong database hoặc URL public.
         Không nhận query parameter ngoài hợp đồng.
 
         Danh sách không phải snapshot bất biến:
@@ -669,6 +682,49 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         default:
           $ref: '#/components/responses/UnexpectedError'
+
+  /payments/{paymentId}/demo-result:
+    post:
+      tags: [PaymentAttempt]
+      operationId: simulateDemoTransferResult
+      x-owner-service: payment-service
+      summary: Ghi kết quả chuyển khoản giả lập trong môi trường demo/dev
+      description: |
+        Chỉ CUSTOMER sở hữu Payment DEMO_TRANSFER và có Session hợp lệ.
+        Chỉ hoạt động khi NODE_ENV=development và CAB_DEMO_PAYMENT_RESULT_ENABLED=1;
+        production trả 403. Idempotency-Key bắt buộc. Server so khớp paymentId,
+        attemptId hiện tại, expectedVersion, expectedAmount VND và attempt PENDING trước khi ghi
+        SUCCESS hoặc FAILED. Kết quả lặp không tạo lần thu hoặc notification mới;
+        FAILED đến sau SUCCESS không hạ trạng thái. Đây không phải callback ngân
+        hàng và không gọi cổng thanh toán thật.
+      parameters:
+        - $ref: '#/components/parameters/PaymentId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DemoTransferResultRequest'
+      responses:
+        '200':
+          description: Trạng thái Payment đã ghi nhận và snapshot idempotent khi replay
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/PaymentNotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /payments/webhooks/{provider}:
     post:
@@ -916,11 +972,9 @@ components:
       type: string
       enum:
         - CASH
-        - E_WALLET
-        - CREDIT_CARD
+        - DEMO_TRANSFER
       description: |
-        Các loại phương thức của CAB.
-        Server chỉ chấp nhận phương thức đã được cấu hình và có thể sử dụng.
+        MVP chỉ nhận tiền mặt hoặc chuyển khoản giả lập; không gọi cổng thật.
 
     PaymentStatus:
       type: string
@@ -950,22 +1004,6 @@ components:
       properties:
         paymentMethod:
           $ref: '#/components/schemas/PaymentMethod'
-        returnUrl:
-          $ref: '#/components/schemas/ReturnUrl'
-      oneOf:
-        - properties:
-            paymentMethod:
-              type: string
-              enum: [CASH]
-          not:
-            required:
-              - returnUrl
-        - required:
-            - returnUrl
-          properties:
-            paymentMethod:
-              type: string
-              enum: [E_WALLET, CREDIT_CARD]
 
     ConfirmCashRequest:
       type: object
@@ -987,22 +1025,25 @@ components:
           $ref: '#/components/schemas/Version'
         paymentMethod:
           $ref: '#/components/schemas/PaymentMethod'
-        returnUrl:
-          $ref: '#/components/schemas/ReturnUrl'
-      oneOf:
-        - properties:
-            paymentMethod:
-              type: string
-              enum: [CASH]
-          not:
-            required:
-              - returnUrl
-        - required:
-            - returnUrl
-          properties:
-            paymentMethod:
-              type: string
-              enum: [E_WALLET, CREDIT_CARD]
+
+    DemoTransferResultRequest:
+      type: object
+      additionalProperties: false
+      required: [attemptId, expectedVersion, expectedAmount, currency, outcome]
+      properties:
+        attemptId:
+          $ref: '#/components/schemas/Identifier'
+        expectedVersion:
+          $ref: '#/components/schemas/Version'
+        expectedAmount:
+          type: integer
+          format: int64
+          minimum: 0
+        currency:
+          $ref: '#/components/schemas/Currency'
+        outcome:
+          type: string
+          enum: [SUCCESS, FAILED]
 
     PricingSnapshot:
       type: object
@@ -1012,6 +1053,10 @@ components:
         - baseFare
         - pricePerKm
         - pricePerMinute
+        - routeId
+        - routeVersion
+        - distanceMeters
+        - totalAmount
       properties:
         currency:
           $ref: '#/components/schemas/Currency'
@@ -1027,6 +1072,20 @@ components:
           type: number
           minimum: 0
           description: Giá mỗi phút; xử lý bằng decimal phía server
+        routeId:
+          $ref: '#/components/schemas/Identifier'
+        routeVersion:
+          $ref: '#/components/schemas/Version'
+        distanceMeters:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Quãng đường tuyến demo do server quản lý.
+        totalAmount:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Số VND cố định đã ROUND_HALF_UP một lần.
 
     Fare:
       type: object
@@ -1035,13 +1094,9 @@ components:
         - fareId
         - tripId
         - pricingVersionId
-        - pricingSnapshot
-        - metricsVersion
-        - distanceKm
-        - durationMinutes
-        - baseAmount
-        - distanceAmount
-        - timeAmount
+        - routeId
+        - routeVersion
+        - distanceMeters
         - totalAmount
         - currency
         - calculatedAt
@@ -1052,34 +1107,15 @@ components:
           $ref: '#/components/schemas/Identifier'
         pricingVersionId:
           $ref: '#/components/schemas/Identifier'
-        pricingSnapshot:
-          $ref: '#/components/schemas/PricingSnapshot'
-        metricsVersion:
+        routeId:
+          $ref: '#/components/schemas/Identifier'
+        routeVersion:
+          $ref: '#/components/schemas/Version'
+        distanceMeters:
           type: integer
           format: int64
           minimum: 1
-          description: Phiên bản JourneyMetrics đã xác nhận được dùng tính cước
-        distanceKm:
-          type: number
-          minimum: 0
-          description: |
-            Quãng đường thực tế đã xác nhận.
-            Không thay bằng khoảng cách đường chim bay hoặc số 0 khi thiếu dữ liệu.
-        durationMinutes:
-          type: number
-          minimum: 0
-          description: |
-            Thời gian tính cước theo JourneyMetrics từ startedAt đến completedAt.
-            Không ngầm làm tròn lên số phút nguyên.
-        baseAmount:
-          type: number
-          minimum: 0
-        distanceAmount:
-          type: number
-          minimum: 0
-        timeAmount:
-          type: number
-          minimum: 0
+          description: Khoảng cách tuyến demo đã chốt trước chuyến.
         totalAmount:
           type: integer
           format: int64
@@ -1092,8 +1128,9 @@ components:
           format: date-time
       description: |
         Snapshot cước cuối cùng, bất biến sau khi phát hành.
-        Các thành phần tính bằng decimal chính xác phía server.
-        Không tạo Fare giả khi dữ liệu hành trình chưa được xác nhận.
+        Dữ liệu tính chi tiết được giữ bất biến trong Payment DB, không tính lại
+        khi đọc Fare.
+        Không tạo Fare khi liên kết Booking/Trip chưa được owner xác nhận.
 
     Checkout:
       type: object

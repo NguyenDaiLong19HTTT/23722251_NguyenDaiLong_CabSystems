@@ -1,0 +1,211 @@
+{
+  "info": {
+    "name": "CAB Driver demo — own profile and availability",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Driver login",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/auth/login",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"emailOrPhone\": \"{{driverEmail}}\",\n  \"password\": \"{{driverPassword}}\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('DRIVER login 200', () => pm.response.to.have.status(200));",
+              "if (pm.response.code === 200) { const x=pm.response.json(); pm.test('role DRIVER', () => pm.expect(x.account.role).to.eql('DRIVER')); pm.environment.set('driverToken',x.accessToken); pm.environment.set('driverAccountId',x.account.accountId); pm.environment.set('driverId',x.account.driverId); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Driver Account",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{driverToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/accounts/me"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Own Account 200', () => pm.response.to.have.status(200));",
+              "if (pm.response.code === 200) pm.test('Driver Account ID', () => pm.expect(pm.response.json().accountId).to.eql(pm.environment.get('driverAccountId')));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Driver profile and vehicle",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{driverToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/drivers/me"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Own DriverProfile 200', () => pm.response.to.have.status(200));",
+              "if (pm.response.code === 200) { const x=pm.response.json(); pm.test('Driver binding', () => pm.expect(x.driver.driverId).to.eql(pm.environment.get('driverId'))); pm.environment.set('driverVersion',x.driver.version); pm.environment.set('driverVehicleId',x.vehicle.vehicleId); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Send one fresh GPS point",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{driverToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/drivers/me/location",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"latitude\": 10.7731,\n  \"longitude\": 106.7030,\n  \"recordedAt\": \"{{driverRecordedAt}}\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "pm.environment.set('driverRecordedAt',new Date(Date.now()-1000).toISOString());"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('GPS point 200', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Enable availability",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{driverToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/drivers/me/availability",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"expectedVersion\": {{driverVersion}},\n  \"driverStatus\": \"AVAILABLE\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('AVAILABLE 200', () => pm.response.to.have.status(200));",
+              "if (pm.response.code === 200) pm.test('AVAILABLE', () => pm.expect(pm.response.json().driverStatus).to.eql('AVAILABLE'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Read availability again",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{driverToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/drivers/me"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Profile 200', () => pm.response.to.have.status(200));",
+              "if (pm.response.code === 200) { const x=pm.response.json(); pm.test('AVAILABLE persisted', () => pm.expect(x.driver.driverStatus).to.eql('AVAILABLE')); pm.environment.set('driverVersion',x.driver.version); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Disable availability",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{driverToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/drivers/me/availability",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"expectedVersion\": {{driverVersion}},\n  \"driverStatus\": \"OFFLINE\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('OFFLINE 200', () => pm.response.to.have.status(200));",
+              "if (pm.response.code === 200) pm.test('OFFLINE', () => pm.expect(pm.response.json().driverStatus).to.eql('OFFLINE'));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

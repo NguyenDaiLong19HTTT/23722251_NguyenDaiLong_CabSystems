@@ -1,0 +1,36 @@
+services:
+  rabbitmq:
+    image: rabbitmq:4.2.9-management@sha256:bda54cf7b1dc13aff98091ef8c99d59ca37c396b38eef1b21232f533136ba0ec
+    ports: ["127.0.0.1:56791:5671"]
+    volumes:
+      - cab_rabbit_data:/var/lib/rabbitmq
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ${CAB_DEV_SECRET_DIR:?run dev/setup-notification.mjs}/pki/ca.crt:/certs/ca.crt:ro
+      - ${CAB_DEV_SECRET_DIR:?run dev/setup-notification.mjs}/broker-pki/broker.crt:/certs/broker.crt:ro
+      - ${CAB_DEV_SECRET_DIR:?run dev/setup-notification.mjs}/broker-pki/broker.key:/certs/broker.key:ro
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  mongo:
+    image: mongo:8.0.30-noble@sha256:f40b97b97ce805c48ab428ce4422180ae0ef0de6dacadf1e32c6e6a1cbc9353d
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: cab_dev_admin
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_root_password
+    secrets: [mongo_root_password]
+    ports: ["127.0.0.1:55440:27017"]
+    volumes:
+      - cab_notification_data:/data/db
+      - ${CAB_DEV_SECRET_DIR:?run dev/setup-notification.mjs}/mongo-init.js:/docker-entrypoint-initdb.d/notification.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand({ping:1})"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+secrets:
+  mongo_root_password:
+    file: ${CAB_DEV_SECRET_DIR:?run dev/setup-notification.mjs}/mongo_root_password
+volumes:
+  cab_rabbit_data: {}
+  cab_notification_data: {}

@@ -7,7 +7,13 @@ import "cab/internal/v1/common.proto";
 service BookingInternalService {
  rpc GetAssignmentDecision(GetAssignmentDecisionRequest) returns (AssignmentDecision);
  rpc GetBookingGuardDecision(EntityId) returns (BookingGuardDecision);
+ rpc GetBookingPaymentContext(GetBookingPaymentContextRequest) returns (BookingPaymentContext);
 }
+// Payment verifies this after Trip assignment; never accept a client-declared snapshot.
+message GetBookingPaymentContextRequest { string trip_id = 1; }
+message BookingPaymentContext { string booking_id = 1; string trip_id = 2;
+  string customer_id = 3; string driver_id = 4; PricingSnapshot pricing = 5;
+  string pricing_operation_id = 6; }
 message GetAssignmentDecisionRequest { string assignment_id = 1; }
 enum AssignmentState { ASSIGNMENT_STATE_UNSPECIFIED = 0; CLAIMED = 1; PREPARING = 2; ACTIVATING = 3; ASSIGNED = 4; COMPENSATING = 5; COMPENSATED = 6; }
 message AssignmentDecision { string assignment_id = 1; string booking_id = 2; string trip_request_id = 3; string trip_id = 4; string customer_id = 5; string driver_id = 6; string vehicle_id = 7; AssignmentState state = 8; google.protobuf.Timestamp claimed_at = 9; google.protobuf.Timestamp offer_expires_at = 10; google.protobuf.Timestamp dispatch_deadline_at = 11; bool cancel_requested = 12; uint64 version = 13; TripParties parties = 14; Location pickup = 15; Location destination = 16; PricingSnapshot pricing = 17; GuardRef guard = 18; }

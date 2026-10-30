@@ -208,7 +208,7 @@ Báo cáo cơ bản được chuyển sang ngoài MVP của kiến trúc tám MS
 |---|---:|---|
 | Bán kính điều phối tài xế | 5 km | Phạm vi chọn ứng viên cho tiến trình tìm tài xế của Booking |
 | Bán kính tra cứu tài xế gần vị trí | 1 km mặc định | Dùng cho chức năng danh sách tài xế gần tọa độ và kịch bản chấm tiêu chí 13 |
-| Thời hạn một lời mời | 30 giây | Tính từ khi hệ thống phát hành lời mời |
+| Thời hạn một lời mời | 120 giây (2 phút) | Tính từ khi hệ thống phát hành lời mời; không vượt thời hạn tìm tài xế chung của Booking |
 | Số lời mời tối đa cho một Booking | 5 | Bao gồm lời mời đầu tiên |
 | Thời gian tìm tài xế tối đa | 180 giây | Tính từ khi Booking bắt đầu FINDING_DRIVER |
 | Chu kỳ gửi vị trí | 5 giây | Khi tài xế trực tuyến và thiết bị có kết nối |
@@ -353,15 +353,15 @@ Khách hàng và vận hành xem trạng thái, tài xế, xe, vị trí gần n
 
 Vị trí cũ hoặc ETA không tính được phải được thể hiện rõ, không giả định bằng 0.
 
-## FR10 – Tính cước thực tế
+## FR10 – Cước cố định trước chuyến (MVP demo)
 
-Trip COMPLETED kích hoạt quá trình xác nhận dữ liệu hành trình. Payment Service chỉ phát hành Fare khi Trip Service đã xác nhận JourneyMetrics đủ điều kiện CONFIRMED và có snapshot giá của Booking. Dữ liệu chưa đủ giữ Fare chưa sẵn sàng, không thay quãng đường/thời gian thiếu bằng 0 hoặc yêu cầu thanh toán.
+Payment Service sở hữu tuyến demo do server cấu hình, khoảng cách mét và biểu giá MOTORBIKE 5.300 VND/km (phí mở cửa/phút bằng 0, không mức tối thiểu). Booking lấy PricingSnapshot bất biến trước khi chấp nhận yêu cầu. Sau Trip COMPLETED, Payment phát hành Fare cố định từ snapshot sau khi xác minh liên kết Booking/Trip của hai owner. `totalAmount = ROUND_HALF_UP(distanceMeters × 5300 / 1000)` VND; không làm tròn km trước, không dùng GPS/chim bay hoặc số từ client. JourneyMetrics sau chuyến phục vụ theo dõi, không tính lại Fare. Snapshot không tự chứng minh có Booking hay đã thanh toán.
 
 ## FR11 – Thanh toán
 
-Khách hàng chọn tiền mặt hoặc phương thức điện tử được hỗ trợ.
+Sau Trip COMPLETED, khách hàng chọn CASH hoặc DEMO_TRANSFER. Chuyển khoản demo không gọi nhà cung cấp thật; chỉ kết quả demo được xác minh mới ghi SUCCESS. Trip chuyển PICKED_UP sang IN_PROGRESS không phụ thuộc Payment. Không đồng nhất tạo Payment PENDING với đã trả tiền.
 
-Chọn tiền mặt chỉ tạo yêu cầu thanh toán; tài xế phải xác nhận đã thu đủ tiền.
+Chọn tiền mặt chỉ tạo yêu cầu thanh toán sau Trip COMPLETED; đúng tài xế lịch sử xác nhận đã thu đủ tiền.
 
 ## FR12 – Xử lý kết quả thanh toán
 
@@ -555,7 +555,7 @@ Các yêu cầu trên quy định hành vi cần đạt. HTTP 202, endpoint tra 
 | BRu03 | Mỗi Booking có tối đa một lời mời PENDING. Thử lại theo giới hạn tại mục 4.5; dừng khi hết ứng viên, hết số lời mời hoặc hết tổng thời gian |
 | BRu04 | Mỗi Booking có tối đa một Trip. Chỉ kích hoạt Trip sau khi lời mời được chấp nhận hợp lệ và giành đủ quyền phân công; dữ liệu chuẩn bị kỹ thuật không được công bố như Trip hoạt động |
 | BRu05 | Trip chỉ chuyển theo bảng trạng thái tại mục 8.2; mọi lần chuyển được lưu lịch sử |
-| BRu06 | Cước thực tế chỉ được chốt khi Trip COMPLETED và có đủ dữ liệu hợp lệ |
+| BRu06 | Cước cố định được chốt từ PricingSnapshot tuyến demo của Payment trước chuyến; JourneyMetrics sau COMPLETED không tính lại Fare |
 | BRu07 | Không lưu số thẻ đầy đủ, mã bảo mật thẻ hoặc thông tin đăng nhập tài khoản thanh toán của khách |
 | BRu08 | Thanh toán điện tử đi qua nhà cung cấp; không xác nhận thành công chỉ dựa vào trang chuyển hướng phía khách |
 | BRu09 | Kiểm tra vai trò và quyền trên dữ liệu; biết ID không đồng nghĩa có quyền truy cập |
@@ -582,7 +582,7 @@ Các yêu cầu trên quy định hành vi cần đạt. HTTP 202, endpoint tra 
 | BRu30 | Accept và hủy Booking được Booking phân xử trên cùng tiến trình; không công bố đồng thời hai kết quả cuối mâu thuẫn |
 | BRu31 | Mất phản hồi phải đối soát trước khi bù hoặc phân công lại. Trip đã hoạt động chỉ kết thúc qua quy tắc hủy/đóng hợp lệ, không xóa để giả lập rollback |
 | BRu32 | Lệnh giải phóng Customer/Driver/Vehicle phải khớp operation/Trip và phiên bản đang giữ quyền; lệnh cũ không giải phóng quyền mới |
-| BRu33 | Chỉ PricingConfig tại Payment là nguồn giá; Booking/Trip giữ snapshot bất biến và Fare lưu phiên bản metrics dùng khi tính |
+| BRu33 | Chỉ PricingConfig tại Payment là nguồn giá; Booking/Trip giữ PricingSnapshot bất biến và Fare lưu phiên bản giá/tuyến demo đã chốt trước chuyến; JourneyMetrics không tính lại Fare |
 | BRu34 | Khóa Account/thu hồi Session ngăn các lần cấp quyền mới. Cách xử lý lệnh đã được cấp quyền nhưng chưa hoàn tất ở dịch vụ khác phải có chính sách phân xử và kiểm thử riêng, không suy ra atomic từ sự kiện |
 
 ### Quy tắc chọn ứng viên
@@ -607,32 +607,34 @@ Các yêu cầu trên quy định hành vi cần đạt. HTTP 202, endpoint tra 
 
 Các mã loại dịch vụ trong MVP:
 
-- STANDARD
-- PREMIUM
 - MOTORBIKE
-- VAN
+- STANDARD/PREMIUM/VAN chỉ còn để đọc dữ liệu lịch sử, không chọn cho request mới.
 
-Mỗi phương tiện được gán loại dịch vụ đáp ứng trong phạm vi MVP. Không suy ra loại dịch vụ chỉ từ tên hoặc nhãn xe.
+MVP chỉ nhận xe máy (MOTORBIKE) cho hồ sơ xe/yêu cầu mới. Xe legacy khác loại
+không đủ điều kiện nhận Booking MOTORBIKE, không tự chuyển loại hoặc xóa dữ liệu.
 
 Công thức cước:
 
-`totalAmount = baseFare + distanceKm × pricePerKm + durationMinutes × pricePerMinute`
+`totalAmount = ROUND_HALF_UP(distanceMeters × 5300 / 1000)` VND.
 
 - Đơn vị tiền tệ: VND.
-- Giá và các thành phần cước không âm.
-- Làm tròn tổng cuối cùng tới đồng gần nhất; không làm tròn riêng từng thành phần.
-- Quãng đường tính theo tuyến thực tế được hệ thống xác nhận, không dùng khoảng cách đường thẳng giữa hai điểm làm cước thực tế.
-- Thời gian tính cước từ lúc IN_PROGRESS đến COMPLETED.
-- Booking lưu phiên bản biểu giá và các đơn giá áp dụng tại thời điểm tạo.
+- Phí mở cửa 0, phí phút 0, không có mức tối thiểu.
+- Làm tròn tổng một lần đến VND theo ROUND_HALF_UP; không làm tròn km trước.
+- Quãng đường mét lấy từ tuyến demo cố định do Payment server quản lý, không
+  dùng khoảng cách đường thẳng, GPS sau chuyến hoặc số client cung cấp.
+- Booking giữ PricingSnapshot bất biến gồm tuyến/phiên bản, distanceMeters,
+  đơn giá/phiên bản và tổng VND trước khi xác nhận tạo Booking.
 - Biểu giá mới không làm thay đổi cước của Booking đã tồn tại.
 - Mỗi loại dịch vụ chỉ có một phiên bản biểu giá có hiệu lực tại một thời điểm.
-- Nếu thiếu dữ liệu tính cước, chưa chốt Fare và chưa thu tiền; tạo yêu cầu kiểm tra cho vận hành.
-- Nguồn dữ liệu quãng đường và cách xác nhận phải được cụ thể hóa trong thiết kế trước khi triển khai.
+- Tuyến không hỗ trợ trả lỗi rõ ràng, không dùng quãng đường mặc định.
+- Fare chỉ tạo sau khi Payment xác minh Trip/Booking cùng liên kết; không chờ
+  Trip COMPLETED. Snapshot không chứng minh đã có Booking hoặc đã thanh toán.
 
 ### Quy tắc thanh toán
 
 - CASH: tạo Payment PENDING; chỉ tài xế của chuyến xác nhận đã nhận đủ tiền.
-- Thanh toán điện tử: một nhà cung cấp được tích hợp; chỉ hiển thị các phương thức mà nhà cung cấp đó hỗ trợ.
+- Chuyển khoản giả lập DEMO_TRANSFER chỉ hoạt động trong demo/dev qua thao tác
+  kết quả có quyền; không gọi ngân hàng, ví hoặc thẻ thật.
 - Kết quả phải được xác minh nguồn gửi, giao dịch, số tiền và đơn vị tiền.
 - Thông báo trùng hoặc gửi lại không được ghi nhận thu tiền thêm lần nữa.
 - Timeout là kết quả chưa xác định, không tự coi là FAILED.
@@ -859,7 +861,7 @@ Khi phân công đang chạy, yêu cầu hủy phải được Booking phối h�
 | Trip | tripId, bookingId, customerId, driverId, vehicleId, tripStatus, startedAt, completedAt, closedAt, closeReason | Chuyến thực tế |
 | TripStatusHistory | tripId, previousStatus, newStatus, changedBy, changedAt, reason | Lịch sử chuyển trạng thái |
 | PricingConfig | pricingVersionId, vehicleType, baseFare, pricePerKm, pricePerMinute, effectiveFrom, effectiveTo | Phiên bản biểu giá |
-| Fare | fareId, tripId, pricingVersionId, distanceKm, durationMinutes, baseAmount, distanceAmount, timeAmount, totalAmount, currency | Cước đã tính của chuyến |
+| Fare | fareId, tripId, pricingVersionId, routeId, routeVersion, distanceMeters, pricingSnapshot, totalAmount, currency | Cước cố định đã chốt trước chuyến |
 | Payment | paymentId, fareId, customerId, method, paymentStatus, amount, paidAt, confirmedByAccountId | Nghĩa vụ và kết quả thanh toán |
 | PaymentAttempt | attemptId, paymentId, idempotencyKey, providerTransactionId, status, createdAt, resolvedAt | Từng lần xử lý thanh toán |
 | Rating | ratingId, tripId, customerId, driverId, score, comment, createdAt | Đánh giá sau chuyến |
@@ -876,7 +878,7 @@ Khi phân công đang chạy, yêu cầu hủy phải được Booking phối h�
 | AssignmentSaga | assignmentId, bookingId, tripId, trạng thái, version, cancelRequested và kết quả từng bước | Phân xử và phục hồi phân công tại Booking Service |
 | TripPreparation | assignmentId, tripId, generation, trạng thái chuẩn bị/kích hoạt/hủy | Ngăn tạo/kích hoạt trùng hoặc hồi sinh bước đã hủy tại Trip |
 | TripRoutePoint | sampleId, tripId, driverId, latitude, longitude, recordedAt, receivedAt | Mẫu hành trình đã xác minh, thuộc Trip |
-| JourneyMetrics | tripId, metricsVersion, distanceKm, durationMinutes, qualityStatus, calculationMethodVersion, confirmedAt | Kết quả xác nhận dữ liệu tính cước, thuộc Trip |
+| JourneyMetrics | tripId, metricsVersion, distanceKm, durationMinutes, qualityStatus, calculationMethodVersion, confirmedAt | Dữ liệu hành trình lịch sử thuộc Trip; không tính lại Fare MVP |
 | ClosureOperation | operationId, tripId, closureVersion, kết quả giải phóng từng quyền | Tiếp tục giải phóng sau khi Trip đóng, thuộc Trip |
 | ProviderEvent | provider, providerEventId, attemptId, verifiedResult, processingStatus | Chống xử lý callback trùng và lưu kết quả xác minh tại Payment |
 | IdempotencyRecord | danh tính, operation, key, requestDigest, trạng thái, kết quả và thời điểm | Chống lặp tại dịch vụ thực hiện thao tác |
@@ -1135,15 +1137,16 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - Luồng: xác nhận đến đón → đón khách → bắt đầu hành trình → hoàn thành.
 - Hệ thống kiểm tra từng chuyển trạng thái, ghi lịch sử và thông báo.
 - Ngoại lệ: bỏ bước, cập nhật chuyến khác, lặp thao tác hoặc sự cố.
-- Hậu điều kiện: Trip có trạng thái hợp lệ; COMPLETED tạo công việc xác nhận JourneyMetrics và giải phóng tài nguyên đúng quyền. Chỉ khi metrics CONFIRMED mới cho Payment phát hành Fare. Giải phóng liên dịch vụ có thể chờ retry, không làm Trip đã đóng quay lại hoạt động.
+- Hậu điều kiện: Trip có trạng thái hợp lệ; COMPLETED tạo công việc xác nhận JourneyMetrics và giải phóng tài nguyên đúng quyền. PricingSnapshot đã chốt trước chuyến; Fare/Payment mới phát hành sau COMPLETED từ snapshot đã xác minh, metrics không tính lại Fare. Giải phóng liên dịch vụ có thể chờ retry, không làm Trip đã đóng quay lại hoạt động.
 
 ## UC07 – Tính cước và thanh toán
 
-- Tác nhân: khách của chuyến, tài xế của chuyến và nhà cung cấp thanh toán.
-- Tiền điều kiện: Trip COMPLETED và có dữ liệu tính cước hợp lệ.
-- Luồng: tính Fare → hiển thị thành phần giá → khách chọn phương thức.
+- Tác nhân: khách của chuyến và tài xế được giao; kết quả chuyển khoản giả lập chỉ trong demo/dev.
+- Tiền điều kiện: Trip đã được gắn hợp lệ với Booking có PricingSnapshot Payment cấp.
+- Luồng: hiển thị giá cố định trước chuyến → hoàn thành Trip → chọn phương thức và tạo Fare/Payment PENDING.
 - Tiền mặt: Payment PENDING → tài xế xác nhận đã nhận đủ tiền → SUCCESS.
-- Điện tử: tạo PaymentAttempt → gửi nhà cung cấp → xác minh kết quả → cập nhật Payment.
+- DEMO_TRANSFER: tạo PaymentAttempt → thao tác demo có quyền ghi SUCCESS/FAILED;
+  SUCCESS được ghi sau Trip COMPLETED, không điều khiển chuyển trạng thái Trip.
 - Ngoại lệ: dữ liệu cước thiếu, thanh toán thất bại, timeout, callback trùng hoặc không hợp lệ.
 - Hậu điều kiện: lưu kết quả đã xác định; nếu chưa rõ thì giữ UNKNOWN để đối soát, không tự đánh dấu thành công.
 
@@ -1361,7 +1364,7 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - Bỏ qua trạng thái bắt buộc bị từ chối.
 - Mỗi thay đổi có lịch sử và người thực hiện.
 - Gửi lại cùng thao tác đã thành công không tạo lịch sử hoặc sự kiện lặp.
-- COMPLETED có thời điểm kết thúc và kích hoạt xác nhận JourneyMetrics; chỉ metrics CONFIRMED mới cho phép phát hành Fare.
+- COMPLETED có thời điểm kết thúc và kích hoạt xác nhận JourneyMetrics; Fare cố định không chờ metrics, không tính lại theo GPS sau chuyến.
 - Trip kết thúc không quay lại hoạt động.
 - ERROR không tự bị xem là chuyến hoàn thành.
 
@@ -1370,7 +1373,8 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 
 ## AC06 – Tính cước và thanh toán
 
-- Cước sử dụng đúng phiên bản biểu giá, quãng đường và thời gian đã xác nhận.
+- Cước dùng phiên bản giá/tuyến demo và distanceMeters đã chốt trước chuyến;
+  không tính thêm thời gian hoặc GPS sau chuyến.
 - Thay đổi biểu giá mới không làm đổi cước của Booking cũ.
 - Chọn CASH chưa làm Payment thành công.
 - Chỉ tài xế của chuyến được xác nhận thu tiền mặt.
@@ -1379,15 +1383,14 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - Timeout tạo UNKNOWN; không mở lần thu mới khi chưa đối soát.
 - Payment SUCCESS không bị hạ trạng thái bởi callback đến muộn.
 - Khách không tạo thanh toán cho chuyến của người khác.
-- Có bằng chứng luồng thanh toán online qua sandbox của nhà cung cấp, từ tạo yêu cầu đến callback/webhook đã xác minh.
-- Callback/webhook đi qua Gateway.
+- Không dùng sandbox nhà cung cấp trong MVP; webhook/provider thuộc giai đoạn sau.
 - Gửi lại request với cùng Idempotency-Key và nội dung trả HTTP status/body đã lưu; không tạo PaymentAttempt hoặc lần thu tiền mới.
 - Cùng Idempotency-Key nhưng nội dung khác bị từ chối.
 - Một request dùng key mới vẫn phải tuân thủ ràng buộc không thu trùng và không mở lần thử khi kết quả trước còn UNKNOWN.
 - Sau thanh toán, Trip vẫn COMPLETED và Payment liên kết là SUCCESS.
 
 - Payment xác minh quyền và dữ liệu có thẩm quyền từ Identity/Trip qua hợp đồng, không đọc chéo database.
-- Fare giữ snapshot giá và metricsVersion đã dùng; sự kiện metrics lặp không tạo Fare/Payment thứ hai.
+- Fare giữ snapshot giá và routeVersion đã dùng; sự kiện metrics lặp không tạo Fare/Payment thứ hai.
 - Phản hồi tiến trình đang chạy không được tính là kết quả thanh toán cuối cùng; replay không mở Attempt mới.
 ## AC07 – Đánh giá
 
@@ -1396,6 +1399,8 @@ Tiền điều kiện chung đối với chức năng được bảo vệ: Accou
 - Nhận xét là tùy chọn.
 - Mỗi chuyến chỉ có một đánh giá.
 - Gửi lại cùng mã chống lặp và nội dung trả kết quả đã lưu, không tạo Rating thứ hai.
+- Gửi lại cùng Trip, đúng Customer và cùng điểm/nhận xét đã chuẩn hóa cũng trả
+  Rating đã lưu dù client không cung cấp Idempotency-Key; nội dung khác trả xung đột.
 - Điểm đánh giá trung bình chưa phải điều kiện nghiệm thu bắt buộc; nếu bổ sung phải có yêu cầu và kiểm thử riêng.
 - Trip COMPLETED nhưng Payment chưa SUCCESS vẫn được đánh giá.
 

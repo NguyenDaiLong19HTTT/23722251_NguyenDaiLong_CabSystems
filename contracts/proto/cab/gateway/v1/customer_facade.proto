@@ -1,0 +1,122 @@
+syntax = "proto3";
+package cab.gateway.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Public-use-case facade only. NOT worker/provisioning/compensation RPCs.
+// Security, presence, validation and REST rendering: contracts/GATEWAY-CUSTOMER.md.
+service IdentityFacadeService {
+  rpc RegisterCustomer(RegisterCustomerRequest) returns (RegisterCustomerResponse);
+  rpc GetCustomerRegistration(GetCustomerRegistrationRequest) returns (CustomerRegistrationOperation);
+  rpc Login(LoginRequest) returns (AuthSession);
+  rpc GetMyAccount(GetMyAccountRequest) returns (Account);
+}
+service CustomerFacadeService {
+  rpc GetCustomer(GetCustomerRequest) returns (Account);
+}
+
+// Secrets are transient input only. Headers/tokens use metadata, not durable DTOs.
+message RegisterCustomerRequest {
+  optional string full_name = 1;
+  optional string email = 2;
+  optional string phone = 3;
+  optional string password = 4;
+}
+message GetCustomerRegistrationRequest { optional string operation_id = 1; }
+message LoginRequest {
+  optional string email_or_phone = 1;
+  optional string password = 2;
+}
+message GetMyAccountRequest {}
+message GetCustomerRequest { optional string customer_id = 1; }
+
+// No HTTP status in protobuf. The selected outcome determines 201 versus 202.
+message RegisterCustomerResponse {
+  oneof outcome {
+    Account created = 1;
+    RegistrationProcessing processing = 2;
+  }
+}
+message RegistrationProcessing {
+  CustomerRegistrationOperation operation = 1;
+  optional uint32 retry_after_seconds = 2;
+}
+
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  CUSTOMER = 1;
+  DRIVER = 2;
+  OPERATOR = 3;
+}
+enum AccountStatus {
+  ACCOUNT_STATUS_UNSPECIFIED = 0;
+  ACTIVE = 1;
+  INACTIVE = 2;
+  SUSPENDED = 3;
+}
+message Account {
+  optional string account_id = 1;
+  optional string full_name = 2;
+  optional string email = 3;
+  optional string phone = 4;
+  optional Role role = 5;
+  optional AccountStatus account_status = 6;
+  oneof profile {
+    string customer_id = 7;
+    string driver_id = 8;
+    string operator_id = 9;
+  }
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
+enum TokenType {
+  TOKEN_TYPE_UNSPECIFIED = 0;
+  BEARER = 1; // REST literal is "Bearer", not "BEARER".
+}
+message AuthSession {
+  optional string access_token = 1;
+  optional string refresh_token = 2;
+  optional TokenType token_type = 3;
+  optional uint32 expires_in = 4;
+  google.protobuf.Timestamp session_expires_at = 5;
+  Account account = 6;
+}
+enum RegistrationStatus {
+  REGISTRATION_STATUS_UNSPECIFIED = 0;
+  PROCESSING = 1;
+  SUCCEEDED = 2;
+  FAILED = 3;
+}
+message CustomerRegistrationOperation {
+  optional string operation_id = 1;
+  optional RegistrationStatus status = 2;
+  google.protobuf.Timestamp created_at = 3;
+  google.protobuf.Timestamp updated_at = 4;
+  oneof terminal {
+    Account result = 5;
+    ErrorResponse error = 6;
+  }
+}
+message FieldError {
+  optional string field = 1;
+  optional string message = 2;
+}
+// Wrapper preserves omitted details versus a present empty array.
+message FieldErrors { repeated FieldError items = 1; }
+message ErrorResponse {
+  optional string error_code = 1;
+  optional string message = 2;
+  FieldErrors details = 3;
+  optional string correlation_id = 4;
+}
+enum AuthOrigin {
+  AUTH_ORIGIN_UNSPECIFIED = 0;
+  END_USER = 1; // includes login/recovery credentials
+  SERVICE = 2;
+}
+// Packed in google.rpc.Status.details (grpc-status-details-bin), never success body.
+message FacadeErrorDetail {
+  ErrorResponse error = 1;
+  optional uint32 retry_after_seconds = 2;
+  optional AuthOrigin auth_origin = 3;
+}

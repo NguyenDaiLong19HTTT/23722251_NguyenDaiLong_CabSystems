@@ -1,0 +1,116 @@
+syntax = "proto3";
+package cab.gateway.v1;
+
+import "google/protobuf/timestamp.proto";
+import "cab/gateway/v1/driver_facade.proto";
+
+// Public OTP and application facade. User proof stays in metadata, never a durable receipt.
+service IdentityDriverRegistrationFacadeService {
+  rpc RequestDriverOtp(RequestDriverOtpRequest) returns (DriverOtpChallenge);
+  rpc VerifyDriverOtp(VerifyDriverOtpRequest) returns (DriverPhoneVerification);
+  rpc SubmitDriverApplication(SubmitDriverApplicationRequest) returns (SubmitDriverApplicationResponse);
+  rpc GetDriverRegistrationOperation(GetDriverRegistrationOperationRequest) returns (DriverRegistrationOperation);
+}
+service DriverApplicationFacadeService {
+  rpc GetMyDriverApplication(GetMyDriverApplicationRequest) returns (DriverApplication);
+  rpc ListDriverApplications(ListDriverApplicationsRequest) returns (DriverApplicationPage);
+  rpc GetDriverApplication(GetDriverApplicationRequest) returns (DriverApplication);
+  rpc ReviewDriverApplication(ReviewDriverApplicationRequest) returns (DriverApplicationReview);
+}
+message RequestDriverOtpRequest { optional string phone = 1; }
+message VerifyDriverOtpRequest { optional string challenge_id = 1; optional string otp = 2; }
+message DriverOtpChallenge {
+  optional string challenge_id = 1;
+  optional string purpose = 2;
+  optional string status = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp expires_at = 5;
+  google.protobuf.Timestamp resend_available_at = 6;
+  // Present only in explicitly enabled development/demo responses; never persisted in receipts.
+  optional string otp = 7;
+}
+message DriverPhoneVerification {
+  optional string verification_token = 1;
+  optional string purpose = 2;
+  optional string verified_phone = 3;
+  google.protobuf.Timestamp verified_at = 4;
+  google.protobuf.Timestamp expires_at = 5;
+}
+message SubmittedVehicle { optional string plate_number = 1; optional VehicleType vehicle_type = 2; }
+message SubmitDriverApplicationRequest {
+  optional string verification_token = 1;
+  optional string full_name = 2;
+  optional string email = 3;
+  optional string password = 4;
+  optional string license_number = 5;
+  SubmittedVehicle vehicle = 6;
+}
+message DriverRegistrationResult {
+  optional string account_id = 1;
+  optional string driver_id = 2;
+  optional string application_id = 3;
+  optional string account_status = 4;
+  optional DriverApprovalStatus approval_status = 5;
+  optional DriverStatus driver_status = 6;
+  optional string application_status = 7;
+  google.protobuf.Timestamp submitted_at = 8;
+}
+message DriverRegistrationOperation {
+  optional string operation_id = 1;
+  optional string status = 2;
+  google.protobuf.Timestamp created_at = 3;
+  google.protobuf.Timestamp updated_at = 4;
+  DriverRegistrationResult result = 5;
+  optional string error_code = 6;
+}
+message SubmitDriverApplicationResponse {
+  oneof outcome {
+    DriverRegistrationResult created = 1;
+    DriverRegistrationOperation processing = 2;
+  }
+}
+message GetDriverRegistrationOperationRequest { optional string operation_id = 1; }
+message GetMyDriverApplicationRequest {}
+message ListDriverApplicationsRequest {
+  optional string status = 1;
+  optional uint32 limit = 2;
+  optional string cursor = 3;
+}
+message GetDriverApplicationRequest { optional string application_id = 1; }
+message ApplicantSnapshot {
+  optional string full_name = 1;
+  optional string email = 2;
+  optional string phone = 3;
+  google.protobuf.Timestamp phone_verified_at = 4;
+  optional string license_number = 5;
+}
+message DriverApplication {
+  optional string application_id = 1;
+  optional string account_id = 2;
+  optional string driver_id = 3;
+  optional string status = 4;
+  ApplicantSnapshot applicant = 5;
+  SubmittedVehicle submitted_vehicle = 6;
+  optional uint64 version = 7;
+  google.protobuf.Timestamp submitted_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+  google.protobuf.Timestamp reviewed_at = 10;
+  optional string reviewed_by_account_id = 11;
+  optional string rejection_reason = 12;
+  optional string approved_vehicle_id = 13;
+}
+message DriverApplicationPage { repeated DriverApplication items = 1; optional string next_cursor = 2; }
+message ReviewDriverApplicationRequest {
+  optional string application_id = 1;
+  optional uint64 expected_version = 2;
+  optional uint64 expected_driver_version = 3;
+  optional string decision = 4;
+  optional string rejection_reason = 5;
+  optional string vehicle_id = 6;
+  optional uint64 expected_vehicle_version = 7;
+}
+message DriverApplicationReview {
+  DriverApplication application = 1;
+  Driver driver = 2;
+  Vehicle vehicle = 3;
+}

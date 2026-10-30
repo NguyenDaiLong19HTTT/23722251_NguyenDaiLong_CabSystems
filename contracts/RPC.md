@@ -4,7 +4,7 @@
 
 Protobuf là nguồn chuẩn field/type; tài liệu này là ràng buộc semantic bắt buộc. Proto3 không có required: server phải từ chối field bắt buộc rỗng, enum UNSPECIFIED/không biết, version/generation=0, timestamp không hợp lệ. ID dài 1–128, chuỗi phải có ký tự không trắng. `Command.command_id` UUID; `operation_id` ID ổn định của Saga/registration/closure. Mỗi bước và ý định khác nhau có command_id riêng; retry cùng bước giữ nguyên ID và payload. Field optional vắng khác với chuỗi rỗng. Không nhận principal/account role do client tự khai làm bằng chứng quyền.
 
-`Decimal.value`: regex `^(0|[1-9][0-9]*)(\.[0-9]{1,6})?$`, tối đa 24 ký tự, tính bằng decimal, không float; tiền tệ chỉ VND. Chỉ ROUND_HALF_UP một lần khi phát hành Fare nguyên VND. Point: latitude [-90,90], longitude [-180,180], hữu hạn. PricingSnapshot bất biến với đúng vehicleType, version và thời điểm Booking chấp nhận; không có giá áp dụng thì FAILED_PRECONDITION/PRICING_UNAVAILABLE, không dùng zero.
+`Decimal.value`: regex `^(0|[1-9][0-9]*)(\.[0-9]{1,6})?$`, tối đa 24 ký tự, tính bằng decimal, không float; tiền tệ chỉ VND. Chỉ ROUND_HALF_UP một lần khi phát hành Fare nguyên VND. Point: latitude [-90,90], longitude [-180,180], hữu hạn. Request nghiệp vụ mới chỉ nhận MOTORBIKE; STANDARD/PREMIUM/VAN giữ nguyên số enum để đọc lịch sử, không chuyển nghĩa hoặc tự đổi dữ liệu. PricingSnapshot bất biến với đúng vehicleType, version, tuyến demo/routeVersion, distanceMeters, totalAmount và thời điểm Booking chấp nhận; không có giá/tuyến áp dụng thì FAILED_PRECONDITION/PRICING_UNAVAILABLE hoặc ROUTE_UNSUPPORTED, không dùng zero hay khoảng cách client.
 
 `EntityId.id` của Get*Provision là registration operationId; của GetBookingGuardDecision là bookingId. Read trả NOT_FOUND nếu chưa có; không suy ra thao tác trước chưa chạy chỉ từ timeout. Các response state phải xác định, timestamp/version bắt buộc nếu đã tạo. RPC successful return nghĩa local commit bền vững, không có transaction xuyên DB.
 
@@ -16,9 +16,9 @@ Idempotency key local `(authenticated caller, full RPC method, command_id)`, fin
 
 VerifyUserIdentity và VerifyRatingUserIdentity kiểm tra token chữ ký, issuer/audience/expiry, Session chưa revoked/hết hạn, Account ACTIVE và provisioning hoàn tất. allowed_roles phải là tập con policy use case bên gọi; empty bị từ chối. Rating wrapper tương đương verify chung nhưng chỉ rating-service được gọi. Trả profileId đã xác nhận theo role; OPERATOR không cần Customer/Driver ID. Không có profile đã xác nhận thì UNAVAILABLE/PROFILE_NOT_READY. Không gọi GetAccountContact để thay thế xác thực.
 
-VerifyAccountEligibility: chỉ kiểm tra Account ACTIVE, role và provisioning của **công việc đã được cấp quyền bền vững**; không xác nhận Session và không được dùng cho request người dùng. Booking/Driver dùng để recheck trước chọn/reserve; Account bị khóa làm fail precondition và đi bù trước activation. Phục hồi/release/ghi nhận thanh toán cho công việc cũ vẫn phải chạy dù Account bị khóa.
+VerifyAccountEligibility: chỉ kiểm tra Account ACTIVE, role và provisioning của **công việc đã được cấp quyền bền vững**; không xác nhận Session và không được dùng cho request người dùng. Booking/Driver dùng để recheck trước chọn/reserve; Trip chỉ dùng khi OPERATOR khôi phục Trip ERROR sau khi xác thực user riêng. Account bị khóa làm fail precondition và đi bù trước activation. Phục hồi/release/ghi nhận thanh toán cho công việc cũ vẫn phải chạy dù Account bị khóa.
 
-GetAccountContact: CUSTOMER/DRIVER chỉ OWN_PROFILE của mình; OPERATOR được OPERATIONS_PROFILE; ACTIVE_TRIP_CONTACT chỉ trip-service, user phải là bên tham gia Trip chưa đóng. Identity gọi Trip.GetActiveTripContactContext để kiểm tra quan hệ, Trip xác minh user bằng VerifyUserIdentity (không gọi lại GetAccountContact). Trip recheck trạng thái/version ngay trước khi trả public response, loại bỏ phone khi đóng. Customer/Driver profile lookup lấy Account ID từ mapping local, không tin client chọn ID. OWN/OPERATIONS trả field theo OpenAPI; ACTIVE_TRIP_CONTACT chỉ full_name/phone, không email. Không cache PII xuyên request.
+GetAccountContact: CUSTOMER/DRIVER chỉ OWN_PROFILE của mình; OPERATOR được OPERATIONS_PROFILE; ACTIVE_TRIP_CONTACT chỉ trip-service, user phải là bên tham gia Trip chưa đóng. Identity gọi Trip.GetActiveTripContactContext để kiểm tra quan hệ, Trip xác minh user bằng VerifyUserIdentity (không gọi lại GetAccountContact). Trip recheck trạng thái/version ngay trước khi trả public response, loại bỏ phone khi đóng. Customer/Driver profile lookup lấy Account ID từ mapping local, không tin client chọn ID. OWN/OPERATIONS trả field theo OpenAPI, gồm `account_status` (ACTIVE/INACTIVE/SUSPENDED, không UNSPECIFIED), `created_at` và `updated_at` hiện diện/hợp lệ; hai timestamp thuộc **Account của Identity**, không phải Customer/Driver profile local hay `verified_at`. OPERATOR ACTIVE có thể đọc target INACTIVE/SUSPENDED. ACTIVE_TRIP_CONTACT chỉ full_name/phone, không email và không dùng các field profile mới để mở rộng dữ liệu public. Không cache PII xuyên request.
 
 Identity sinh account/profile/application/operation ID trước gọi Provision*. Customer ghi profile; Driver ghi Driver OFFLINE/PENDING_APPROVAL + Application SUBMITTED + outbox trong cùng transaction, chưa tạo Vehicle chính thức. ProposedVehicle chỉ plate_number/vehicle_type theo API07; license/plate chuẩn hóa như OpenAPI. Unique account_id, operation_id, profile_id và license digest. Provision retry không tạo lại application/event. GetProvision trả trạng thái operation không có PII.
 
@@ -52,13 +52,42 @@ ReleaseReservation bởi Booking: Trip phải PREPARATION_CANCELLED; ngay cả r
 
 Trip transaction ghi closedAt/status/history/ClosureOperation/outbox trước trả public 200. ReleaseReservation/ReleaseGuard bởi trip-service bắt buộc trip_id + closure_operation_id. Bên nhận tự GetClosureContext, kiểm tra exact guard/reservation/generation; local release commit rồi trả receipt state RELEASED. GetClosureContext chỉ trả chuyến đã đóng với đúng closure operation, ERROR chưa closedAt không đủ. `block_vehicle=true` khi đóng bởi VEHICLE_ISSUE: Driver vô hiệu hóa/block Vehicle và release trong **cùng transaction**, không chờ event; Driver AVAILABLE chỉ nếu vẫn đủ điều kiện, khác thì OFFLINE.
 
-Closure worker retry tới khi cả hai confirmed, alert khi kéo dài; public ClosureOperation PROCESSING/SUCCEEDED không bị map sang FAILED vì hết số retry vận chuyển. Không tạo Fare cho CANCELLED hoặc ERROR closed. Lệnh đóng/release không phụ thuộc user token còn sống.
+Closure worker retry tới khi cả hai confirmed, alert khi kéo dài; public ClosureOperation PROCESSING/SUCCEEDED không bị map sang FAILED vì hết số retry vận chuyển. Không tạo Fare cho CANCELLED hoặc ERROR closed. Lệnh đóng/release không phụ thuộc user token còn sống. Với ERROR, Trip gọi Driver.CheckTripRestoreEligibility theo exact tripId/Driver Account/reservation generation; Driver kiểm tra APPROVED/BUSY, xe ACTIVE và assignment còn hiệu lực, không có reservation hoạt động khác. Trip còn kiểm tra Identity Account ACTIVE và Customer guard BOUND trước CAS version khôi phục. CLOSE_ABNORMALLY lưu resolution/audit/receipt/outbox/closure trong một transaction Trip; VEHICLE_BREAKDOWN khiến GetClosureContext.block_vehicle=true để Driver vô hiệu hóa xe cùng transaction release. Timeout các RPC kiểm tra không được suy thành đủ điều kiện RESTORE.
 
 ## Pricing, Fare, Rating và liên hệ
 
-GetPricingSnapshot do Booking gọi sau tạo operation, capture giá hiệu lực tại booking_accepted_at server. Unique operation_id, replay trả snapshot đầu tiên kể cả giá hiện hành đã đổi; vehicleType/timestamp đổi là conflict. Snapshot copy vào Booking/Trip không trở thành chỉnh sửa giá ở các MS khác.
+`Trip.HasCustomerDriverTrip` chỉ cho Identity gọi với user token đã xác minh:
+Trip kiểm tra Customer ID và Account ID của principal khớp cùng một Trip lịch
+sử có `driver_account_id` được hỏi. Trả `related=false` nếu không có quan hệ;
+không trả Trip/PII. Identity dùng kết quả này cho
+`GetAccountContact(DRIVER_PUBLIC_PROFILE)` và chỉ trả `full_name` của Account
+Driver. Driver facade `GetDriverById` trả đúng `driverId/fullName`; thiếu quan
+hệ và ID không tồn tại cùng 404. Không dùng Driver/Vehicle hiện tại để suy ra
+Driver lịch sử của Trip.
 
-GetFareContext chỉ Payment worker; trip COMPLETED và metrics CONFIRMED, metrics_version chính xác, trả dữ liệu lịch sử bất biến. Version không khớp → FAILED_PRECONDITION/METRICS_VERSION_MISMATCH, chưa confirmed → METRICS_NOT_CONFIRMED. Payment unique Fare/trip, cố định metricsVersion/pricingVersion. Event metrics chỉ là tín hiệu; không dùng body event/client làm số tiền. Thuật toán metrics chưa chốt ở D03, không được tự xác nhận dữ liệu thiếu.
+GetPricingSnapshot do Booking gọi sau tạo operation, capture giá hiệu lực và tuyến demo server tại booking_accepted_at. Unique operation_id, replay trả snapshot đầu tiên kể cả giá/tuyến hiện hành đã đổi; vehicleType/timestamp/pickup/destination đổi là conflict. Snapshot copy vào Booking/Trip không chứng minh Booking đã tồn tại hoặc đã thanh toán. Fare/Payment chỉ gắn sau khi Booking và Trip owner xác nhận cùng liên kết và quyền; không có vòng phụ thuộc khi tạo Booking.
+
+GetFareContext giữ cho dữ liệu JourneyMetrics lịch sử; Payment MVP không dùng metrics để chốt lại cước cố định. Payment unique Fare/trip, cố định routeVersion/pricingVersion/totalAmount từ Booking snapshot sau khi Trip gắn đúng Booking. Không dùng body event hoặc client làm số tiền. Trip COMPLETED và Payment SUCCESS là hai trạng thái riêng.
+
+Trip tự kiểm tra Driver được gán, thứ tự trạng thái và expectedVersion dưới
+khóa hàng khi chuyển PICKED_UP → IN_PROGRESS → COMPLETED; không hỏi Payment
+để bắt đầu chuyến. PricingSnapshot do Payment cấp trước Booking giữ giá đã
+chốt, nhưng Fare/Payment mới chỉ được tạo khi Trip COMPLETED và Booking/Trip
+owner xác nhận đúng liên kết. Thanh toán CASH hoặc DEMO_TRANSFER diễn ra sau
+COMPLETED; Trip COMPLETED không tự đồng nghĩa Payment SUCCESS. RPC
+`GetTripPaymentDecision` và các receipt Payment cũ được giữ để đọc lịch sử,
+không còn là điều kiện cho Trip bắt đầu. Với Payment đã tạo theo luồng cũ,
+retry cùng key vẫn dùng receipt; hủy sau SUCCESS vẫn cần manual review,
+không tự hoàn tiền.
+
+Sau khi Trip commit CANCELLED, Trip gửi `RecordTripCancellation(tripId,
+cancellationId)` qua mTLS với ID ổn định khi retry. Payment ghi fence bền vững:
+không tạo Payment/attempt hoặc chấp nhận kết quả DEMO_TRANSFER mới sau fence.
+Nếu Payment đã SUCCESS, Payment giữ nguyên SUCCESS/paidAt/evidence, đặt
+requiresReview và phát PAYMENT_REVIEW_REQUIRED đúng một lần qua outbox cùng
+transaction; không tự refund. Trip phải retry lệnh nếu mất ACK, không coi
+timeout là rollback của Payment. Khi Trip chưa tồn tại, đây chỉ là hợp đồng;
+không tuyên bố luồng hủy đã được kiểm chứng end-to-end.
 
 GetTripPaymentContext yêu cầu user token; Trip kiểm tra user Customer chủ chuyến/Driver lịch sử/OPERATOR theo use case. Payment tiếp tục enforce quyền endpoint riêng: chỉ Driver lịch sử confirm CASH, không cho OPERATOR xác nhận thay. GetTripRatingContext tương tự trả snapshot local kể cả Trip chưa COMPLETED; Rating mới quyết định TRIP_NOT_COMPLETED. Trip missing/outside scope cùng NOT_FOUND/TRIP_NOT_FOUND. Không gọi Payment để cho phép Rating. Các context không có token hoặc giấy phép/phone.
 

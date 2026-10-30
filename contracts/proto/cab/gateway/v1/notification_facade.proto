@@ -1,0 +1,37 @@
+syntax = "proto3";
+package cab.gateway.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// User bearer token is request metadata x-cab-user-authorization, never a field.
+service NotificationFacadeService {
+  rpc ListMyNotifications(ListMyNotificationsRequest) returns (NotificationPage);
+  rpc MarkMyNotificationRead(MarkMyNotificationReadRequest) returns (NotificationItem);
+}
+message ListMyNotificationsRequest {
+  optional bool is_read = 1;
+  optional uint32 limit = 2;
+  optional string cursor = 3;
+}
+message MarkMyNotificationReadRequest { optional string notification_id = 1; }
+message NotificationItem {
+  optional string notification_id = 1;
+  optional string event_id = 2;
+  optional string recipient_account_id = 3;
+  optional string event_type = 4;
+  optional string reference_type = 5;
+  optional string reference_id = 6;
+  optional string channel = 7;
+  optional string delivery_status = 8;
+  optional string title = 9;
+  optional string message = 10;
+  optional bool is_read = 11;
+  optional google.protobuf.Timestamp read_at = 12;
+  google.protobuf.Timestamp occurred_at = 13;
+  google.protobuf.Timestamp created_at = 14;
+  google.protobuf.Timestamp published_at = 15;
+}
+message NotificationPage {
+  repeated NotificationItem items = 1;
+  optional string next_cursor = 2;
+}

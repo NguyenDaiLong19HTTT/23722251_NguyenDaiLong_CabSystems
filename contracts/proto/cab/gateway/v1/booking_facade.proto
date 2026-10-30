@@ -1,0 +1,73 @@
+syntax = "proto3";
+package cab.gateway.v1;
+import "google/protobuf/timestamp.proto";
+import "cab/internal/v1/common.proto";
+
+service BookingFacadeService {
+  rpc CreateBooking(CreateBookingRequest) returns (BookingMutation);
+  rpc GetBookingOperation(BookingOperationId) returns (BookingOperation);
+  rpc ListMyBookings(ListMyBookingsRequest) returns (BookingPage);
+  rpc GetBooking(BookingId) returns (BookingView);
+  rpc GetBookingStatus(BookingId) returns (BookingStatusView);
+  rpc CancelBooking(CancelBookingRequest) returns (BookingMutation);
+  rpc GetDispatchStatus(BookingId) returns (DispatchStatusView);
+  rpc ListMyPendingTripRequests(ListMyTripRequestsRequest) returns (TripRequestPage);
+  rpc GetMyTripRequest(TripRequestId) returns (TripRequestView);
+  rpc AcceptTripRequest(TripRequestId) returns (TripRequestMutation);
+  rpc RejectTripRequest(RejectTripRequestRequest) returns (TripRequestView);
+  rpc GetMyAssignmentOperation(BookingOperationId) returns (AssignmentOperationView);
+}
+message BookingId {string booking_id=1;}
+message BookingOperationId {string operation_id=1;}
+message TripRequestId {string trip_request_id=1;}
+message CreateBookingRequest {cab.internal.v1.Location pickup=1;
+  cab.internal.v1.Location destination=2;cab.internal.v1.VehicleType vehicle_type=3;
+  optional string note=4;}
+message CancelBookingRequest {string booking_id=1;string reason=2;}
+message ListMyBookingsRequest {optional string booking_status=1;uint32 limit=2;
+  optional string cursor=3;}
+message ListMyTripRequestsRequest {uint32 limit=1;optional string cursor=2;}
+message RejectTripRequestRequest {string trip_request_id=1;optional string reason=2;}
+message BookingCancellationView {string reason=1;string cancelled_by=2;
+  google.protobuf.Timestamp cancelled_at=3;}
+message BookingView {string booking_id=1;string customer_id=2;
+  cab.internal.v1.Location pickup=3;cab.internal.v1.Location destination=4;
+  cab.internal.v1.VehicleType vehicle_type=5;string booking_status=6;
+  string pricing_version_id=7;cab.internal.v1.PricingSnapshot pricing_snapshot=8;
+  optional string note=9;optional string driver_id=10;optional string trip_id=11;
+  optional BookingCancellationView cancellation=12;
+  google.protobuf.Timestamp created_at=13;google.protobuf.Timestamp updated_at=14;}
+message BookingSummaryView {string booking_id=1;cab.internal.v1.Location pickup=2;
+  cab.internal.v1.Location destination=3;cab.internal.v1.VehicleType vehicle_type=4;
+  string booking_status=5;optional string driver_id=6;optional string trip_id=7;
+  google.protobuf.Timestamp created_at=8;google.protobuf.Timestamp updated_at=9;}
+message BookingPage {repeated BookingSummaryView items=1;uint32 limit=2;
+  bool has_more=3;optional string next_cursor=4;}
+message BookingStatusView {string booking_id=1;string booking_status=2;
+  optional string trip_id=3;google.protobuf.Timestamp updated_at=4;}
+message BookingOperation {string operation_id=1;string operation_type=2;
+  string status=3;optional BookingView result=4;optional string error_code=5;
+  optional uint32 failure_http_status=6;google.protobuf.Timestamp created_at=7;
+  google.protobuf.Timestamp updated_at=8;}
+message BookingMutation {string status=1;BookingOperation operation=2;
+  optional BookingView booking=3;optional string dispatch_status=4;
+  optional TripRequestView initial_offer=5;}
+message DispatchConfigView {double search_radius_km=1;uint32 offer_timeout_seconds=2;
+  uint32 max_offers=3;uint32 max_search_seconds=4;uint32 max_location_age_seconds=5;}
+message DispatchStatusView {string booking_id=1;string dispatch_status=2;
+  uint32 attempt_count=3;google.protobuf.Timestamp started_at=4;
+  google.protobuf.Timestamp deadline_at=5;DispatchConfigView config_snapshot=6;
+  google.protobuf.Timestamp updated_at=7;optional google.protobuf.Timestamp ended_at=8;
+  optional string failure_reason=9;optional string driver_id=10;optional string trip_id=11;}
+message TripRequestView {string trip_request_id=1;string booking_id=2;string driver_id=3;
+  cab.internal.v1.Location pickup=4;cab.internal.v1.Location destination=5;
+  cab.internal.v1.VehicleType vehicle_type=6;optional string note=7;string status=8;
+  google.protobuf.Timestamp sent_at=9;google.protobuf.Timestamp expires_at=10;
+  optional google.protobuf.Timestamp resolved_at=11;optional string trip_id=12;
+  optional string reject_reason=13;optional string closure_reason=14;}
+message TripRequestPage {repeated TripRequestView items=1;optional string next_cursor=2;}
+message TripRequestMutation {string status=1;optional TripRequestView offer=2;
+  optional BookingView booking=3;optional string operation_id=4;}
+message AssignmentOperationView {string operation_id=1;string trip_request_id=2;
+  string status=3;google.protobuf.Timestamp created_at=4;
+  google.protobuf.Timestamp updated_at=5;optional TripRequestView result=6;}

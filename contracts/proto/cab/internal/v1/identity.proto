@@ -13,8 +13,26 @@ service IdentityInternalService {
 // User token is metadata x-cab-user-authorization, NEVER in protobuf or durable jobs.
 message VerifyUserIdentityRequest { repeated Role allowed_roles = 1; }
 message GetAccountContactRequest { string account_id = 1; ContactPurpose purpose = 2; optional string trip_id = 3; }
-enum ContactPurpose { CONTACT_PURPOSE_UNSPECIFIED = 0; OWN_PROFILE = 1; OPERATIONS_PROFILE = 2; ACTIVE_TRIP_CONTACT = 3; }
-message AccountContact { string account_id = 1; string full_name = 2; optional string email = 3; optional string phone = 4; uint64 account_version = 5; google.protobuf.Timestamp verified_at = 6; }
+enum ContactPurpose { CONTACT_PURPOSE_UNSPECIFIED = 0; OWN_PROFILE = 1; OPERATIONS_PROFILE = 2; ACTIVE_TRIP_CONTACT = 3; DRIVER_PUBLIC_PROFILE = 4; }
+message AccountContact {
+  string account_id = 1;
+  string full_name = 2;
+  optional string email = 3;
+  optional string phone = 4;
+  uint64 account_version = 5;
+  google.protobuf.Timestamp verified_at = 6;
+  // Identity Account state and timestamps, not Customer-local profile timestamps.
+  // Nested enum avoids coupling the internal contract to cab.gateway.v1.
+  enum AccountStatus {
+    ACCOUNT_STATUS_UNSPECIFIED = 0;
+    ACTIVE = 1;
+    INACTIVE = 2;
+    SUSPENDED = 3;
+  }
+  optional AccountStatus account_status = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+}
 
 // Worker eligibility only. Does NOT authorize user requests or resurrect revoked sessions.
 message VerifyAccountEligibilityRequest { string account_id = 1; Role expected_role = 2; }

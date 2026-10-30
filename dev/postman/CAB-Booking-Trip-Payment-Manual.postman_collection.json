@@ -1,0 +1,620 @@
+{
+  "info": {
+    "name": "CAB Booking → Trip → Payment (manual)",
+    "description": "Manual CAB demo at http://127.0.0.1:33201. First register/login a fresh Customer; use Driver OTP and Operator approval for a separate MOTORBIKE Driver. In Compose demo, PUT availability AVAILABLE (ONLINE) sets a fixed pickup location if GPS is missing/stale; book within 30 seconds or refresh the location. Paste Bearer tokens, IDs and current versions by hand. Create Booking, accept the actual offer, complete the Trip, then create Payment and GET Fare. Use separate Trips for CASH, DEMO_TRANSFER, incident and cancellation. Only Payment requests require client Idempotency-Key. No environment, scripts or automatic assertions. Postman GUI remains for the user to run.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "01 CUSTOMER - Create Booking (MOTORBIKE, 1250 m demo route)",
+      "request": {
+        "description": "Rubric 15: 201 has immutable PENDING Booking and current dispatchStatus; when initialOffer is present it contains the real PENDING tripRequestId, driverId and expiry. Use the matching Driver token quickly for request 07. GET requests 05/06 are optional diagnostics, not required for this rubric step. A missing initialOffer does not prove offer delivery.",
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_CUSTOMER_TOKEN"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"pickup\":{\"latitude\":10.7769,\"longitude\":106.7009,\"address\":\"A\"},\"destination\":{\"latitude\":10.7869,\"longitude\":106.7109,\"address\":\"B\"},\"vehicleType\":\"MOTORBIKE\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "http://127.0.0.1:33201/v1/bookings"
+      }
+    },
+    {
+      "name": "02 CUSTOMER - Lookup 202 Booking operation",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_CUSTOMER_TOKEN"
+          }
+        ],
+        "url": "http://127.0.0.1:33201/v1/booking-operations/PASTE_OPERATION_UUID"
+      }
+    },
+    {
+      "name": "03 CUSTOMER - List own Bookings, page size 2",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_CUSTOMER_TOKEN"
+          }
+        ],
+        "url": "http://127.0.0.1:33201/v1/bookings?limit=2"
+      }
+    },
+    {
+      "name": "04 CUSTOMER - Read Booking and fixed PricingSnapshot",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_CUSTOMER_TOKEN"
+          }
+        ],
+        "url": "http://127.0.0.1:33201/v1/bookings/PASTE_BOOKING_UUID"
+      }
+    },
+    {
+      "name": "05 CUSTOMER - Dispatch status",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_CUSTOMER_TOKEN"
+          }
+        ],
+        "url": "http://127.0.0.1:33201/v1/bookings/PASTE_BOOKING_UUID/dispatch/status"
+      }
+    },
+    {
+      "name": "06 DRIVER - Pending offers (refresh GPS first)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_DRIVER_TOKEN"
+          }
+        ],
+        "url": "http://127.0.0.1:33201/v1/drivers/me/trip-requests?limit=20"
+      }
+    },
+    {
+      "name": "07 DRIVER - Accept own pending offer",
+      "request": {
+        "description": "Paste initialOffer.tripRequestId from create response and use the token of initialOffer.driverId; a different Driver cannot accept it. Offer must still be PENDING before expiresAt.",
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_DRIVER_TOKEN"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "http://127.0.0.1:33201/v1/trip-requests/PASTE_TRIP_REQUEST_UUID/accept"
+      }
+    },
+    {
+      "name": "08 DRIVER - Lookup 202 assignment operation",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_DRIVER_TOKEN"
+          }
+        ],
+        "url": "http://127.0.0.1:33201/v1/dispatch-operations/PASTE_OPERATION_UUID"
+      }
+    },
+    {
+      "name": "09 CUSTOMER or DRIVER - Read active Trip/version",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_CUSTOMER_OR_DRIVER_TOKEN"
+          }
+        ],
+        "url": "http://127.0.0.1:33201/v1/trips/PASTE_TRIP_UUID"
+      }
+    },
+    {
+      "name": "10 CUSTOMER - Tracking snapshot",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_CUSTOMER_TOKEN"
+          }
+        ],
+        "url": "http://127.0.0.1:33201/v1/trips/PASTE_TRIP_UUID/tracking"
+      }
+    },
+    {
+      "name": "11 DRIVER - Arrive at pickup",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_ASSIGNED_DRIVER_TOKEN"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"expectedVersion\":1,\"tripStatus\":\"ARRIVED_PICKUP\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "http://127.0.0.1:33201/v1/trips/PASTE_TRIP_UUID/status"
+      }
+    },
+    {
+      "name": "12 DRIVER - Pick up passenger",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_ASSIGNED_DRIVER_TOKEN"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"expectedVersion\":2,\"tripStatus\":\"PICKED_UP\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "http://127.0.0.1:33201/v1/trips/PASTE_TRIP_UUID/status"
+      }
+    },
+    {
+      "name": "13 DRIVER - Start carrying passenger (no Payment required)",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_ASSIGNED_DRIVER_TOKEN"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"expectedVersion\":3,\"tripStatus\":\"IN_PROGRESS\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "http://127.0.0.1:33201/v1/trips/PASTE_TRIP_UUID/status"
+      }
+    },
+    {
+      "name": "14 DRIVER - Send fresh GPS while assigned",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_ASSIGNED_DRIVER_TOKEN"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"latitude\":10.777,\"longitude\":106.701}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "http://127.0.0.1:33201/v1/drivers/me/location"
+      }
+    },
+    {
+      "name": "15 DRIVER - Complete Trip",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_ASSIGNED_DRIVER_TOKEN"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"expectedVersion\":4,\"tripStatus\":\"COMPLETED\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "http://127.0.0.1:33201/v1/trips/PASTE_TRIP_UUID/status"
+      }
+    },
+    {
+      "name": "16 CUSTOMER - Create CASH Payment after COMPLETED",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_CUSTOMER_TOKEN"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "PASTE_UNIQUE_PAYMENT_KEY"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"paymentMethod\":\"CASH\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "http://127.0.0.1:33201/v1/trips/PASTE_TRIP_UUID/payments"
+      }
+    },
+    {
+      "name": "17 CUSTOMER - Create DEMO_TRANSFER Payment after COMPLETED (separate Trip)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_CUSTOMER_TOKEN"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "PASTE_UNIQUE_PAYMENT_KEY"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"paymentMethod\":\"DEMO_TRANSFER\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "http://127.0.0.1:33201/v1/trips/PASTE_OTHER_TRIP_UUID/payments"
+      }
+    },
+    {
+      "name": "18 CUSTOMER - Read fixed Fare after Payment creation",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_CUSTOMER_TOKEN"
+          }
+        ],
+        "url": "http://127.0.0.1:33201/v1/trips/PASTE_TRIP_UUID/fare"
+      }
+    },
+    {
+      "name": "19 CUSTOMER - Simulate DEMO_TRANSFER SUCCESS after COMPLETED",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_CUSTOMER_TOKEN"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "PASTE_UNIQUE_RESULT_KEY"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"attemptId\":\"PASTE_ATTEMPT_UUID\",\"expectedVersion\":1,\"expectedAmount\":6625,\"currency\":\"VND\",\"outcome\":\"SUCCESS\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "http://127.0.0.1:33201/v1/payments/PASTE_PAYMENT_UUID/demo-result"
+      }
+    },
+    {
+      "name": "20 DRIVER - Confirm CASH after COMPLETED",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_ASSIGNED_DRIVER_TOKEN"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "PASTE_UNIQUE_CASH_KEY"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"expectedVersion\":1}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "http://127.0.0.1:33201/v1/payments/PASTE_PAYMENT_UUID/confirm-cash"
+      }
+    },
+    {
+      "name": "21 CUSTOMER or DRIVER - Closure release progress",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_CUSTOMER_OR_DRIVER_TOKEN"
+          }
+        ],
+        "url": "http://127.0.0.1:33201/v1/trips/PASTE_TRIP_UUID/closure"
+      }
+    },
+    {
+      "name": "22 CUSTOMER or DRIVER - Own Notifications",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_CUSTOMER_OR_DRIVER_TOKEN"
+          }
+        ],
+        "url": "http://127.0.0.1:33201/v1/notifications?limit=20"
+      }
+    },
+    {
+      "name": "23 DRIVER - Report incident (alternate path; version from GET)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_ASSIGNED_DRIVER_TOKEN"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"expectedVersion\":1,\"issueType\":\"VEHICLE_BREAKDOWN\",\"description\":\"Demo vehicle issue\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "http://127.0.0.1:33201/v1/trips/PASTE_OTHER_ACTIVE_TRIP_UUID/incidents"
+      }
+    },
+    {
+      "name": "24 CUSTOMER - Simulate DEMO_TRANSFER FAILED (alternate Trip)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_CUSTOMER_TOKEN"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "PASTE_UNIQUE_RESULT_KEY"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"attemptId\":\"PASTE_CURRENT_ATTEMPT_UUID\",\"expectedVersion\":1,\"expectedAmount\":6625,\"currency\":\"VND\",\"outcome\":\"FAILED\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "http://127.0.0.1:33201/v1/payments/PASTE_PAYMENT_UUID/demo-result"
+      }
+    },
+    {
+      "name": "25 CUSTOMER - Retry FAILED DEMO_TRANSFER",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_CUSTOMER_TOKEN"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "PASTE_UNIQUE_RETRY_KEY"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"expectedVersion\":2,\"paymentMethod\":\"DEMO_TRANSFER\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "http://127.0.0.1:33201/v1/payments/PASTE_PAYMENT_UUID/retry"
+      }
+    },
+    {
+      "name": "26 CUSTOMER - Legacy paid-before-cancel review (existing Payment only)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_CUSTOMER_TOKEN"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"reason\":\"Khách thay đổi kế hoạch — demo chấm\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "http://127.0.0.1:33201/v1/trips/PASTE_OTHER_ACTIVE_TRIP_UUID/cancel"
+      }
+    },
+    {
+      "name": "27 CUSTOMER - Read Payment after paid cancellation",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_CUSTOMER_TOKEN"
+          }
+        ],
+        "url": "http://127.0.0.1:33201/v1/payments/PASTE_PAYMENT_UUID"
+      }
+    },
+    {
+      "name": "28 CUSTOMER - Cancel unassigned Booking",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_CUSTOMER_TOKEN"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"reason\":\"Demo change of plans\"}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "http://127.0.0.1:33201/v1/bookings/PASTE_BOOKING_UUID/cancel"
+      }
+    },
+    {
+      "name": "29 OPERATOR - Nearby Drivers (default 1 km)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer PASTE_OPERATOR_TOKEN"
+          }
+        ],
+        "url": "http://127.0.0.1:33201/v1/drivers/nearby?latitude=10.78&longitude=106.7"
+      }
+    }
+  ]
+}

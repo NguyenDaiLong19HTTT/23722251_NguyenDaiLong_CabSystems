@@ -1,0 +1,62 @@
+syntax = "proto3";
+package cab.gateway.v1;
+import "google/protobuf/timestamp.proto";
+
+// Bearer token and Payment Idempotency-Key are metadata, not durable fields.
+service PaymentFacadeService {
+  rpc GetTripFare(PaymentTripId) returns (FixedFare);
+  rpc CreateTripPayment(CreateTripPaymentRequest) returns (PaymentRecord);
+  rpc GetTripPayment(PaymentTripId) returns (PaymentRecord);
+  rpc GetPayment(PaymentId) returns (PaymentRecord);
+  rpc ListPaymentAttempts(ListPaymentAttemptsRequest) returns (PaymentAttemptsPage);
+  rpc ConfirmCash(ConfirmCashRequest) returns (PaymentRecord);
+  rpc RetryPayment(RetryPaymentRequest) returns (PaymentRecord);
+  rpc SimulateDemoTransfer(DemoTransferResultRequest) returns (PaymentRecord);
+}
+message PaymentTripId { optional string trip_id = 1; }
+message PaymentId { optional string payment_id = 1; }
+message ListPaymentAttemptsRequest { optional string payment_id = 1;
+  optional uint32 limit = 2; optional string cursor = 3; }
+enum PaymentMethod { PAYMENT_METHOD_UNSPECIFIED = 0; CASH = 1; DEMO_TRANSFER = 2; }
+enum PaymentStatus { PAYMENT_STATUS_UNSPECIFIED = 0; PAYMENT_PENDING = 1;
+  PAYMENT_PROCESSING = 2; PAYMENT_SUCCESS = 3; PAYMENT_FAILED = 4;
+  PAYMENT_UNKNOWN = 5; }
+enum DemoTransferOutcome { DEMO_TRANSFER_OUTCOME_UNSPECIFIED = 0;
+  DEMO_SUCCESS = 1; DEMO_FAILED = 2; }
+message FixedFare {
+  optional string fare_id = 1; optional string trip_id = 2;
+  optional string pricing_version_id = 3; optional string route_id = 4;
+  optional uint64 route_version = 5; optional uint64 distance_meters = 6;
+  optional uint64 total_amount = 7; optional string currency = 8;
+  google.protobuf.Timestamp calculated_at = 9;
+}
+message CreateTripPaymentRequest { optional string trip_id = 1;
+  optional PaymentMethod payment_method = 2; }
+message ConfirmCashRequest { optional string payment_id = 1;
+  optional uint64 expected_version = 2; }
+message RetryPaymentRequest { optional string payment_id = 1;
+  optional uint64 expected_version = 2; optional PaymentMethod payment_method = 3; }
+message DemoTransferResultRequest { optional string payment_id = 1;
+  optional uint64 expected_version = 2; optional uint64 expected_amount = 3;
+  optional string currency = 4; optional DemoTransferOutcome outcome = 5;
+  optional string attempt_id = 6; }
+message PaymentRecord {
+  optional string payment_id = 1; optional string trip_id = 2; optional string fare_id = 3;
+  optional string customer_id = 4; optional uint64 amount = 5; optional string currency = 6;
+  optional PaymentMethod method = 7; optional PaymentStatus payment_status = 8;
+  optional string current_attempt_id = 9; optional bool requires_review = 10;
+  optional uint64 version = 11; google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13; google.protobuf.Timestamp paid_at = 14;
+  optional string confirmed_by_account_id = 15;
+}
+message PaymentAttemptRecord { optional string attempt_id = 1;
+  optional string payment_id = 2; optional uint32 attempt_number = 3;
+  optional PaymentMethod method = 4; optional uint64 amount = 5;
+  optional string currency = 6; optional PaymentStatus status = 7;
+  optional string merchant_reference = 8;
+  google.protobuf.Timestamp resolved_at = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+  optional string confirmed_by_account_id = 12; }
+message PaymentAttemptsPage { repeated PaymentAttemptRecord items = 1;
+  optional string next_cursor = 2; }

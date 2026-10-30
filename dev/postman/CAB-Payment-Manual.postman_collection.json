@@ -1,0 +1,41 @@
+{
+  "info": {
+    "name": "CAB Payment MVP - manual",
+    "description": "Use the literal URL http://127.0.0.1:33201. Paste a fresh CUSTOMER or assigned DRIVER Bearer token, real Trip ID, Payment ID, current version and a fresh Idempotency-Key manually. Trip/Booking integration is not implemented yet; Payment operations that require their authoritative context currently return 503. No scripts or environment variables are used.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "01 CUSTOMER - Fare after verified Trip link",
+      "request": {"method":"GET","header":[{"key":"Authorization","value":"Bearer PASTE_CUSTOMER_TOKEN"}],"url":"http://127.0.0.1:33201/v1/trips/PASTE_TRIP_UUID/fare"}
+    },
+    {
+      "name": "02 CUSTOMER - Create CASH Payment",
+      "request": {"method":"POST","header":[{"key":"Authorization","value":"Bearer PASTE_CUSTOMER_TOKEN"},{"key":"Idempotency-Key","value":"payment-create-cash-unique-1"},{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"paymentMethod\":\"CASH\"}","options":{"raw":{"language":"json"}}},"url":"http://127.0.0.1:33201/v1/trips/PASTE_TRIP_UUID/payments"}
+    },
+    {
+      "name": "03 CUSTOMER - Create DEMO_TRANSFER Payment",
+      "request": {"method":"POST","header":[{"key":"Authorization","value":"Bearer PASTE_CUSTOMER_TOKEN"},{"key":"Idempotency-Key","value":"payment-create-transfer-unique-1"},{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"paymentMethod\":\"DEMO_TRANSFER\"}","options":{"raw":{"language":"json"}}},"url":"http://127.0.0.1:33201/v1/trips/PASTE_TRIP_UUID/payments"}
+    },
+    {
+      "name": "04 CUSTOMER - Read Payment",
+      "request": {"method":"GET","header":[{"key":"Authorization","value":"Bearer PASTE_CUSTOMER_TOKEN"}],"url":"http://127.0.0.1:33201/v1/payments/PASTE_PAYMENT_UUID"}
+    },
+    {
+      "name": "04b CUSTOMER - List attempts (paste nextCursor for following page)",
+      "request": {"method":"GET","header":[{"key":"Authorization","value":"Bearer PASTE_CUSTOMER_TOKEN"}],"url":"http://127.0.0.1:33201/v1/payments/PASTE_PAYMENT_UUID/attempts?limit=20"}
+    },
+    {
+      "name": "05 CUSTOMER - Demo transfer result",
+      "request": {"method":"POST","header":[{"key":"Authorization","value":"Bearer PASTE_CUSTOMER_TOKEN"},{"key":"Idempotency-Key","value":"payment-demo-result-unique-1"},{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"attemptId\":\"PASTE_CURRENT_ATTEMPT_UUID\",\"expectedVersion\":1,\"expectedAmount\":6625,\"currency\":\"VND\",\"outcome\":\"SUCCESS\"}","options":{"raw":{"language":"json"}}},"url":"http://127.0.0.1:33201/v1/payments/PASTE_PAYMENT_UUID/demo-result"}
+    },
+    {
+      "name": "06 DRIVER - Confirm CASH after Trip COMPLETED",
+      "request": {"method":"POST","header":[{"key":"Authorization","value":"Bearer PASTE_ASSIGNED_DRIVER_TOKEN"},{"key":"Idempotency-Key","value":"payment-cash-confirm-unique-1"},{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"expectedVersion\":1}","options":{"raw":{"language":"json"}}},"url":"http://127.0.0.1:33201/v1/payments/PASTE_PAYMENT_UUID/confirm-cash"}
+    },
+    {
+      "name": "07 CUSTOMER - Retry after final FAILED",
+      "request": {"method":"POST","header":[{"key":"Authorization","value":"Bearer PASTE_CUSTOMER_TOKEN"},{"key":"Idempotency-Key","value":"payment-retry-unique-1"},{"key":"Content-Type","value":"application/json"}],"body":{"mode":"raw","raw":"{\"expectedVersion\":2,\"paymentMethod\":\"DEMO_TRANSFER\"}","options":{"raw":{"language":"json"}}},"url":"http://127.0.0.1:33201/v1/payments/PASTE_PAYMENT_UUID/retry"}
+    }
+  ]
+}

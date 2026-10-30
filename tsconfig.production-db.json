@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": { "noEmit": true },
+  "include": [
+    "experiments/production-postgres/**/*.ts",
+    "services/identity-service/src/**/*.ts",
+    "services/customer-service/src/**/*.ts",
+    "services/driver-service/src/**/*.ts"
+  ]
+}

@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17.11-bookworm@sha256:639ab7ceb90e13123085b741fb31ef493fba25463002f6da665352e7b534b652
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+    secrets: [postgres_password]
+    ports: ["127.0.0.1:55439:5432"]
+    volumes: [cab_dev_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+secrets:
+  postgres_password:
+    file: ${CAB_DEV_SECRET_DIR:?run dev/setup.mjs}/postgres_password
+volumes:
+  cab_dev_data: {}

@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "experiments/prisma-postgres/**/*.ts",
+    "services/identity-service/src/infrastructure/prisma-probe/**/*.ts",
+    "services/customer-service/src/infrastructure/prisma-probe/**/*.ts"
+  ]
+}

@@ -1,0 +1,69 @@
+generator client {
+  provider = "prisma-client"
+  output = "./generated"
+  moduleFormat = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model CustomerProvision {
+  operationId String @id @map("operation_id") @db.VarChar(128)
+  accountId String @unique @map("account_id") @db.Uuid
+  customerId String @unique @map("customer_id") @db.Uuid
+  state String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  cancelledAt DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  version BigInt @default(1)
+  customer Customer?
+  receipts CustomerRpcReceipt[]
+  @@unique([operationId, accountId, customerId], map: "provision_binding")
+  @@map("customer_provision")
+}
+
+model Customer {
+  customerId String @id @map("customer_id") @db.Uuid
+  accountId String @unique @map("account_id") @db.Uuid
+  provisionOperationId String @unique @map("provision_operation_id") @db.VarChar(128)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  version BigInt @default(1)
+  provision CustomerProvision @relation(fields: [provisionOperationId, accountId, customerId], references: [operationId, accountId, customerId], onDelete: Restrict, onUpdate: NoAction, map: "customer_provision_binding")
+  @@unique([provisionOperationId, accountId, customerId], map: "customer_binding")
+  @@map("customer")
+}
+
+model CustomerRpcReceipt {
+  receiptId String @id @map("receipt_id") @db.Uuid
+  callerService String @map("caller_service")
+  fullMethod String @map("full_method")
+  commandId String @map("command_id") @db.Uuid
+  operationId String @map("operation_id") @db.VarChar(128)
+  fingerprintHmac Bytes @map("fingerprint_hmac")
+  fingerprintKeyVersion String @map("fingerprint_key_version")
+  resultOperationId String @map("result_operation_id") @db.VarChar(128)
+  resultAccountId String @map("result_account_id") @db.Uuid
+  resultCustomerId String @map("result_customer_id") @db.Uuid
+  resultState String @map("result_state")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  provision CustomerProvision @relation(fields: [operationId, resultAccountId, resultCustomerId], references: [operationId, accountId, customerId], onDelete: Restrict, onUpdate: NoAction, map: "receipt_provision_binding")
+  @@unique([callerService, fullMethod, commandId], map: "receipt_command")
+  @@index([operationId, createdAt], map: "customer_receipt_operation_idx")
+  @@map("customer_rpc_receipt")
+}
+
+model CustomerAudit {
+  auditId String @id @map("audit_id") @db.Uuid
+  operationId String? @map("operation_id") @db.VarChar(128)
+  customerId String? @map("customer_id") @db.Uuid
+  action String
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  correlationId String? @map("correlation_id")
+  safeDetail Json? @map("safe_detail")
+  @@index([operationId, occurredAt], map: "customer_audit_operation_idx")
+  @@index([customerId, occurredAt], map: "customer_audit_customer_idx")
+  @@map("customer_audit")
+}

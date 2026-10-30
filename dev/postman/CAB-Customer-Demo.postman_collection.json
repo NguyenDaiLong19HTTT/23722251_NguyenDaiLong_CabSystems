@@ -1,0 +1,140 @@
+{
+  "info": {
+    "name": "CAB Customer demo — five Gateway endpoints",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Register Customer (201 or durable 202)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/auth/register",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fullName\": \"{{fullName}}\",\n  \"email\": \"{{email}}\",\n  \"phone\": \"{{phone}}\",\n  \"password\": \"{{password}}\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Register returns 201 or durable 202', () => pm.expect([201,202]).to.include(pm.response.code));",
+              "if ([201,202].includes(pm.response.code)) {",
+              "  const data = pm.response.json();",
+              "  if (pm.response.code === 201) { pm.environment.set('accountId', data.accountId); pm.environment.set('customerId', data.customerId); pm.environment.set('operationId', ''); }",
+              "  if (pm.response.code === 202) { pm.environment.set('operationId', data.operationId); pm.environment.set('recoveryToken', pm.response.headers.get('Registration-Recovery-Token')); pm.test('202 has protected lookup', () => { pm.expect(data.status).to.eql('PROCESSING'); pm.expect(pm.response.headers.get('Location')).to.include(encodeURIComponent(data.operationId)); pm.expect(pm.response.headers.get('Registration-Recovery-Token')).to.match(/^[A-Za-z0-9_-]{43}$/); }); }",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Lookup registration after 202",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Registration-Recovery-Token",
+            "value": "{{recoveryToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/auth/customer-registrations/{{operationId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Lookup returns operation', () => pm.response.to.have.status(200));",
+              "if (pm.response.code === 200) { const data = pm.response.json(); if (data.status === 'SUCCEEDED') { pm.environment.set('accountId', data.result.accountId); pm.environment.set('customerId', data.result.customerId); } }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/auth/login",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"emailOrPhone\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Login returns Session', () => pm.response.to.have.status(200));",
+              "if (pm.response.code === 200) { const data = pm.response.json(); pm.environment.set('accessToken', data.accessToken); pm.environment.set('accountId', data.account.accountId); pm.environment.set('customerId', data.account.customerId); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Get my Account",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/accounts/me"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Own Account returned', () => pm.response.to.have.status(200));",
+              "if (pm.response.code === 200) pm.test('Account matches login', () => pm.expect(pm.response.json().accountId).to.eql(pm.environment.get('accountId')));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Get Customer profile",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/v1/customers/{{customerId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Own Customer profile returned', () => pm.response.to.have.status(200));",
+              "if (pm.response.code === 200) pm.test('Customer ID matches', () => pm.expect(pm.response.json().customerId).to.eql(pm.environment.get('customerId')));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

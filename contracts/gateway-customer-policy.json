@@ -1,0 +1,246 @@
+{
+  "default": "deny",
+  "identityPrefix": "spiffe://cab.local/service/",
+  "package": "cab.gateway.v1",
+  "methods": {
+    "/cab.gateway.v1.IdentityFacadeService/RegisterCustomer": {
+      "ownerService": "identity-service",
+      "callers": ["api-gateway"],
+      "scope": "facade:customer:register",
+      "userContext": "none",
+      "registrationIdempotency": "required",
+      "registrationRecovery": "required",
+      "deadlineMs": 4000,
+      "retry": "no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.IdentityFacadeService/GetCustomerRegistration": {
+      "ownerService": "identity-service",
+      "callers": ["api-gateway"],
+      "scope": "facade:customer-registration:read",
+      "userContext": "none",
+      "registrationIdempotency": "none",
+      "registrationRecovery": "required",
+      "deadlineMs": 1000,
+      "retry": "read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.IdentityFacadeService/Login": {
+      "ownerService": "identity-service",
+      "callers": ["api-gateway"],
+      "scope": "facade:session:login",
+      "userContext": "none",
+      "registrationIdempotency": "none",
+      "registrationRecovery": "none",
+      "deadlineMs": 2000,
+      "retry": "no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.IdentityFacadeService/GetMyAccount": {
+      "ownerService": "identity-service",
+      "callers": ["api-gateway"],
+      "scope": "facade:account:read-own",
+      "userContext": "required",
+      "registrationIdempotency": "none",
+      "registrationRecovery": "none",
+      "deadlineMs": 1000,
+      "retry": "read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.CustomerFacadeService/GetCustomer": {
+      "ownerService": "customer-service",
+      "callers": ["api-gateway"],
+      "scope": "facade:customer:read",
+      "userContext": "required",
+      "registrationIdempotency": "none",
+      "registrationRecovery": "none",
+      "deadlineMs": 3000,
+      "retry": "read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.DriverFacadeService/GetMyDriverProfile": {
+      "ownerService": "driver-service", "callers": ["api-gateway"],
+      "scope": "facade:driver:read-own", "userContext": "required",
+      "registrationIdempotency": "none", "registrationRecovery": "none",
+      "deadlineMs": 3000, "retry": "read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.DriverFacadeService/GetDriverById": {
+      "ownerService": "driver-service", "callers": ["api-gateway"],
+      "scope": "facade:driver:read-by-id", "userContext": "required",
+      "deadlineMs": 3000, "retry": "read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.DriverFacadeService/SetMyDriverAvailability": {
+      "ownerService": "driver-service", "callers": ["api-gateway"],
+      "scope": "facade:driver:availability", "userContext": "required",
+      "registrationIdempotency": "none", "registrationRecovery": "none",
+      "idempotencyKey": "required", "deadlineMs": 3000,
+      "retry": "no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.DriverFacadeService/UpdateMyDriverLocation": {
+      "ownerService": "driver-service", "callers": ["api-gateway"],
+      "scope": "facade:driver:location", "userContext": "required",
+      "registrationIdempotency": "none", "registrationRecovery": "none",
+      "deadlineMs": 3000, "retry": "no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.DriverFacadeService/SearchNearbyDrivers": {
+      "ownerService":"driver-service","callers":["api-gateway"],
+      "scope":"facade:driver:nearby","userContext":"required",
+      "deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.IdentityDriverRegistrationFacadeService/RequestDriverOtp": {
+      "ownerService":"identity-service","callers":["api-gateway"],"scope":"facade:driver-otp:request",
+      "userContext":"none","deadlineMs":2000,"retry":"no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.IdentityDriverRegistrationFacadeService/VerifyDriverOtp": {
+      "ownerService":"identity-service","callers":["api-gateway"],"scope":"facade:driver-otp:verify",
+      "userContext":"none","deadlineMs":2000,"retry":"no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.IdentityDriverRegistrationFacadeService/SubmitDriverApplication": {
+      "ownerService":"identity-service","callers":["api-gateway"],"scope":"facade:driver-registration:submit",
+      "userContext":"none","deadlineMs":3000,"retry":"no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.IdentityDriverRegistrationFacadeService/GetDriverRegistrationOperation": {
+      "ownerService":"identity-service","callers":["api-gateway"],"scope":"facade:driver-registration:lookup",
+      "userContext":"none","deadlineMs":1000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.DriverApplicationFacadeService/GetMyDriverApplication": {
+      "ownerService":"driver-service","callers":["api-gateway"],"scope":"facade:driver-application:read-own",
+      "userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.DriverApplicationFacadeService/ListDriverApplications": {
+      "ownerService":"driver-service","callers":["api-gateway"],"scope":"facade:driver-application:list-operator",
+      "userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.DriverApplicationFacadeService/GetDriverApplication": {
+      "ownerService":"driver-service","callers":["api-gateway"],"scope":"facade:driver-application:read-operator",
+      "userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.DriverApplicationFacadeService/ReviewDriverApplication": {
+      "ownerService":"driver-service","callers":["api-gateway"],"scope":"facade:driver-application:review",
+      "userContext":"required","idempotencyKey":"required","deadlineMs":3000,"retry":"no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.PaymentFacadeService/GetTripFare": {
+      "ownerService":"payment-service","callers":["api-gateway"],"scope":"facade:payment:fare-read","userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.PaymentFacadeService/CreateTripPayment": {
+      "ownerService":"payment-service","callers":["api-gateway"],"scope":"facade:payment:create","userContext":"required","idempotencyKey":"required","deadlineMs":4000,"retry":"no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.PaymentFacadeService/GetTripPayment": {
+      "ownerService":"payment-service","callers":["api-gateway"],"scope":"facade:payment:read-trip","userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.PaymentFacadeService/GetPayment": {
+      "ownerService":"payment-service","callers":["api-gateway"],"scope":"facade:payment:read","userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.PaymentFacadeService/ListPaymentAttempts": {
+      "ownerService":"payment-service","callers":["api-gateway"],"scope":"facade:payment:attempts-read","userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.PaymentFacadeService/ConfirmCash": {
+      "ownerService":"payment-service","callers":["api-gateway"],"scope":"facade:payment:cash-confirm","userContext":"required","idempotencyKey":"required","deadlineMs":4000,"retry":"no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.PaymentFacadeService/RetryPayment": {
+      "ownerService":"payment-service","callers":["api-gateway"],"scope":"facade:payment:retry","userContext":"required","idempotencyKey":"required","deadlineMs":4000,"retry":"no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.PaymentFacadeService/SimulateDemoTransfer": {
+      "ownerService":"payment-service","callers":["api-gateway"],"scope":"facade:payment:demo-result","userContext":"required","idempotencyKey":"required","deadlineMs":4000,"retry":"no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.TripFacadeService/GetTrip": {
+      "ownerService":"trip-service","callers":["api-gateway"],"scope":"facade:trip:read",
+      "userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.TripFacadeService/GetTripTracking": {
+      "ownerService":"trip-service","callers":["api-gateway"],"scope":"facade:trip:tracking",
+      "userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.TripFacadeService/ListMyTrips": {
+      "ownerService":"trip-service","callers":["api-gateway"],"scope":"facade:trip:list-own",
+      "userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.TripFacadeService/UpdateTripStatus": {
+      "ownerService":"trip-service","callers":["api-gateway"],"scope":"facade:trip:status",
+      "userContext":"required","deadlineMs":4000,"retry":"no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.TripFacadeService/CancelTrip": {
+      "ownerService":"trip-service","callers":["api-gateway"],"scope":"facade:trip:cancel",
+      "userContext":"required","deadlineMs":4000,"retry":"no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.TripFacadeService/ReportTripIncident": {
+      "ownerService":"trip-service","callers":["api-gateway"],"scope":"facade:trip:incident",
+      "userContext":"required","deadlineMs":4000,"retry":"no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.TripFacadeService/GetTripClosure": {
+      "ownerService":"trip-service","callers":["api-gateway"],"scope":"facade:trip:closure-read",
+      "userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.NotificationFacadeService/ListMyNotifications": {
+      "ownerService":"notification-service","callers":["api-gateway"],"scope":"facade:notification:list-own",
+      "userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.NotificationFacadeService/MarkMyNotificationRead": {
+      "ownerService":"notification-service","callers":["api-gateway"],"scope":"facade:notification:read-own",
+      "userContext":"required","deadlineMs":3000,"retry":"no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.BookingFacadeService/CreateBooking": {
+      "ownerService":"booking-service","callers":["api-gateway"],"scope":"facade:booking:create",
+      "userContext":"required","deadlineMs":4000,"retry":"no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.BookingFacadeService/GetBookingOperation": {
+      "ownerService":"booking-service","callers":["api-gateway"],"scope":"facade:booking:operation-read",
+      "userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.BookingFacadeService/ListMyBookings": {
+      "ownerService":"booking-service","callers":["api-gateway"],"scope":"facade:booking:list-own",
+      "userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.BookingFacadeService/GetBooking": {
+      "ownerService":"booking-service","callers":["api-gateway"],"scope":"facade:booking:read",
+      "userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.BookingFacadeService/GetBookingStatus": {
+      "ownerService":"booking-service","callers":["api-gateway"],"scope":"facade:booking:status-read",
+      "userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.BookingFacadeService/CancelBooking": {
+      "ownerService":"booking-service","callers":["api-gateway"],"scope":"facade:booking:cancel",
+      "userContext":"required","deadlineMs":4000,"retry":"no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.BookingFacadeService/GetDispatchStatus": {
+      "ownerService":"booking-service","callers":["api-gateway"],"scope":"facade:dispatch:status-read",
+      "userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.BookingFacadeService/ListMyPendingTripRequests": {
+      "ownerService":"booking-service","callers":["api-gateway"],"scope":"facade:dispatch:offer-list-own",
+      "userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.BookingFacadeService/GetMyTripRequest": {
+      "ownerService":"booking-service","callers":["api-gateway"],"scope":"facade:dispatch:offer-read-own",
+      "userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.BookingFacadeService/AcceptTripRequest": {
+      "ownerService":"booking-service","callers":["api-gateway"],"scope":"facade:dispatch:offer-accept",
+      "userContext":"required","deadlineMs":4000,"retry":"no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.BookingFacadeService/RejectTripRequest": {
+      "ownerService":"booking-service","callers":["api-gateway"],"scope":"facade:dispatch:offer-reject",
+      "userContext":"required","deadlineMs":4000,"retry":"no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.RatingFacadeService/CreateTripRating": {
+      "ownerService":"rating-service","callers":["api-gateway"],"scope":"facade:rating:create",
+      "userContext":"required","deadlineMs":4000,"retry":"no-automatic-mutation-retry"
+    },
+    "/cab.gateway.v1.RatingFacadeService/GetTripRating": {
+      "ownerService":"rating-service","callers":["api-gateway"],"scope":"facade:rating:read",
+      "userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.RatingFacadeService/ListMyDriverRatings": {
+      "ownerService":"rating-service","callers":["api-gateway"],"scope":"facade:rating:list-driver",
+      "userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.RatingFacadeService/ListOperationalRatings": {
+      "ownerService":"rating-service","callers":["api-gateway"],"scope":"facade:rating:list-operations",
+      "userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.BookingFacadeService/GetMyAssignmentOperation": {
+      "ownerService":"booking-service","callers":["api-gateway"],"scope":"facade:dispatch:operation-read-own",
+      "userContext":"required","deadlineMs":3000,"retry":"read-unavailable-within-budget"
+    },
+    "/cab.gateway.v1.TripFacadeService/ResolveTripError": {
+      "ownerService":"trip-service","callers":["api-gateway"],"scope":"facade:trip:error-resolve",
+      "userContext":"required","deadlineMs":4000,"retry":"no-automatic-mutation-retry"
+    }
+  }
+}

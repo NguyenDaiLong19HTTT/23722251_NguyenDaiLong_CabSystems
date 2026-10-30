@@ -18,7 +18,7 @@ info:
     - Tên x-owner-service chỉ mô tả trách nhiệm, không phải cấu hình routing thực thi.
 
     Thay đổi hợp đồng đề xuất trong bản này:
-    - POST /auth/register yêu cầu Idempotency-Key và Registration-Recovery-Token.
+    - POST /auth/register accepts JSON body without client-generated key or recovery token.
     - Bổ sung 202 khi cấp phát hồ sơ chưa hoàn tất, cùng API tra cứu có bằng chứng riêng.
     - Không đổi enum Account hay cấp phiên đầy đủ trước khi cấp phát hoàn tất.
     - D05/D08 được cụ thể hóa cho đăng ký Customer tại đây, chưa coi là đã được duyệt
@@ -146,7 +146,7 @@ paths:
         và cấp phát hồ sơ Customer liên kết qua identity-service và customer-service.
 
         Email được trim và chuyển về chữ thường.
-        Điện thoại dùng định dạng quốc tế E.164.
+        Điện thoại dùng định dạng nội địa Việt Nam: 10 chữ số bắt đầu bằng 0.
         Email và điện thoại phải duy nhất trên toàn bộ Account.
 
         Từ chối thuộc tính ngoài schema, bao gồm role và accountStatus.
@@ -165,20 +165,15 @@ paths:
         Endpoint này không dùng để đăng ký tài xế.
         Việc phone đúng định dạng không có nghĩa số điện thoại đã được OTP xác minh.
 
-        Trước request đầu, client tạo và lưu tạm Idempotency-Key cùng
-        Registration-Recovery-Token ngẫu nhiên bằng CSPRNG (32 byte, base64url).
-        Hai giá trị giữ nguyên khi retry; token không phải JWT hay bằng chứng OTP.
-        Phạm vi key là endpoint đăng ký Customer, không dùng chung với API khác.
-        Máy chủ lưu digest token và fingerprint có khóa của payload đã chuẩn hóa;
-        không lưu password plaintext hoặc hash nhanh không khóa để so sánh request.
-        Password vẫn lưu bằng cơ chế băm mật khẩu chuyên dụng của Account.
-
-        Cùng key + đúng token + cùng payload trả cùng operation hoặc kết quả 201
-        đã lưu; request đồng thời chỉ khởi tạo một operation. Đổi payload với
-        cùng key trả 409 IDEMPOTENCY_CONFLICT sau khi xác minh token.
-        Token sai cho key đã có trả 401 REGISTRATION_RECOVERY_INVALID, không lộ kết quả.
-        Key mới nhưng email/phone đã được giữ bởi đăng ký khác trả CONTACT_CONFLICT.
-        Không cho người khác chiếm operation chỉ nhờ biết email, phone hoặc key.
+        New clients send only the JSON body. Gateway generates an internal UUID
+        idempotency key and 32-byte CSPRNG recovery token. The old paired
+        headers remain optional for legacy replay. Identity stores digests,
+        never raw password or token. A durable 202 returns
+        Registration-Recovery-Token as a response header. Lookup requires
+        that token and operationId; operationId alone is not authority.
+        A lost response without saved proof cannot be replayed as the same
+        request; a new POST faces unique contact constraints. The worker
+        still recovers a committed operation. Timeout does not mean rollback.
 
         Đề xuất retention: giữ operation đang xử lý và bằng chứng phục hồi đến khi
         có kết quả cuối; giữ khả năng replay/tra cứu thêm 7 ngày sau kết quả cuối.
@@ -188,9 +183,6 @@ paths:
         Không lưu PII trong tombstone. Không tự xóa Account chỉ vì timeout.
         FAILED chỉ ghi khi xác nhận thất bại cuối cùng; chưa rõ kết quả phải giữ
         PROCESSING để worker đối soát. Không retry bằng key mới khi chưa rõ kết quả.
-      parameters:
-        - $ref: "#/components/parameters/RegistrationIdempotencyKey"
-        - $ref: "#/components/parameters/RegistrationRecoveryToken"
       requestBody:
         required: true
         content:
@@ -200,7 +192,7 @@ paths:
             example:
               fullName: "Nguyễn Văn An"
               email: "an@example.com"
-              phone: "+84901234567"
+              phone: "0901234567"
               password: "ExamplePassword123!"
       responses:
         "201":
@@ -214,7 +206,7 @@ paths:
                 $ref: "#/components/schemas/RegisteredCustomerAccount"
         "202":
           description: Đã ghi nhận đăng ký bền vững; hồ sơ Customer chưa hoàn tất. Theo dõi Location hoặc
-            retry cùng key/token/payload.
+            use the server-issued recovery token to query Location.
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
@@ -225,6 +217,13 @@ paths:
               example: /v1/auth/customer-registrations/REG_example
             Retry-After:
               $ref: "#/components/headers/RetryAfter"
+            Registration-Recovery-Token:
+              description: Server-issued lookup proof for this operation; never place in URL or logs.
+              schema:
+                type: string
+                minLength: 43
+                maxLength: 43
+                pattern: ^[A-Za-z0-9_-]{43}$
           content:
             application/json:
               schema:
@@ -263,7 +262,7 @@ paths:
         Vai trò được lấy từ Account, không nhận từ request.
 
         Email được chuẩn hóa giống đăng ký.
-        Số điện thoại sử dụng E.164.
+        Số điện thoại sử dụng nội địa Việt Nam 10 chữ số bắt đầu bằng 0.
         Mật khẩu được so sánh nguyên trạng, không trim và không đổi hoa/thường.
 
         Sau khi xác thực đúng:
@@ -306,7 +305,7 @@ paths:
               byPhone:
                 summary: Đăng nhập bằng số điện thoại
                 value:
-                  emailOrPhone: "+84901234567"
+                  emailOrPhone: "0901234567"
                   password: "ExamplePassword123!"
       responses:
         "200":
@@ -543,7 +542,7 @@ paths:
         Client không được tự đặt purpose, role hoặc trạng thái tài khoản.
 
         Kiểm tra:
-        - Phone đúng E.164.
+        - Phone đúng nội địa Việt Nam 10 chữ số bắt đầu bằng 0.
         - Phone chưa thuộc một Account đã đăng ký.
         - Giới hạn theo IP và phone.
         - Khoảng cách gửi lại tối thiểu 60 giây.
@@ -576,7 +575,11 @@ paths:
         Sau thời gian chờ, request mới tạo challenge mới và làm mã cũ mất hiệu lực.
 
         Lỗi provider được theo dõi qua công việc gửi.
-        Không bật OTP cố định hoặc trả OTP trong response để vượt qua lỗi tích hợp.
+        Chỉ ở Compose demo/dev được bật rõ bằng NODE_ENV=development và
+        CAB_DEMO_OTP_RESPONSE_ENABLED=1, response 202 có thêm otp sáu chữ số
+        của chính challengeId vừa ghi. Đây là mã test nhập thủ công, không phải
+        bằng chứng SMS đã đến. Khi cờ tắt hoặc NODE_ENV=production, không trả otp.
+        Không dùng OTP cố định; không ghi OTP rõ vào database, outbox hoặc log.
 
         Chưa tạo Account, Driver, DriverApplication hoặc Session ở bước này.
       requestBody:
@@ -586,7 +589,7 @@ paths:
             schema:
               $ref: "#/components/schemas/DriverOtpRequest"
             example:
-              phone: "+84901234567"
+              phone: "0901234567"
       responses:
         "202":
           description: Đã tiếp nhận challenge và công việc gửi OTP.
@@ -786,7 +789,7 @@ paths:
         và xác minh đúng trước khi cập nhật.
 
         Email được chuẩn hóa giống đăng ký.
-        Điện thoại sử dụng E.164.
+        Điện thoại sử dụng nội địa Việt Nam 10 chữ số bắt đầu bằng 0.
         Email và phone phải duy nhất trên toàn bộ Account.
 
         Đổi email/phone cập nhật đồng thời dữ liệu mã hóa
@@ -820,7 +823,7 @@ paths:
               changePhone:
                 summary: Đổi số điện thoại
                 value:
-                  phone: "+84909876543"
+                  phone: "0909876543"
                   currentPassword: "ExamplePassword123!"
       responses:
         "200":
@@ -933,7 +936,7 @@ paths:
         hết cửa sổ tra cứu đều trả 404 giống nhau. Thiếu/sai định dạng token trả 401. GET 200 chỉ là
         tra cứu thành công, không có nghĩa đăng ký SUCCEEDED. PROCESSING không chứa Account; SUCCEEDED
         chứa kết quả 201 đã lưu, không cấp Session. FAILED chỉ chứa lỗi an toàn đã xác định cuối cùng.
-        Khi response POST đầu bị mất, gửi lại POST cùng key/token/payload để tìm lại operationId.
+        A lost POST response without saved proof cannot be replayed; retry faces unique contact constraints.
       security:
         - registrationRecovery: []
       parameters:
@@ -986,7 +989,7 @@ components:
       type: apiKey
       in: header
       name: Registration-Recovery-Token
-      description: "Bí mật client tạo bằng CSPRNG trước POST /auth/register: 32 byte mã hóa base64url
+      description: "Server-issued secret in POST /auth/register 202 response: 32 byte mã hóa base64url
         không padding (43 ký tự). Chỉ dùng phục hồi đúng đăng ký Customer; không phải access token hay
         OTP. Không đưa vào URL/log, không dùng cho đăng ký Driver. Máy chủ chỉ lưu digest và so sánh an
         toàn."
@@ -1015,18 +1018,16 @@ components:
     RegistrationIdempotencyKey:
       name: Idempotency-Key
       in: header
-      required: true
-      description: UUID ngẫu nhiên client tạo trước lần đăng ký đầu. Giữ nguyên cùng token và payload khi
-        retry. Không phải bằng chứng quyền truy cập.
+      required: false
+      description: Optional legacy UUID; send together with Registration-Recovery-Token for replay.
       schema:
         type: string
         format: uuid
     RegistrationRecoveryToken:
       name: Registration-Recovery-Token
       in: header
-      required: true
-      description: Bí mật phục hồi 32 byte ngẫu nhiên CSPRNG, base64url không padding. Tạo và lưu trước
-        POST đầu, giữ nguyên khi replay; không log.
+      required: false
+      description: Optional legacy proof paired with Idempotency-Key; server issues new proof on 202.
       schema:
         type: string
         minLength: 43
@@ -1088,12 +1089,22 @@ components:
 
     Phone:
       type: string
-      pattern: '^\+[1-9][0-9]{7,14}$'
+      pattern: '^0[0-9]{9}$'
       description: |
-        Điện thoại quốc tế E.164, không có dấu cách.
-        Ví dụ số Việt Nam 0901234567 được gửi thành +84901234567.
+        Điện thoại nội địa Việt Nam gồm 10 chữ số bắt đầu bằng 0, không có dấu cách.
+        Ví dụ số Việt Nam 0901234567 được gửi và trả về dưới dạng 0901234567.
         Kiểm tra định dạng không đồng nghĩa đã xác minh sở hữu số.
-      example: "+84901234567"
+      example: "0901234567"
+
+    PhoneRead:
+      type: string
+      pattern: '^(0[0-9]{9}|\+84[0-9]{10})$'
+      description: |
+        Số hợp lệ được trả dạng nội địa 0xxxxxxxxx. Chỉ những bản ghi
+        legacy đã lưu +84 với mười chữ số sau mã nước, không thể chuyển
+        tương đương sang mười chữ số nội địa, được giữ nguyên khi đọc.
+        Ngoại lệ này không được chấp nhận ở request phone mới.
+      example: "0901234567"
 
     PasswordInput:
       type: string
@@ -1137,7 +1148,7 @@ components:
         emailOrPhone:
           type: string
           minLength: 1
-          description: Email hoặc số điện thoại E.164; không phải username riêng.
+          description: Email hoặc số điện thoại nội địa Việt Nam 10 chữ số bắt đầu bằng 0; không phải username riêng.
           example: "an@example.com"
         password:
           $ref: "#/components/schemas/PasswordInput"
@@ -1208,6 +1219,10 @@ components:
         - expiresAt
         - resendAvailableAt
       properties:
+        otp:
+          type: string
+          pattern: '^[0-9]{6}$'
+          description: Chỉ hiện trong chế độ demo/dev bật rõ; nhập với challengeId để xác minh.
         challengeId:
           type: string
           minLength: 1
@@ -1313,7 +1328,7 @@ components:
         email:
           $ref: "#/components/schemas/Email"
         phone:
-          $ref: "#/components/schemas/Phone"
+          $ref: "#/components/schemas/PhoneRead"
         role:
           type: string
           enum: [CUSTOMER, DRIVER, OPERATOR]
@@ -1364,7 +1379,7 @@ components:
         accountId: "ACC0001"
         fullName: "Nguyễn Văn An"
         email: "an@example.com"
-        phone: "+84901234567"
+        phone: "0901234567"
         role: CUSTOMER
         accountStatus: ACTIVE
         customerId: "CUS0001"
@@ -1513,7 +1528,7 @@ components:
           example: "phone"
         message:
           type: string
-          example: "Số điện thoại phải ở định dạng E.164."
+          example: "Số điện thoại phải ở định dạng nội địa Việt Nam 10 chữ số bắt đầu bằng 0."
 
     ErrorResponse:
       type: object
@@ -1691,7 +1706,7 @@ components:
         Không bỏ giới hạn bắt buộc của login/OTP khi Redis không khả dụng.
         Không trả thành công nếu chưa ghi nhận bền vững thay đổi cần thiết.
         Với đăng ký Customer, 503 hoặc mất phản hồi không chứng minh chưa tạo operation.
-        Retry cùng key/token/payload; operation đã được xác nhận đang chạy trả 202.
+        Legacy paired key/token can replay; a new client without saved proof cannot recover a lost response by replay.
       headers:
         Cache-Control:
           $ref: "#/components/headers/NoStore"

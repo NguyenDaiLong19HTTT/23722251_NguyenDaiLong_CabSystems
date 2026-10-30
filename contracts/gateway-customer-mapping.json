@@ -1,0 +1,73 @@
+{
+  "package": "cab.gateway.v1",
+  "api": "API-Document/01-auth-customer-api.yaml",
+  "endpoints": [
+    {
+      "path": "/auth/register", "verb": "post", "operationId": "registerCustomer",
+      "ownerService": "identity-service", "rpc": "/cab.gateway.v1.IdentityFacadeService/RegisterCustomer",
+      "requestSchema": "RegisterRequest",
+      "successSchemas": {"201": "RegisteredCustomerAccount", "202": "CustomerRegistrationOperation"},
+      "restSecurity": [],
+      "errors": {
+        "400": {"VALIDATION_ERROR": "INVALID_ARGUMENT"},
+        "401": {"REGISTRATION_RECOVERY_INVALID": "UNAUTHENTICATED"},
+        "409": {"CONTACT_CONFLICT": "ALREADY_EXISTS", "IDEMPOTENCY_CONFLICT": "ALREADY_EXISTS", "IDEMPOTENCY_KEY_EXPIRED": "FAILED_PRECONDITION", "REGISTRATION_FAILED": "FAILED_PRECONDITION"},
+        "429": {"RATE_LIMIT_EXCEEDED": "RESOURCE_EXHAUSTED"},
+        "503": {"SERVICE_UNAVAILABLE": "UNAVAILABLE"}
+      }
+    },
+    {
+      "path": "/auth/customer-registrations/{operationId}", "verb": "get", "operationId": "getCustomerRegistrationOperation",
+      "ownerService": "identity-service", "rpc": "/cab.gateway.v1.IdentityFacadeService/GetCustomerRegistration",
+      "requestSchema": null,
+      "successSchemas": {"200": "CustomerRegistrationOperation"},
+      "restSecurity": [{"registrationRecovery": []}],
+      "errors": {
+        "401": {"REGISTRATION_RECOVERY_INVALID": "UNAUTHENTICATED"},
+        "404": {"REGISTRATION_NOT_FOUND": "NOT_FOUND"},
+        "429": {"RATE_LIMIT_EXCEEDED": "RESOURCE_EXHAUSTED"},
+        "503": {"SERVICE_UNAVAILABLE": "UNAVAILABLE"}
+      }
+    },
+    {
+      "path": "/auth/login", "verb": "post", "operationId": "login",
+      "ownerService": "identity-service", "rpc": "/cab.gateway.v1.IdentityFacadeService/Login",
+      "requestSchema": "LoginRequest", "successSchemas": {"200": "AuthSessionResponse"},
+      "restSecurity": [],
+      "errors": {
+        "400": {"VALIDATION_ERROR": "INVALID_ARGUMENT"},
+        "401": {"INVALID_CREDENTIALS": "UNAUTHENTICATED"},
+        "403": {"ACCOUNT_NOT_ACTIVE": "PERMISSION_DENIED"},
+        "409": {"REGISTRATION_IN_PROGRESS": "FAILED_PRECONDITION"},
+        "429": {"RATE_LIMIT_EXCEEDED": "RESOURCE_EXHAUSTED"},
+        "503": {"SERVICE_UNAVAILABLE": "UNAVAILABLE"}
+      }
+    },
+    {
+      "path": "/accounts/me", "verb": "get", "operationId": "getMyAccount",
+      "ownerService": "identity-service", "rpc": "/cab.gateway.v1.IdentityFacadeService/GetMyAccount",
+      "requestSchema": null, "successSchemas": {"200": "Account"},
+      "restSecurity": [{"bearerAuth": []}],
+      "errors": {
+        "401": {"UNAUTHENTICATED": "UNAUTHENTICATED"},
+        "403": {"ACCOUNT_NOT_ACTIVE": "PERMISSION_DENIED"},
+        "429": {"RATE_LIMIT_EXCEEDED": "RESOURCE_EXHAUSTED"},
+        "503": {"SERVICE_UNAVAILABLE": "UNAVAILABLE"}
+      }
+    },
+    {
+      "path": "/customers/{customerId}", "verb": "get", "operationId": "getCustomerById",
+      "ownerService": "customer-service", "rpc": "/cab.gateway.v1.CustomerFacadeService/GetCustomer",
+      "requestSchema": null, "successSchemas": {"200": "CustomerProfile"},
+      "restSecurity": [{"bearerAuth": []}],
+      "errors": {
+        "400": {"VALIDATION_ERROR": "INVALID_ARGUMENT"},
+        "401": {"UNAUTHENTICATED": "UNAUTHENTICATED"},
+        "403": {"FORBIDDEN": "PERMISSION_DENIED", "ACCOUNT_NOT_ACTIVE": "PERMISSION_DENIED"},
+        "404": {"CUSTOMER_NOT_FOUND": "NOT_FOUND"},
+        "429": {"RATE_LIMIT_EXCEEDED": "RESOURCE_EXHAUSTED"},
+        "503": {"SERVICE_UNAVAILABLE": "UNAVAILABLE"}
+      }
+    }
+  ]
+}
